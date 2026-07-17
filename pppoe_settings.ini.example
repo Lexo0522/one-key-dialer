@@ -1,0 +1,18 @@
+interval=30
+auto.reconnect=false
+auto.start=false
+start.minimized=false
+account.index=0
+scheduled.dial=false
+scheduled.dial.hour=8
+scheduled.dial.minute=0
+scheduled.disconnect=false
+scheduled.disconnect.hour=23
+scheduled.disconnect.minute=0
+probe.mode=auto
+probe.host=223.5.5.5
+probe.http.url=http://connectivitycheck.gstatic.com/generate_204
+probe.attempts=3
+probe.delay.ms=1000
+# false=keep PPP when probe fails (default, campus intranet); true=auto disconnect
+probe.disconnect.on.no.internet=false

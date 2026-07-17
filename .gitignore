@@ -1,0 +1,29 @@
+# Build outputs
+bin/
+bin-test/
+build/
+output/
+target/
+installer/
+
+# Runtime jars: ignore extras, keep vendored FlatLaf
+lib/*
+!lib/flatlaf-3.5.4.jar
+
+# Runtime data / secrets
+pppoe_accounts.ini
+pppoe_settings.ini
+pppoe_history.csv
+pppoe_log.txt
+*.bak
+pppoe_startup.vbs
+
+# Local agent / IDE / OS
+CLAUDE.md
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+*.class
+*.log
