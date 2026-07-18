@@ -54,9 +54,12 @@ class SessionTrafficTest {
         SessionTraffic t = new SessionTraffic();
         t.applySample(100, 40);
         t.markSessionStart();
+        // session baseline: down=100, up=40; then +50 down / +10 up in-session
         t.applySample(50, 10);
         assertEquals(150, t.totalDownload().get());
-        assertEquals(50, t.sessionTrafficBytes());
+        assertEquals(50, t.totalUpload().get());
+        // sessionTrafficBytes = (150-100) + (50-40) = 60
+        assertEquals(60, t.sessionTrafficBytes());
         t.markOffline();
         assertEquals(0, t.connectTimeMillis().get());
     }

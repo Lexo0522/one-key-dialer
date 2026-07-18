@@ -24,9 +24,11 @@ class AppVersionAndRedactTest {
 
     @Test
     void maskAccountKeepsTail() {
-        assertEquals("****22", RedactUtil.maskAccount("12345622", 2));
+        // len=8, keepTail=2 → 6 stars + last 2 chars
+        assertEquals("******22", RedactUtil.maskAccount("12345622", 2));
         assertEquals("**", RedactUtil.maskAccount("ab", 2));
         assertEquals("", RedactUtil.maskAccount(""));
+        assertEquals("****5678", RedactUtil.maskAccount("12345678", 4));
     }
 
     @Test
