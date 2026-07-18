@@ -21,6 +21,8 @@ public final class RuntimeSettings {
     private volatile int probeAttempts = ConnectivityConfirm.DEFAULT_ATTEMPTS;
     private volatile int probeDelayMs = (int) ConnectivityConfirm.DEFAULT_DELAY_MS;
     private volatile boolean disconnectOnNoInternet;
+    /** Quiet startup GitHub release check; manual tray check always allowed. */
+    private volatile boolean updateCheckEnabled = true;
     private volatile ProbeOutcome lastProbeOutcome;
 
     public boolean isScheduledDialEnabled() {
@@ -73,6 +75,14 @@ public final class RuntimeSettings {
 
     public void setDisconnectOnNoInternet(boolean enabled) {
         disconnectOnNoInternet = enabled;
+    }
+
+    public boolean isUpdateCheckEnabled() {
+        return updateCheckEnabled;
+    }
+
+    public void setUpdateCheckEnabled(boolean enabled) {
+        updateCheckEnabled = enabled;
     }
 
     public void setSchedule(boolean dialEnabled, int dialHour, int dialMinute,
@@ -131,6 +141,7 @@ public final class RuntimeSettings {
         );
         setProbe(s.probeMode, s.probeHost, s.probeHttpUrl, s.probeAttempts, s.probeDelayMs);
         disconnectOnNoInternet = s.disconnectOnNoInternet;
+        updateCheckEnabled = s.updateCheckEnabled;
     }
 
     public void writeScheduleTo(AppSettings s) {
@@ -151,5 +162,6 @@ public final class RuntimeSettings {
         s.probeAttempts = probeAttempts;
         s.probeDelayMs = probeDelayMs;
         s.disconnectOnNoInternet = disconnectOnNoInternet;
+        s.updateCheckEnabled = updateCheckEnabled;
     }
 }

@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: SelfTest (zero-dep)
+        shell: cmd
+        run: |
+          if exist bin rmdir /s /q bin
+          if exist bin-test rmdir /s /q bin-test
+          mkdir bin
+          mkdir bin-test
+          javac -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
+          if errorlevel 1 exit /b 1
+          javac -encoding UTF-8 -d bin-test -cp bin test\SelfTest.java
+          if errorlevel 1 exit /b 1
+          java -cp bin-test;bin SelfTest
+          if errorlevel 1 exit /b 1
+
+      - name: Maven JUnit
+        run: mvn -B -q test
+
+  package:
+    needs: test
+    runs-on: windows-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build app-image
+        shell: cmd
+        env:
+          CI: "true"
+          GITHUB_ACTIONS: "true"
+        run: |
+          call build_jpackage.bat
+          if not exist output\PPoEDialer\PPoEDialer.exe (
+            echo app-image missing
+            exit /b 1
+          )
+
+      - name: Upload app-image
+        uses: actions/upload-artifact@v4
+        with:
+          name: PPoEDialer-app-image
+          path: output/PPoEDialer
+          if-no-files-found: error

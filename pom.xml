@@ -6,7 +6,7 @@
 
   <groupId>com.lexo0522</groupId>
   <artifactId>one-key-dialer</artifactId>
-  <version>1.0.0</version>
+  <version>1.1.0</version>
   <name>PPPoE one-key dialer</name>
   <description>Windows campus PPPoE Swing dialer</description>
   <url>https://github.com/Lexo0522/one-key-dialer</url>
@@ -85,7 +85,7 @@
         <configuration>
           <archive>
             <manifest>
-              <mainClass>PPoEDialer</mainClass>
+              <mainClass>com.lexo0522.ppoe.PPoEDialer</mainClass>
               <addClasspath>true</addClasspath>
               <classpathPrefix>lib/</classpathPrefix>
             </manifest>

@@ -32,6 +32,11 @@ public final class AppSettings {
      * (history still records RAS成功无外网 / 已断开). Default false keeps intranet.
      */
     public boolean disconnectOnNoInternet = false;
+    /**
+     * When true, schedule a quiet GitHub Releases check a few seconds after start.
+     * Manual tray 「检查更新」 is unaffected. Default true.
+     */
+    public boolean updateCheckEnabled = true;
 
     public static AppSettings fromMap(Map<String, String> map) {
         AppSettings s = new AppSettings();
@@ -54,6 +59,7 @@ public final class AppSettings {
         s.probeDelayMs = parseInt(map.get("probe.delay.ms"), s.probeDelayMs);
         s.disconnectOnNoInternet = parseBool(
             map.get("probe.disconnect.on.no.internet"), s.disconnectOnNoInternet);
+        s.updateCheckEnabled = parseBool(map.get("update.check"), s.updateCheckEnabled);
         return s;
     }
 
@@ -76,6 +82,7 @@ public final class AppSettings {
         m.put("probe.attempts", String.valueOf(probeAttempts));
         m.put("probe.delay.ms", String.valueOf(probeDelayMs));
         m.put("probe.disconnect.on.no.internet", String.valueOf(disconnectOnNoInternet));
+        m.put("update.check", String.valueOf(updateCheckEnabled));
         return m;
     }
 

@@ -30,7 +30,7 @@ echo [1/2] 编译Java源码...
 if exist "bin" rmdir /s /q "bin"
 mkdir "bin"
 
-javac -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
+javac -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
 if errorlevel 1 (
     echo [错误] 编译失败！
     pause
@@ -43,5 +43,5 @@ if exist "lib\flatlaf-3.5.4.jar" set "CP=bin;lib\flatlaf-3.5.4.jar"
 
 echo [2/2] 运行程序...
 echo.
-java -Xms16m -Xmx96m -XX:+UseSerialGC -XX:MaxMetaspaceSize=96m -Dfile.encoding=UTF-8 -cp "%CP%" PPoEDialer
+java -Xms16m -Xmx96m -XX:+UseSerialGC -XX:MaxMetaspaceSize=96m -Dfile.encoding=UTF-8 -cp "%CP%" com.lexo0522.ppoe.PPoEDialer
 pause

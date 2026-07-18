@@ -34,6 +34,10 @@ public final class SettingsCoordinator {
 
         void setDisconnectOnNoInternetChecked(boolean v);
 
+        boolean updateCheckEnabledChecked();
+
+        void setUpdateCheckEnabledChecked(boolean v);
+
         void applyScheduleFrom(AppSettings s);
 
         void writeScheduleTo(AppSettings s);
@@ -88,6 +92,7 @@ public final class SettingsCoordinator {
         ui.writeScheduleTo(s);
         ui.syncProbeFromUi();
         runtime.setDisconnectOnNoInternet(ui.disconnectOnNoInternetChecked());
+        runtime.setUpdateCheckEnabled(ui.updateCheckEnabledChecked());
         runtime.writeProbeTo(s);
         return s;
     }
@@ -114,6 +119,7 @@ public final class SettingsCoordinator {
             runtime.applyFrom(s);
             ui.applyProbeFromRuntime();
             ui.setDisconnectOnNoInternetChecked(runtime.isDisconnectOnNoInternet());
+            ui.setUpdateCheckEnabledChecked(runtime.isUpdateCheckEnabled());
             ui.syncScheduleCacheFromUi();
             healAutoStartIfNeeded(settings);
         } catch (IOException e) {

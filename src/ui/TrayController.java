@@ -2,7 +2,9 @@ package ui;
 
 import model.AccountInfo;
 import util.FormatUtil;
+import util.RedactUtil;
 
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
 import javax.swing.JWindow;
@@ -14,6 +16,7 @@ import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -47,6 +50,24 @@ public final class TrayController {
         long sessionStartDownload();
 
         long sessionStartUpload();
+
+        /** Account list for tray switch menu; may be empty. */
+        default List<AccountInfo> accounts() {
+            return java.util.Collections.emptyList();
+        }
+
+        /** Switch to account index (EDT). */
+        default void switchToAccount(int index) {
+        }
+
+        default void dialNow() {
+        }
+
+        default void disconnectNow() {
+        }
+
+        default void checkForUpdates() {
+        }
     }
 
     private static final int POPUP_SHOW_DELAY_MS = 80;
@@ -60,6 +81,7 @@ public final class TrayController {
     private Image trayImageOffline;
     private Image trayImageOnline;
     private JPopupMenu trayPopup;
+    private JMenu accountsMenu;
     private JWindow popupInvoker;
     private Timer showTimer;
     private final StringBuilder tooltipSb = new StringBuilder(256);
@@ -81,7 +103,6 @@ public final class TrayController {
         trayIcon.setImageAutoSize(true);
         trayIcon.setToolTip(appTitle + "\n未连接");
 
-        // Heavyweight so the menu can paint above the taskbar when the main frame is hidden.
         JPopupMenu.setDefaultLightWeightPopupEnabled(false);
         trayPopup = buildPopupMenu();
         trayPopup.setLightWeightPopupEnabled(false);
@@ -90,6 +111,7 @@ public final class TrayController {
         trayPopup.addPopupMenuListener(new PopupMenuListener() {
             @Override
             public void popupMenuWillBecomeVisible(PopupMenuEvent e) {
+                refreshAccountMenu();
             }
 
             @Override
@@ -168,7 +190,7 @@ public final class TrayController {
             tooltipSb.append("状态: 已连接\n");
             AccountInfo current = host.currentAccount();
             if (current != null) {
-                tooltipSb.append("账号: ").append(current.username).append('\n');
+                tooltipSb.append("账号: ").append(RedactUtil.maskAccount(current.username)).append('\n');
             }
             long ct = host.connectTimeMillis();
             if (ct > 0) {
@@ -192,6 +214,34 @@ public final class TrayController {
         trayIcon.setToolTip(tooltipSb.toString());
     }
 
+    /** Rebuild the switch-account submenu from {@link Host#accounts()}. Safe on EDT. */
+    public void refreshAccountMenu() {
+        if (accountsMenu == null) return;
+        accountsMenu.removeAll();
+        List<AccountInfo> list = host.accounts();
+        if (list == null || list.isEmpty()) {
+            JMenuItem empty = new JMenuItem("(无账号)");
+            empty.setEnabled(false);
+            empty.setFont(UiTheme.FONT_CN);
+            accountsMenu.add(empty);
+            return;
+        }
+        AccountInfo current = host.currentAccount();
+        for (int i = 0; i < list.size(); i++) {
+            AccountInfo a = list.get(i);
+            if (a == null) continue;
+            final int idx = i;
+            String label = a.name != null && !a.name.isEmpty() ? a.name : a.username;
+            if (current != null && current == a) {
+                label = "✓ " + label;
+            }
+            JMenuItem item = new JMenuItem(label);
+            item.setFont(UiTheme.FONT_CN);
+            item.addActionListener(e -> host.switchToAccount(idx));
+            accountsMenu.add(item);
+        }
+    }
+
     private JPopupMenu buildPopupMenu() {
         JPopupMenu popup = new JPopupMenu();
         popup.setFont(UiTheme.FONT_CN);
@@ -200,6 +250,30 @@ public final class TrayController {
         showItem.setFont(UiTheme.FONT_CN);
         showItem.addActionListener(e -> host.showWindow());
         popup.add(showItem);
+
+        JMenuItem dialItem = new JMenuItem("连接宽带");
+        dialItem.setFont(UiTheme.FONT_CN);
+        dialItem.addActionListener(e -> host.dialNow());
+        popup.add(dialItem);
+
+        JMenuItem discItem = new JMenuItem("断开连接");
+        discItem.setFont(UiTheme.FONT_CN);
+        discItem.addActionListener(e -> host.disconnectNow());
+        popup.add(discItem);
+
+        popup.addSeparator();
+
+        accountsMenu = new JMenu("切换账号");
+        accountsMenu.setFont(UiTheme.FONT_CN);
+        popup.add(accountsMenu);
+        refreshAccountMenu();
+
+        popup.addSeparator();
+
+        JMenuItem updateItem = new JMenuItem("检查更新");
+        updateItem.setFont(UiTheme.FONT_CN);
+        updateItem.addActionListener(e -> host.checkForUpdates());
+        popup.add(updateItem);
 
         popup.addSeparator();
 
@@ -220,7 +294,6 @@ public final class TrayController {
         try {
             popupInvoker.setType(Window.Type.POPUP);
         } catch (Exception ignored) {
-            // Type.POPUP not available on some platforms/JRE combos
         }
     }
 
@@ -236,6 +309,7 @@ public final class TrayController {
             trayPopup.setVisible(false);
             trayPopup = null;
         }
+        accountsMenu = null;
         if (popupInvoker != null) {
             popupInvoker.setVisible(false);
             popupInvoker.dispose();
@@ -250,20 +324,11 @@ public final class TrayController {
         }
     }
 
-    /**
-     * Defer show slightly so the tray right-click release is not treated as
-     * an outside-click that immediately dismisses the Swing popup.
-     * <p>
-     * Anchor position uses live pointer location: on Windows, {@link TrayIcon}
-     * {@link MouseEvent} screen coordinates are often wrong (0,0 or unrelated),
-     * which parked the menu at the desktop bottom-right instead of the tray icon.
-     */
     private void scheduleTrayPopup(MouseEvent e) {
         final Point anchor = resolveTrayPopupPoint(e);
         cancelShowTimer();
         showTimer = new Timer(POPUP_SHOW_DELAY_MS, ev -> {
             showTimer = null;
-            // Re-sample pointer at show time (user may still move during delay).
             Point p = currentPointerOr(anchor);
             showTrayPopupAt(p.x, p.y);
         });
@@ -271,9 +336,6 @@ public final class TrayController {
         showTimer.start();
     }
 
-    /**
-     * Prefer {@link MouseInfo} over TrayIcon event coords (unreliable on Windows).
-     */
     private static Point resolveTrayPopupPoint(MouseEvent e) {
         Point fromPointer = currentPointerOr(null);
         if (fromPointer != null) {
@@ -289,7 +351,6 @@ public final class TrayController {
                 return new Point(e.getXOnScreen(), e.getYOnScreen());
             } catch (Exception ignored) {
             }
-            // Last resort: some JREs report tray events as screen-ish x/y.
             return new Point(e.getX(), e.getY());
         }
         GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
@@ -330,7 +391,6 @@ public final class TrayController {
             int maxX = bounds.x + bounds.width - insets.right;
             int maxY = bounds.y + bounds.height - insets.bottom;
 
-            // Open away from the taskbar when insets indicate which edge is docked.
             int maxInset = Math.max(Math.max(insets.top, insets.bottom), Math.max(insets.left, insets.right));
             boolean taskbarBottom = insets.bottom == maxInset && insets.bottom > 0;
             boolean taskbarTop = insets.top == maxInset && insets.top > 0 && !taskbarBottom;
@@ -341,18 +401,17 @@ public final class TrayController {
             int x = screenX;
             int y = screenY;
             if (taskbarBottom || (!taskbarTop && !taskbarLeft && !taskbarRight)) {
-                // Default / bottom taskbar: open above cursor
                 y = screenY - menuSize.height;
                 if (y < minY) y = screenY;
             } else if (taskbarTop) {
-                y = screenY; // open below
+                y = screenY;
             } else {
                 y = screenY - menuSize.height / 2;
             }
             if (taskbarRight) {
                 x = screenX - menuSize.width;
             } else if (taskbarLeft) {
-                x = screenX; // open to the right of icon
+                x = screenX;
             }
 
             if (y + menuSize.height > maxY) {
@@ -364,12 +423,10 @@ public final class TrayController {
             if (x < minX) x = minX;
             if (y < minY) y = minY;
 
-            // Re-show resets position if the menu is already open (press+release).
             if (trayPopup.isVisible()) {
                 trayPopup.setVisible(false);
             }
 
-            // Size invoker to 1×1 at the anchor so show(invoker,0,0) tracks the tray cursor.
             popupInvoker.setBounds(x, y, 1, 1);
             popupInvoker.setVisible(true);
             popupInvoker.toFront();

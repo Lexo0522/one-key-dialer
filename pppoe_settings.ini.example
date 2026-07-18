@@ -16,3 +16,5 @@ probe.attempts=3
 probe.delay.ms=1000
 # false=keep PPP when probe fails (default, campus intranet); true=auto disconnect
 probe.disconnect.on.no.internet=false
+# true=quiet GitHub Releases check a few seconds after start; tray menu always works
+update.check=true

@@ -47,11 +47,12 @@ public class LogService {
     }
 
     public void log(String message, Color color) {
+        final String safeMessage = util.RedactUtil.scrubLogLine(message);
         SwingUtilities.invokeLater(() -> {
             if (logDocument == null || logPane == null) return;
             try {
                 String ts = fastTimestamp();
-                String full = "[" + ts + "] " + message + "\n";
+                String full = "[" + ts + "] " + safeMessage + "\n";
                 AttributeSet a = getLogAttributeSet(color);
                 logDocument.insertString(logDocument.getLength(), full, a);
                 logLineCount++;

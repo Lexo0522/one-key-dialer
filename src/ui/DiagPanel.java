@@ -59,6 +59,19 @@ public class DiagPanel extends JPanel {
 
         /** Optional probe config summary. */
         default String probeReport() { return ""; }
+
+        /** List PPPoE device options for user selection; empty if unsupported. */
+        default java.util.List<service.RasPhonebook.DeviceHint> listPppoeDevices() {
+            return java.util.Collections.emptyList();
+        }
+
+        /**
+         * Apply preferred device and optionally rewrite phonebook entry.
+         * @return status message for the log
+         */
+        default String applyPppoeDevice(service.RasPhonebook.DeviceHint hint, boolean rewrite) {
+            return "当前构建不支持设备选择";
+        }
     }
 
     private final StatusSnapshot status;
@@ -96,6 +109,8 @@ public class DiagPanel extends JPanel {
         JButton btnDNS = actionButton("DNS刷新", () -> runCommand("ipconfig /flushdns"));
         JButton btnConn = actionButton("连接状态", this::showConnectionStatus);
         JButton btnPbk = actionButton("电话簿/探测", this::showPhonebookAndProbe);
+        JButton btnDevice = actionButton("选择设备", this::choosePppoeDevice);
+        JButton btnRewrite = actionButton("重写电话簿", this::rewritePhonebook);
         JButton btnClear = new JButton("清空");
         btnClear.setFont(UiTheme.FONT_CN);
         btnClear.addActionListener(e -> clearOutput());
@@ -106,6 +121,8 @@ public class DiagPanel extends JPanel {
         bp.add(btnDNS);
         bp.add(btnConn);
         bp.add(btnPbk);
+        bp.add(btnDevice);
+        bp.add(btnRewrite);
         bp.add(btnClear);
         add(bp, BorderLayout.NORTH);
 
@@ -159,6 +176,44 @@ public class DiagPanel extends JPanel {
         sb.append("【RAS 电话簿】\n  ").append(status.phonebookReport()).append("\n");
         sb.append("\n═══════════════════════════════════════\n");
         append(sb.toString());
+    }
+
+    public void choosePppoeDevice() {
+        java.util.List<service.RasPhonebook.DeviceHint> options = status.listPppoeDevices();
+        if (options == null || options.isEmpty()) {
+            append("\n[未找到可用 PPPoE 设备提示]\n");
+            return;
+        }
+        String[] labels = new String[options.size()];
+        for (int i = 0; i < options.size(); i++) {
+            service.RasPhonebook.DeviceHint h = options.get(i);
+            labels[i] = h.device + "  [" + h.port + "]" + (h.fromExisting ? "" : " (默认)");
+        }
+        Object picked = JOptionPane.showInputDialog(
+            this, "选择用于写入电话簿的 PPPoE 设备：", "PPPoE 设备",
+            JOptionPane.QUESTION_MESSAGE, null, labels, labels[0]);
+        if (picked == null) return;
+        int idx = -1;
+        for (int i = 0; i < labels.length; i++) {
+            if (labels[i].equals(picked)) { idx = i; break; }
+        }
+        if (idx < 0) return;
+        service.RasPhonebook.DeviceHint chosen = options.get(idx);
+        int rewrite = JOptionPane.showConfirmDialog(this,
+            "是否立即重写电话簿连接条目？\n（否则仅记住选择，下次自动创建时生效）",
+            "重写电话簿", JOptionPane.YES_NO_CANCEL_OPTION);
+        if (rewrite == JOptionPane.CANCEL_OPTION) return;
+        String msg = status.applyPppoeDevice(chosen, rewrite == JOptionPane.YES_OPTION);
+        append("\n[设备] " + msg + "\n");
+    }
+
+    public void rewritePhonebook() {
+        int ok = JOptionPane.showConfirmDialog(this,
+            "将删除并重建本程序使用的 RAS 连接条目，是否继续？",
+            "重写电话簿", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (ok != JOptionPane.YES_OPTION) return;
+        String msg = status.applyPppoeDevice(null, true);
+        append("\n[电话簿] " + msg + "\n");
     }
 
     public void showConnectionStatus() {

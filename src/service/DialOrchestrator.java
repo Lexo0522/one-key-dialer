@@ -65,6 +65,13 @@ public final class DialOrchestrator {
 
         void setDialControlsEnabled(boolean enabled);
 
+        /**
+         * Optional UI progress for the main dial button.
+         * {@code "dialing"} / {@code "disconnecting"} while busy; {@code null} to clear.
+         */
+        default void setDialProgress(String phase) {
+        }
+
         void logInfo(String message);
 
         void logSuccess(String message);
@@ -290,7 +297,10 @@ public final class DialOrchestrator {
             snapshot.clear();
             return;
         }
-        if (toggleButtons) host.setDialControlsEnabled(false);
+        if (toggleButtons) {
+            host.setDialControlsEnabled(false);
+            host.setDialProgress("dialing");
+        }
         try {
             DialService.DialResult result = host.dialService().dial(snapshot);
             handleDialResult(result, operation, saveAfterSuccess);
@@ -298,13 +308,17 @@ public final class DialOrchestrator {
             host.logError("拨号异常: " + e.getMessage());
         } finally {
             host.lifecycle().end();
-            if (toggleButtons) host.setDialControlsEnabled(true);
+            if (toggleButtons) {
+                host.setDialProgress(null);
+                host.setDialControlsEnabled(true);
+            }
         }
     }
 
     private void runDisconnectUser() {
         if (!host.lifecycle().tryBeginDisconnect()) return;
         host.setDialControlsEnabled(false);
+        host.setDialProgress("disconnecting");
         try {
             int code = host.dialService().disconnect(host.activeConnectionName());
             String duration = "--";
@@ -328,6 +342,7 @@ public final class DialOrchestrator {
             host.logError("断开异常: " + e.getMessage());
         } finally {
             host.lifecycle().end();
+            host.setDialProgress(null);
             host.setDialControlsEnabled(true);
         }
     }

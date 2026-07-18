@@ -16,4 +16,8 @@ public abstract class AbstractDialHost implements DialOrchestrator.Host {
     @Override
     public void setDialControlsEnabled(boolean enabled) {
     }
+
+    @Override
+    public void setDialProgress(String phase) {
+    }
 }

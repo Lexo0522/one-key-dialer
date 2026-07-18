@@ -5,7 +5,7 @@ cd /d "%~dp0"
 echo [1/3] Compiling sources...
 if exist "bin" rmdir /s /q "bin"
 mkdir "bin"
-javac -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
+javac -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
 if errorlevel 1 (
   echo Compile failed
   exit /b 1

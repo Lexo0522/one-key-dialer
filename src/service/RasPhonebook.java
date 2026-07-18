@@ -75,6 +75,8 @@ public final class RasPhonebook {
     private final Consumer<String> warnLogger;
     private final Consumer<String> errorLogger;
     private final AtomicReference<Status> lastStatus = new AtomicReference<>();
+    /** Optional preferred PPPoE device (port + device name); null = auto-detect / default. */
+    private volatile DeviceHint preferredDevice;
 
     public RasPhonebook(String connectionName,
                         Consumer<String> infoLogger,
@@ -84,6 +86,104 @@ public final class RasPhonebook {
         this.infoLogger = infoLogger != null ? infoLogger : m -> {};
         this.warnLogger = warnLogger != null ? warnLogger : m -> {};
         this.errorLogger = errorLogger != null ? errorLogger : m -> {};
+    }
+
+    /**
+     * Override Port/Device used when creating (or force-rewriting) the RAS entry.
+     * Pass {@code null} to restore auto-detect from existing phonebook / defaults.
+     */
+    public void setPreferredDevice(DeviceHint hint) {
+        this.preferredDevice = hint;
+    }
+
+    public DeviceHint getPreferredDevice() {
+        return preferredDevice;
+    }
+
+    /**
+     * List PPPoE-like device hints from the phonebook (and a safe default).
+     * Pure-ish: reads rasphone.pbk if present.
+     */
+    public java.util.List<DeviceHint> listDeviceOptions() {
+        java.util.LinkedHashMap<String, DeviceHint> map = new java.util.LinkedHashMap<>();
+        File pbk = defaultPbkFile();
+        if (pbk != null && pbk.exists()) {
+            try {
+                Charset cs = detectPbkCharset(pbk);
+                String content = new String(Files.readAllBytes(pbk.toPath()), cs);
+                for (DeviceHint h : collectPppoeDevices(content)) {
+                    String key = h.port + "|" + h.device;
+                    map.putIfAbsent(key, h);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        DeviceHint def = new DeviceHint("PPPoE5-0", "WAN Miniport (PPPOE)", false);
+        map.putIfAbsent(def.port + "|" + def.device, def);
+        return new java.util.ArrayList<>(map.values());
+    }
+
+    /** Collect unique PreferredPort/PreferredDevice pairs that look like PPPoE. */
+    public static java.util.List<DeviceHint> collectPppoeDevices(String content) {
+        java.util.ArrayList<DeviceHint> out = new java.util.ArrayList<>();
+        if (content == null || content.isEmpty()) return out;
+        String port = null;
+        String device = null;
+        for (String line : content.split("\\R")) {
+            String t = line.trim();
+            if (t.startsWith("[")) {
+                if (port != null && device != null && looksPppoe(port, device)) {
+                    out.add(new DeviceHint(port, device, true));
+                }
+                port = null;
+                device = null;
+                continue;
+            }
+            if (t.startsWith("PreferredPort=")) {
+                port = t.substring("PreferredPort=".length()).trim();
+            } else if (t.startsWith("PreferredDevice=")) {
+                device = t.substring("PreferredDevice=".length()).trim();
+            } else if (t.startsWith("Port=") && port == null) {
+                port = t.substring("Port=".length()).trim();
+            } else if (t.startsWith("Device=") && device == null) {
+                device = t.substring("Device=".length()).trim();
+            }
+        }
+        if (port != null && device != null && looksPppoe(port, device)) {
+            out.add(new DeviceHint(port, device, true));
+        }
+        return out;
+    }
+
+    private static boolean looksPppoe(String port, String device) {
+        String p = port != null ? port.toUpperCase() : "";
+        String d = device != null ? device.toUpperCase() : "";
+        return p.contains("PPPOE") || d.contains("PPPOE") || d.contains("PPPoE".toUpperCase());
+    }
+
+    /**
+     * Force rewrite of the connection section (e.g. after user picks another device).
+     * @return true if entry present after rewrite
+     */
+    public boolean rewriteEntry() {
+        File pbkFile = defaultPbkFile();
+        if (pbkFile == null) {
+            errorLogger.accept("无法获取 APPDATA");
+            return false;
+        }
+        try {
+            if (pbkFile.exists()) {
+                // remove existing section so ensureEntry recreates with preferred device
+                Charset charset = detectPbkCharset(pbkFile);
+                String existing = new String(Files.readAllBytes(pbkFile.toPath()), charset);
+                String without = removeSection(existing, connectionName);
+                AtomicFiles.writeString(pbkFile.toPath(), without, charset);
+            }
+            return ensureEntry();
+        } catch (Exception e) {
+            errorLogger.accept("重写电话簿失败: " + e.getMessage());
+            return false;
+        }
     }
 
     public static File defaultPbkFile() {
@@ -174,11 +274,16 @@ public final class RasPhonebook {
             }
 
             String without = removeSection(existing, connectionName);
-            DeviceHint hint = findPppoeDeviceHint(without);
+            DeviceHint hint = preferredDevice;
+            if (hint == null) {
+                hint = findPppoeDeviceHint(without);
+            }
             if (hint == null) {
                 hint = new DeviceHint("PPPoE5-0", "WAN Miniport (PPPOE)", false);
                 warnLogger.accept("未找到现有 PPPoE 设备条目，使用默认 Port=" + hint.port
                     + "（若创建失败请检查适配器名称）");
+            } else if (preferredDevice != null) {
+                infoLogger.accept("使用用户指定 PPPoE 设备: " + hint.device + " / " + hint.port);
             } else {
                 infoLogger.accept("复用现有 PPPoE 设备: " + hint.device + " / " + hint.port);
             }

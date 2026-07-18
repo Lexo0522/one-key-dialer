@@ -30,6 +30,11 @@ public class MainHomePanel extends JPanel {
         default void onDisconnectOnNoInternetToggled(boolean enabled) {
             saveSettings();
         }
+
+        /** Optional: startup quiet update-check policy changed. */
+        default void onUpdateCheckToggled(boolean enabled) {
+            saveSettings();
+        }
     }
 
     private static final int WINDOW_WIDTH = 580;
@@ -47,6 +52,7 @@ public class MainHomePanel extends JPanel {
     private final JCheckBox chkAutoStart = new JCheckBox("开机自动启动");
     private final JCheckBox chkStartMinimized = new JCheckBox("启动时最小化到托盘");
     private final JCheckBox chkDisconnectOnNoInternet = new JCheckBox("无外网时自动断开宽带");
+    private final JCheckBox chkUpdateCheck = new JCheckBox("启动时检查更新");
     private final JTextPane logPane = new JTextPane();
     private final JButton btnDial;
     private final JLabel lblStatus = new JLabel("未连接");
@@ -139,6 +145,12 @@ public class MainHomePanel extends JPanel {
             "拨号 RAS 成功但外网探测失败时自动 rasdial 断开；默认关闭以保留校园内网");
         chkDisconnectOnNoInternet.addActionListener(e ->
             host.onDisconnectOnNoInternetToggled(chkDisconnectOnNoInternet.isSelected()));
+        chkUpdateCheck.setFont(UiTheme.FONT_CN);
+        chkUpdateCheck.setSelected(true);
+        chkUpdateCheck.setToolTipText(
+            "启动数秒后静默查询 GitHub Releases；关闭后仍可在托盘「检查更新」手动检查");
+        chkUpdateCheck.addActionListener(e ->
+            host.onUpdateCheckToggled(chkUpdateCheck.isSelected()));
     }
 
     private JPanel buildCenter() {
@@ -225,6 +237,7 @@ public class MainHomePanel extends JPanel {
         panel.add(wrapLeft(chkAutoStart));
         panel.add(wrapLeft(chkStartMinimized));
         panel.add(wrapLeft(chkDisconnectOnNoInternet));
+        panel.add(wrapLeft(chkUpdateCheck));
         JLabel autostartHint = new JLabel("  开机自启以注册表为准（非仅 INI）");
         autostartHint.setFont(UiTheme.FONT_CN_SMALL);
         autostartHint.setForeground(UiTheme.COLOR_HINT);
@@ -306,6 +319,19 @@ public class MainHomePanel extends JPanel {
             lblSpeed.setText("↓ -- ↑ --");
             lblUptime.setText("时长: 未连接");
         }
+        btnDial.setEnabled(true);
+        btnDial.repaint();
+    }
+
+    /**
+     * Busy state for the main dial button (disabled + phase label).
+     * @param label e.g. {@code 连接中…} / {@code 断开中…}
+     * @param bg button background while busy
+     */
+    public void setDialProgress(String label, Color bg) {
+        btnDial.setEnabled(false);
+        if (label != null) btnDial.setText(label);
+        if (bg != null) btnDial.setBackground(bg);
         btnDial.repaint();
     }
 
@@ -355,6 +381,10 @@ public class MainHomePanel extends JPanel {
 
     public JCheckBox getChkDisconnectOnNoInternet() {
         return chkDisconnectOnNoInternet;
+    }
+
+    public JCheckBox getChkUpdateCheck() {
+        return chkUpdateCheck;
     }
 
     public JButton getBtnDial() {

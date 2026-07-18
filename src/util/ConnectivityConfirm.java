@@ -121,6 +121,21 @@ public final class ConnectivityConfirm {
     }
 
     /**
+     * Single-attempt, zero-delay check for periodic monitors (auto-reconnect).
+     * Uses the same mode/host/http as {@code config} so UI probe settings stay authoritative.
+     */
+    public static boolean quickCheck(Config config) {
+        Config cfg = config != null ? config : Config.defaults();
+        Config oneShot = new Config(cfg.mode, cfg.host, cfg.httpUrl, 1, 0L, cfg.httpTimeoutMs);
+        return confirm(oneShot);
+    }
+
+    /** Convenience: quick check with defaults (auto mode). */
+    public static boolean quickCheckDefault() {
+        return quickCheck(Config.defaults());
+    }
+
+    /**
      * Same as {@link #confirm(Config)} but returns timing/mode for logs and Diag.
      *
      * @param source short tag e.g. {@code post-dial}, {@code manual-test}
@@ -128,7 +143,7 @@ public final class ConnectivityConfirm {
     public static ProbeOutcome confirmDetailed(Config config, String source) {
         Config cfg = config != null ? config : Config.defaults();
         long t0 = System.nanoTime();
-        boolean ok = confirm(cfg, NetworkProbe::isOnline, ConnectivityConfirm::httpReachable, Thread::sleep);
+        boolean ok = confirm(cfg, NetworkProbe::icmpReachable, ConnectivityConfirm::httpReachable, Thread::sleep);
         long ms = (System.nanoTime() - t0) / 1_000_000L;
         return new ProbeOutcome(
             ok, ms, normalizeMode(cfg.mode), cfg.host, cfg.httpUrl, cfg.attempts,
@@ -146,7 +161,7 @@ public final class ConnectivityConfirm {
         Config cfg = config != null ? config : Config.defaults();
         String mode = normalizeMode(cfg.mode);
         Sleeper sleep = sleeper != null ? sleeper : Thread::sleep;
-        Reachability icmp = icmpProbe != null ? icmpProbe : NetworkProbe::isOnline;
+        Reachability icmp = icmpProbe != null ? icmpProbe : NetworkProbe::icmpReachable;
         Reachability http = httpProbe != null ? httpProbe : ConnectivityConfirm::httpReachable;
 
         for (int i = 0; i < cfg.attempts; i++) {
@@ -202,7 +217,7 @@ public final class ConnectivityConfirm {
             HttpClient client = httpClient(timeout);
             HttpRequest.Builder base = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofMillis(timeout))
-                .header("User-Agent", "PPoEDialer/1.0.0");
+                .header("User-Agent", model.AppVersion.USER_AGENT);
             // Prefer HEAD (cheap); some portals reject HEAD — fall back to GET.
             HttpResponse<Void> head = client.send(
                 base.method("HEAD", HttpRequest.BodyPublishers.noBody()).build(),

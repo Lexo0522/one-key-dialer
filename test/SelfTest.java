@@ -44,6 +44,11 @@ public class SelfTest {
         testConnectivityConfirm();
         testHardeningHelpers();
         testAccountCsvLayout();
+        testAppVersionAndRedact();
+        testStatsService();
+        testDialPrecheck();
+        testUpdateCheckSetting();
+        testUpdateReleaseParse();
         System.out.println("----");
         System.out.println("passed=" + passed + " failed=" + failed);
         if (failed > 0) System.exit(1);
@@ -356,5 +361,64 @@ public class SelfTest {
         model.AccountInfo b = AccountStore.accountFromCsvParts(
             new String[]{"n", "u", "p", "r"}, AccountStore.CsvLayout.WITH_PASSWORD_4);
         assertTrue("4col pass", "p".equals(b.getPassword()) && "r".equals(b.remark));
+    }
+
+    private static void testAppVersionAndRedact() {
+        assertTrue("ver order", model.AppVersion.compareNumeric("1.0.0", "1.1.0") < 0);
+        assertTrue("ver strip", "1.1.0".equals(model.AppVersion.stripV("v1.1.0")));
+        assertTrue("mask tail", util.RedactUtil.maskAccount("12345622", 2).endsWith("22"));
+        assertTrue("scrub pwd", util.RedactUtil.scrubLogLine("password=secret").contains("***"));
+    }
+
+    private static void testStatsService() {
+        java.util.List<String[]> rows = new java.util.ArrayList<>();
+        rows.add(new String[]{"t", "拨号", "a", "成功", "--", "--"});
+        rows.add(new String[]{"t", "拨号", "a", "失败:691", "--", "--"});
+        rows.add(new String[]{"t", "断开", "a", "成功", "--", "--"});
+        service.StatsService.Summary s = service.StatsService.summarize(rows);
+        assertTrue("stats dial attempts", s.dialAttempts == 2);
+        assertTrue("stats success", s.dialSuccess == 1);
+        assertTrue("stats fail", s.dialFail == 1);
+        assertTrue("stats disc", s.disconnects == 1);
+    }
+
+    private static void testDialPrecheck() {
+        assertTrue("precheck online",
+            service.DialPrecheck.check(true, true, "u", "p".toCharArray()).isPresent());
+        assertTrue("precheck ok",
+            !service.DialPrecheck.check(false, true, "u", "p".toCharArray()).isPresent());
+        assertTrue("precheck empty user",
+            service.DialPrecheck.check(false, true, "", "p".toCharArray()).get()
+                == service.DialPrecheck.Failure.EMPTY_USERNAME);
+        assertTrue("precheck msg",
+            service.DialPrecheck.logMessage(service.DialPrecheck.Failure.EMPTY_PASSWORD).contains("密码"));
+    }
+
+    private static void testUpdateCheckSetting() {
+        AppSettings s = new AppSettings();
+        assertTrue("update default on", s.updateCheckEnabled);
+        s.updateCheckEnabled = false;
+        AppSettings round = AppSettings.fromMap(s.toMap());
+        assertTrue("update roundtrip off", !round.updateCheckEnabled);
+        java.util.Map<String, String> m = new java.util.HashMap<>();
+        m.put("update.check", "true");
+        assertTrue("update parse true", AppSettings.fromMap(m).updateCheckEnabled);
+        service.RuntimeSettings rs = new service.RuntimeSettings();
+        rs.setUpdateCheckEnabled(false);
+        AppSettings out = new AppSettings();
+        rs.writeProbeTo(out);
+        assertTrue("runtime write update off", !out.updateCheckEnabled);
+    }
+
+    private static void testUpdateReleaseParse() {
+        String json = "{\"tag_name\":\"v1.2.0\",\"html_url\":\"https://example.com/r\","
+            + "\"assets\":[{\"name\":\"PPoEDialer-win.zip\",\"size\":9,"
+            + "\"browser_download_url\":\"https://example.com/a.zip\"}]}";
+        service.UpdateRelease r = service.UpdateRelease.parseGithubLatestJson(json);
+        assertTrue("rel tag", "v1.2.0".equals(r.tagName));
+        assertTrue("rel asset", r.preferredWindowsAsset().isPresent());
+        assertTrue("rel zip", r.preferredWindowsAsset().get().isZip());
+        assertTrue("sanitize", "x_y.msi".equals(service.UpdateDownloadService.sanitizeFileName("x/y.msi")));
+        assertTrue("ver lt", model.AppVersion.compareNumeric("1.1.0", "1.2.0") < 0);
     }
 }
