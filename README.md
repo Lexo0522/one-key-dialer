@@ -32,9 +32,9 @@ Windows 校园网 PPPoE 图形拨号工具（Swing + `rasdial`）：一键拨号
 
 - Windows 10/11
 - 运行：JRE/JDK 11+（推荐 17+）
-- 打包 EXE：JDK 14+（`jpackage`）
-- MSI 安装包：JDK 14+（部分环境需 WiX）
-- 可选：Maven 3.9+（`pom.xml` + JUnit 5 under `src-test/`）
+- 打包 EXE / MSI：JDK **26**（`jpackage` + `jlink --compress=zip-6`；最低建议 21+）
+- MSI 安装包：部分环境另需 WiX
+- 可选：Maven 3.9+（`pom.xml` + JUnit 5 under `src-test/`；`compiler.release=11`）
 
 ## 快速开始
 

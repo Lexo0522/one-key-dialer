@@ -3,7 +3,7 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 echo ========================================
-echo   Build EXE with jpackage (JDK 14+)
+echo   Build EXE with jpackage (JDK 26 recommended)
 echo ========================================
 echo.
 
@@ -73,7 +73,8 @@ if errorlevel 1 (
 echo.
 echo [3/3] Building EXE...
 echo.
-jpackage --input build --name PPoEDialer --main-jar PPoEDialer.jar --main-class com.lexo0522.ppoe.PPoEDialer --type app-image --dest output --app-version %APP_VER% --java-options "-Xms16m" --java-options "-Xmx96m" --java-options "-XX:+UseSerialGC" --java-options "-XX:MaxMetaspaceSize=96m" --java-options "-Dfile.encoding=UTF-8" --jlink-options "--strip-debug --compress=zip-6 --no-header-files --no-man-pages"
+REM jlink --compress=zip-6 requires JDK 21+ (recommended JDK 26). Do not use legacy 0/1/2 on modern JDKs.
+jpackage --input build --name PPoEDialer --main-jar PPoEDialer.jar --main-class com.lexo0522.ppoe.PPoEDialer --type app-image --dest output --app-version %APP_VER% --java-options "-Xms16m" --java-options "-Xmx96m" --java-options "-XX:+UseSerialGC" --java-options "-XX:MaxMetaspaceSize=96m" --java-options "-Dfile.encoding=UTF-8" --jlink-options "--strip-debug --no-header-files --no-man-pages --compress=zip-6"
 
 if errorlevel 1 (
     echo.
