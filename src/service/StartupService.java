@@ -284,14 +284,11 @@ public class StartupService {
     }
 
     private String queryRunValue(String valueName) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(
-            "reg", "query", RUN_KEY, "/v", valueName);
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        String out = ProcessIO.readAll(p.getInputStream(), ProcessIO.childCharset());
-        int code = ProcessIO.waitOrKill(p, 10, TimeUnit.SECONDS);
-        if (code != 0) return null;
-        return parseRegQueryValue(out, valueName);
+        ProcessIO.Result result = ProcessIO.run(
+            Arrays.asList("reg", "query", RUN_KEY, "/v", valueName),
+            10, TimeUnit.SECONDS, ProcessIO.childCharset(), null);
+        if (result.exitCode != 0) return null;
+        return parseRegQueryValue(result.output, valueName);
     }
 
     private boolean commandTargetLooksPresent(String cmd) {
@@ -321,15 +318,12 @@ public class StartupService {
     }
 
     private int runReg(String[] cmd, boolean logOutput) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        String out = ProcessIO.readAll(p.getInputStream(), ProcessIO.childCharset());
-        int code = ProcessIO.waitOrKill(p, 15, TimeUnit.SECONDS);
-        if (logOutput && code != 0 && out != null && !out.trim().isEmpty()) {
-            logger.accept(out.trim(), false);
+        ProcessIO.Result result = ProcessIO.run(
+            Arrays.asList(cmd), 15, TimeUnit.SECONDS, ProcessIO.childCharset(), null);
+        if (logOutput && result.exitCode != 0 && !result.output.trim().isEmpty()) {
+            logger.accept(result.output.trim(), false);
         }
-        return code;
+        return result.exitCode;
     }
 
     private LaunchTarget resolveTarget(Class<?> appClass) {

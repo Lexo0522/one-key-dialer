@@ -6,8 +6,6 @@ import util.ProcessIO;
 
 import javax.swing.*;
 import java.awt.*;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -15,6 +13,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.Enumeration;
 import java.util.List;
@@ -290,36 +289,25 @@ public class DiagPanel extends JPanel {
                 }
 
                 detail.append("\n【连通性测试】\n");
-                Process p = null;
-                try {
-                    ProcessBuilder pb = new ProcessBuilder("cmd", "/c", "ping -n 2 223.5.5.5");
-                    pb.redirectErrorStream(true);
-                    p = pb.start();
-                    boolean hasOutput = false;
-                    try (BufferedReader r = new BufferedReader(
-                        new InputStreamReader(p.getInputStream(), ProcessIO.childCharset()))) {
-                        String line;
-                        while ((line = r.readLine()) != null) {
-                            String trimmed = line.trim();
-                            if (!trimmed.isEmpty()) {
-                                hasOutput = true;
-                                detail.append("  ").append(trimmed).append('\n');
-                            }
+                boolean[] hasOutput = {false};
+                ProcessIO.Result result = ProcessIO.run(
+                    Arrays.asList("cmd", "/c", "ping -n 2 223.5.5.5"),
+                    DIAG_TIMEOUT_SEC, TimeUnit.SECONDS, ProcessIO.childCharset(),
+                    line -> {
+                        String trimmed = line.trim();
+                        if (!trimmed.isEmpty()) {
+                            hasOutput[0] = true;
+                            detail.append("  ").append(trimmed).append('\n');
                         }
+                    });
+                if (result.timedOut) {
+                    detail.append("  Ping 超时\n");
+                } else {
+                    if (!hasOutput[0]) {
+                        detail.append("  Ping 未返回可显示的输出\n");
                     }
-                    boolean finished = p.waitFor(DIAG_TIMEOUT_SEC, TimeUnit.SECONDS);
-                    if (!finished) {
-                        p.destroyForcibly();
-                        detail.append("  Ping 超时\n");
-                    } else {
-                        int exitCode = p.exitValue();
-                        if (!hasOutput) {
-                            detail.append("  Ping 未返回可显示的输出\n");
-                        }
-                        detail.append("  结果: ").append(exitCode == 0 ? "连通" : "可能不通或存在丢包").append('\n');
-                    }
-                } finally {
-                    if (p != null) p.destroy();
+                    detail.append("  结果: ").append(result.exitCode == 0
+                        ? "连通" : "可能不通或存在丢包").append('\n');
                 }
 
                 detail.append("\n═══════════════════════════════════════\n");
@@ -349,31 +337,23 @@ public class DiagPanel extends JPanel {
         append(header.toString());
 
         workerFuture = executor.submitLong(() -> {
-            Process p = null;
             try {
-                ProcessBuilder pb = new ProcessBuilder("cmd", "/c", command);
-                pb.redirectErrorStream(true);
-                p = pb.start();
-
                 StringBuilder local = new StringBuilder(512);
-                int batchLines = 0;
-                try (BufferedReader r = new BufferedReader(
-                    new InputStreamReader(p.getInputStream(), ProcessIO.childCharset()))) {
-                    String line;
-                    while ((line = r.readLine()) != null) {
+                int[] batchLines = {0};
+                ProcessIO.Result result = ProcessIO.run(
+                    Arrays.asList("cmd", "/c", command),
+                    DIAG_TIMEOUT_SEC, TimeUnit.SECONDS, ProcessIO.childCharset(),
+                    line -> {
                         local.append("  ").append(line).append('\n');
-                        batchLines++;
-                        if (batchLines >= 16) {
+                        batchLines[0]++;
+                        if (batchLines[0] >= 16) {
                             append(local.toString());
                             local.setLength(0);
-                            batchLines = 0;
+                            batchLines[0] = 0;
                         }
-                    }
-                }
+                    });
                 if (local.length() > 0) append(local.toString());
-                boolean finished = p.waitFor(DIAG_TIMEOUT_SEC, TimeUnit.SECONDS);
-                if (!finished) {
-                    p.destroyForcibly();
+                if (result.timedOut) {
                     append("\n═══════════════════════════════════════\n执行超时\n");
                 } else {
                     append("\n═══════════════════════════════════════\n执行完毕\n");
@@ -381,12 +361,10 @@ public class DiagPanel extends JPanel {
             } catch (Exception e) {
                 append("\n执行失败: " + e.getMessage() + "\n");
             } finally {
-                if (p != null) p.destroy();
                 finishRun();
             }
         });
     }
-
     private void finishRun() {
         running.set(false);
         SwingUtilities.invokeLater(() -> setButtonsEnabled(true));

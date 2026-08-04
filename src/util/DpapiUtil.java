@@ -66,38 +66,21 @@ public final class DpapiUtil {
     }
 
     private static String runPowerShell(String script) {
-        Process p = null;
         try {
-            ProcessBuilder pb = new ProcessBuilder(
-                "powershell",
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy", "Bypass",
-                "-Command",
-                script
-            );
-            pb.redirectErrorStream(true);
-            p = pb.start();
-            StringBuilder sb = new StringBuilder();
-            try (BufferedReader r = new BufferedReader(
-                new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = r.readLine()) != null) {
-                    if (sb.length() > 0) sb.append('\n');
-                    sb.append(line);
-                }
-            }
-            boolean finished = p.waitFor(TIMEOUT_SEC, TimeUnit.SECONDS);
-            if (!finished) {
-                p.destroyForcibly();
-                return null;
-            }
-            if (p.exitValue() != 0) return null;
-            return sb.toString();
+            ProcessIO.Result result = ProcessIO.run(
+                java.util.Arrays.asList(
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy", "Bypass",
+                    "-Command",
+                    script
+                ),
+                TIMEOUT_SEC, TimeUnit.SECONDS, StandardCharsets.UTF_8, null);
+            if (result.exitCode != 0) return null;
+            return result.output;
         } catch (Exception e) {
             return null;
-        } finally {
-            if (p != null) p.destroy();
         }
     }
 }

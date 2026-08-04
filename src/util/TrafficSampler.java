@@ -54,30 +54,23 @@ public final class TrafficSampler {
             }
         }
 
-        Process p = null;
         try {
-            ProcessBuilder pb = new ProcessBuilder("cmd", "/c", "netstat -e");
-            pb.redirectErrorStream(true);
-            p = pb.start();
-            try (BufferedReader r = new BufferedReader(
-                new InputStreamReader(p.getInputStream(), ProcessIO.childCharset()))) {
-                String line;
-                while ((line = r.readLine()) != null) {
-                    String trimmed = line.trim();
-                    if (trimmed.matches("^\\d+\\s+\\d+.*")) {
-                        String[] parts = trimmed.split("\\s+");
-                        if (parts.length >= 2) {
-                            long received = Long.parseLong(parts[0]);
-                            long sent = Long.parseLong(parts[1]);
-                            return new long[]{received, sent};
-                        }
+            ProcessIO.Result result = ProcessIO.run(
+                java.util.Arrays.asList("cmd", "/c", "netstat -e"),
+                5, TimeUnit.SECONDS, ProcessIO.childCharset(), null);
+            for (String line : result.output.split("\\R")) {
+                String trimmed = line.trim();
+                if (trimmed.matches("^\\d+\\s+\\d+.*")) {
+                    String[] parts = trimmed.split("\\s+");
+                    if (parts.length >= 2) {
+                        long received = Long.parseLong(parts[0]);
+                        long sent = Long.parseLong(parts[1]);
+                        return new long[]{received, sent};
                     }
                 }
             }
-            if (p.waitFor(5, TimeUnit.SECONDS) && p.exitValue() == 0) return EMPTY;
+            if (result.exitCode == 0) return EMPTY;
         } catch (Exception ignored) {
-        } finally {
-            if (p != null) p.destroy();
         }
         return EMPTY;
     }

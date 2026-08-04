@@ -15,11 +15,14 @@ import storage.HistoryStore;
 import util.ConnectivityConfirm;
 import util.CryptoUtil;
 import util.FormatUtil;
+import util.ProcessIO;
 
 import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -49,11 +52,36 @@ public class SelfTest {
         testDialPrecheck();
         testUpdateCheckSetting();
         testUpdateReleaseParse();
+        testProcessIO();
         System.out.println("----");
         System.out.println("passed=" + passed + " failed=" + failed);
         if (failed > 0) System.exit(1);
     }
 
+    private static void testProcessIO() throws Exception {
+        ProcessIO.Result echo = ProcessIO.run(
+            Arrays.asList("cmd", "/c", "echo hello"),
+            5, TimeUnit.SECONDS, ProcessIO.childCharset(), null);
+        assertTrue("process output", echo.exitCode == 0
+            && !echo.timedOut && echo.output.toLowerCase().contains("hello"));
+
+        ProcessIO.Result timeout = ProcessIO.run(
+            Arrays.asList("cmd", "/c", "ping -n 4 127.0.0.1 >nul"),
+            100, TimeUnit.MILLISECONDS, ProcessIO.childCharset(), null);
+        assertTrue("process timeout", timeout.timedOut && timeout.exitCode == -1);
+
+        int[] callbackCount = {0};
+        ProcessIO.Result callback = ProcessIO.run(
+            Arrays.asList("cmd", "/c", "echo first & echo second"),
+            5, TimeUnit.SECONDS, ProcessIO.childCharset(), line -> {
+                callbackCount[0]++;
+                throw new IllegalStateException("test callback failure");
+            });
+        assertTrue("process callback", callback.exitCode == 0 && !callback.timedOut
+            && callbackCount[0] >= 2
+            && callback.output.toLowerCase().contains("first")
+            && callback.output.toLowerCase().contains("second"));
+    }
     private static void assertTrue(String name, boolean cond) {
         if (cond) {
             passed++;

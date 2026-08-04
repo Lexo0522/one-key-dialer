@@ -1,5 +1,7 @@
 package service;
 
+import util.ProcessIO;
+
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
@@ -45,20 +47,16 @@ public final class StartupSelfCheck {
         if (args == null || args.length < 2) return;
         String label = args[args.length - 1];
         String[] command = Arrays.copyOf(args, args.length - 1);
-        Process p = null;
         try {
-            p = new ProcessBuilder(command).redirectErrorStream(true).start();
-            boolean finished = p.waitFor(5, TimeUnit.SECONDS);
-            if (!finished || p.exitValue() != 0) {
+            ProcessIO.Result result = ProcessIO.run(
+                Arrays.asList(command), 5, TimeUnit.SECONDS, ProcessIO.childCharset(), null);
+            if (result.timedOut || result.exitCode != 0) {
                 logger.warn("启动自检: 未检测到命令 " + label);
             }
         } catch (Exception e) {
             logger.warn("启动自检: 检查命令 " + label + " 失败: " + e.getClass().getSimpleName());
-        } finally {
-            if (p != null) p.destroy();
         }
     }
-
     static void checkWritablePath(Logger logger, File file, String label) {
         if (file == null) {
             logger.warn("启动自检: " + label + " 路径为空");

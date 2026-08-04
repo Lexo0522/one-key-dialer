@@ -3,7 +3,7 @@ package service;
 import model.DialSnapshot;
 import util.ProcessIO;
 
-import java.nio.charset.Charset;
+import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -140,21 +140,11 @@ public class DialService {
             infoLogger.accept("开始拨号... 连接: " + activeConnName);
 
             // argv form — never embed password in cmd /c
-            ProcessBuilder pb = new ProcessBuilder("rasdial", activeConnName, username, password);
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            StringBuilder out = new StringBuilder();
-            Charset cs = ProcessIO.childCharset();
-            try {
-                ProcessIO.drainLines(p.getInputStream(), cs, line -> {
-                    out.append(line).append('\n');
-                    infoLogger.accept("  > " + line);
-                });
-                int code = ProcessIO.waitOrKill(p, 60, TimeUnit.SECONDS);
-                return new DialResult(code, out.toString());
-            } finally {
-                if (p.isAlive()) p.destroyForcibly();
-            }
+            ProcessIO.Result result = ProcessIO.run(
+                Arrays.asList("rasdial", activeConnName, username, password),
+                60, TimeUnit.SECONDS, ProcessIO.childCharset(),
+                line -> infoLogger.accept("  > " + line));
+            return new DialResult(result.exitCode, result.output);
         } finally {
             snapshot.clear();
         }
@@ -173,17 +163,12 @@ public class DialService {
             errorLogger.accept("断开失败: 非法连接名");
             return -1;
         }
-        ProcessBuilder pb = new ProcessBuilder("rasdial", activeConnName, "/disconnect");
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        try {
-            Charset cs = ProcessIO.childCharset();
-            ProcessIO.drainLines(p.getInputStream(), cs, line -> {
+        ProcessIO.Result result = ProcessIO.run(
+            Arrays.asList("rasdial", activeConnName, "/disconnect"),
+            30, TimeUnit.SECONDS, ProcessIO.childCharset(),
+            line -> {
                 if (logLines) infoLogger.accept("  > " + line);
             });
-            return ProcessIO.waitOrKill(p, 30, TimeUnit.SECONDS);
-        } finally {
-            if (p.isAlive()) p.destroyForcibly();
-        }
+        return result.exitCode;
     }
 }

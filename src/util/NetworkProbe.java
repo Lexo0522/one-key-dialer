@@ -46,15 +46,13 @@ public final class NetworkProbe {
         } catch (Exception ignored) {
         }
 
-        Process p = null;
         try {
-            p = new ProcessBuilder("ping", "-n", "1", "-w", "1000", host).start();
-            boolean finished = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
-            return finished && p.exitValue() == 0;
+            ProcessIO.Result result = ProcessIO.run(
+                java.util.Arrays.asList("ping", "-n", "1", "-w", "1000", host),
+                5, java.util.concurrent.TimeUnit.SECONDS, ProcessIO.childCharset(), null);
+            return !result.timedOut && result.exitCode == 0;
         } catch (Exception e) {
             return lightweightReachable;
-        } finally {
-            if (p != null) p.destroy();
         }
     }
 }
