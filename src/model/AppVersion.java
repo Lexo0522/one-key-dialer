@@ -1,15 +1,20 @@
 package model;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
+
 /**
- * Single source of truth for app version strings.
- * Keep in sync with {@code pom.xml} {@code <version>} and jpackage {@code --app-version}
- * (same numeric value without the leading {@code v}).
+ * Application version loaded from the packaged {@code version.properties} resource.
+ * Maven filters it from the canonical {@code revision} value in {@code .mvn/maven.config};
+ * the batch scripts read that same value directly.
  */
 public final class AppVersion {
-    /** Display form used in window title / logs, e.g. {@code v1.1.0}. */
-    public static final String DISPLAY = "v1.1.0";
+    private static final String VERSION_RESOURCE = "/version.properties";
     /** Numeric form for Maven / jpackage / User-Agent, e.g. {@code 1.1.0}. */
-    public static final String NUMERIC = "1.1.0";
+    public static final String NUMERIC = loadNumericVersion();
+    /** Display form used in window title / logs, e.g. {@code v1.1.0}. */
+    public static final String DISPLAY = "v" + NUMERIC;
     /** HTTP User-Agent for outbound probes. */
     public static final String USER_AGENT = "PPoEDialer/" + NUMERIC;
     /** GitHub repo for update checks (owner/name). */
@@ -19,6 +24,24 @@ public final class AppVersion {
         "https://api.github.com/repos/" + GITHUB_REPO + "/releases/latest";
 
     private AppVersion() {
+    }
+
+    private static String loadNumericVersion() {
+        Properties properties = new Properties();
+        try (InputStream input = AppVersion.class.getResourceAsStream(VERSION_RESOURCE)) {
+            if (input == null) {
+                throw new IllegalStateException("Missing " + VERSION_RESOURCE);
+            }
+            properties.load(input);
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot load " + VERSION_RESOURCE, e);
+        }
+
+        String version = properties.getProperty("app.version", "").trim();
+        if (!version.matches("[0-9]+(\\.[0-9]+)*")) {
+            throw new IllegalStateException("Invalid app.version: " + version);
+        }
+        return version;
     }
 
     /** Strip optional leading {@code v}/{@code V} for numeric compare helpers. */

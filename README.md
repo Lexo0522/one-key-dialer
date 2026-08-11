@@ -9,7 +9,7 @@ Windows 校园网 PPPoE 图形拨号工具（Swing + `rasdial`）：一键拨号
 
 仓库：<https://github.com/Lexo0522/one-key-dialer>
 
-正式入口：`com.lexo0522.ppoe.PPoEDialer`（默认包下仅保留兼容转发 `PPoEDialer`）。装配在 `AppServices`，懒加载 Tab 在 `ui.MainTabsController`，账号 UI 在 `ui.AccountUiController`，设置接线 `SettingsWiring`，更新 UI `UpdateCheckUi`，拨号前校验 `DialPrecheck`/`DialUiActions`，退出 `ShellShutdown`，进程入口 `AppLauncher`；业务在 `service/*`，持久化在 `storage/*`。版本号以 `model.AppVersion` 为准。
+正式入口：`com.lexo0522.ppoe.PPoEDialer`（默认包下仅保留兼容转发 `PPoEDialer`）。装配在 `AppServices`，懒加载 Tab 在 `ui.MainTabsController`，账号 UI 在 `ui.AccountUiController`，设置接线 `SettingsWiring`，更新 UI `UpdateCheckUi`，拨号前校验 `DialPrecheck`/`DialUiActions`，退出 `ShellShutdown`，进程入口 `AppLauncher`；业务在 `service/*`，持久化在 `storage/*`。版本号以 `.mvn/maven.config` 的 `revision` 为唯一来源。
 
 ## 功能
 
@@ -61,7 +61,7 @@ mvn -q package
 -Xms16m -Xmx96m -XX:+UseSerialGC -XX:MaxMetaspaceSize=96m -Dfile.encoding=UTF-8
 ```
 
-版本号：**v1.1.0**（`AppVersion.DISPLAY` / `APP_VERSION` 为 `v1.1.0`；`pom.xml` / `jpackage --app-version` / HTTP User-Agent 为 `1.1.0`，以 `model.AppVersion` 为单一来源）
+版本号：由 `.mvn/maven.config` 中的 `-Drevision=…` 统一定义；Maven、jpackage 脚本和运行时 `AppVersion` 均从该值获得。发布标签必须是 `v<revision>`，例如 `v1.1.0`。
 
 无 Maven 时以 `run_tests.bat` 的 **SelfTest** 为准；本机有 `mvn` 时会顺带跑 JUnit。
 
@@ -86,7 +86,7 @@ curl -fsSL -o lib\flatlaf-3.5.4.jar https://repo1.maven.org/maven2/com/formdev/f
 ## 路线图（v1.1 已推进）
 
 - [x] 统一自动重连与 probe 配置
-- [x] 版本号单一来源（`AppVersion`）
+- [x] 版本号单一来源（`.mvn/maven.config` 的 `revision`）
 - [x] GitHub Actions CI
 - [x] 拨号中按钮状态机
 - [x] Settings UI bridge 拆分

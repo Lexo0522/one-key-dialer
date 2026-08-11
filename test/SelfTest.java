@@ -392,6 +392,8 @@ public class SelfTest {
     }
 
     private static void testAppVersionAndRedact() {
+        assertTrue("runtime version", model.AppVersion.NUMERIC.matches("[0-9]+(\\.[0-9]+)*"));
+        assertTrue("display version", ("v" + model.AppVersion.NUMERIC).equals(model.AppVersion.DISPLAY));
         assertTrue("ver order", model.AppVersion.compareNumeric("1.0.0", "1.1.0") < 0);
         assertTrue("ver strip", "1.1.0".equals(model.AppVersion.stripV("v1.1.0")));
         assertTrue("mask tail", util.RedactUtil.maskAccount("12345622", 2).endsWith("22"));

@@ -7,8 +7,14 @@ echo   Build EXE with jpackage (JDK 26 recommended)
 echo ========================================
 echo.
 
-REM App version: keep in sync with model.AppVersion.NUMERIC / pom.xml
-set "APP_VER=1.1.0"
+REM Authoritative version source: .mvn\maven.config (also consumed by Maven).
+set "APP_VER="
+for /f "tokens=2 delims==" %%A in ('findstr /b /c:"-Drevision=" ".mvn\maven.config"') do set "APP_VER=%%A"
+if not defined APP_VER (
+    echo [Error] revision missing from .mvn\maven.config
+    call :maybe_pause
+    exit /b 1
+)
 
 java -version >nul 2>nul
 if errorlevel 1 (
@@ -44,6 +50,7 @@ if exist "build" rmdir /s /q "build"
 if exist "output" rmdir /s /q "output"
 
 mkdir "bin"
+> "bin\version.properties" echo app.version=%APP_VER%
 mkdir "build"
 
 echo [1/3] Compiling Java sources...

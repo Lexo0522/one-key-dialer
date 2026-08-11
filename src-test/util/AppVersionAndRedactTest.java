@@ -8,6 +8,12 @@ import static org.junit.jupiter.api.Assertions.*;
 class AppVersionAndRedactTest {
 
     @Test
+    void runtimeVersionIsValidAndHasDisplayPrefix() {
+        assertTrue(AppVersion.NUMERIC.matches("[0-9]+(\\.[0-9]+)*"));
+        assertEquals("v" + AppVersion.NUMERIC, AppVersion.DISPLAY);
+    }
+
+    @Test
     void compareNumericOrdersVersions() {
         assertTrue(AppVersion.compareNumeric("1.0.0", "1.1.0") < 0);
         assertTrue(AppVersion.compareNumeric("1.1.0", "1.0.9") > 0);

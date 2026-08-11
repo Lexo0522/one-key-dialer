@@ -19,12 +19,29 @@ jobs:
           java-version: '26'
           cache: maven
 
+      - name: Verify canonical version
+        shell: cmd
+        run: |
+          set "APP_VER="
+          for /f "tokens=2 delims==" %%A in ('findstr /b /c:"-Drevision=" ".mvn\maven.config"') do set "APP_VER=%%A"
+          if not defined APP_VER (
+            echo revision missing from .mvn\maven.config
+            exit /b 1
+          )
+          for /f "delims=" %%A in ('mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout') do set "MAVEN_VER=%%A"
+          if not "%APP_VER%"=="%MAVEN_VER%" (
+            echo Version mismatch: canonical=%APP_VER% Maven=%MAVEN_VER%
+            exit /b 1
+          )
+          echo Canonical version: %APP_VER%
+
       - name: SelfTest (zero-dep)
         shell: cmd
         run: |
           if exist bin rmdir /s /q bin
           if exist bin-test rmdir /s /q bin-test
           mkdir bin
+          for /f "tokens=2 delims==" %%A in ('findstr /b /c:"-Drevision=" ".mvn\maven.config"') do > bin\version.properties echo app.version=%%A
           mkdir bin-test
           javac -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
           if errorlevel 1 exit /b 1
