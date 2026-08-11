@@ -40,7 +40,7 @@ if errorlevel 1 (
 jpackage --version >nul 2>&1
 if errorlevel 1 (
     echo [Error] jpackage not found!
-    echo Please install JDK 21 or higher (jlink --compress=zip-6 is required)
+    echo Please install JDK 21 or higher ^(jlink --compress=zip-6 is required^)
     call :maybe_pause
     exit /b 1
 )

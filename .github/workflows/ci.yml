@@ -82,6 +82,10 @@ jobs:
           GITHUB_ACTIONS: "true"
         run: |
           call build_jpackage.bat
+          if errorlevel 1 (
+            echo app-image build script failed
+            exit /b 1
+          )
           if not exist output\PPoEDialer\PPoEDialer.exe (
             echo app-image missing
             exit /b 1

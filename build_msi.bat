@@ -25,7 +25,7 @@ if errorlevel 1 (
 
 jpackage --version >nul 2>&1
 if errorlevel 1 (
-    echo [Error] jpackage not found! Need JDK 21+ (recommended 26)
+    echo [Error] jpackage not found! Need JDK 21+ ^(recommended 26^)
     call :maybe_pause
     exit /b 1
 )
