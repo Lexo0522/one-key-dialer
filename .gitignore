@@ -5,6 +5,7 @@ build/
 output/
 target/
 installer/
+release/
 
 # Runtime jars: ignore extras, keep vendored FlatLaf
 lib/*

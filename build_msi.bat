@@ -30,8 +30,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist "build\PPoEDialer.jar" (
-    echo [1/2] Building app-image prerequisites via build_jpackage.bat ...
+set "REUSE_APP_IMAGE=false"
+if /I "%~1"=="--reuse-app-image" set "REUSE_APP_IMAGE=true"
+
+if /I not "%REUSE_APP_IMAGE%"=="true" (
+    echo [1/2] Building fresh app-image prerequisites via build_jpackage.bat ...
     call "%~dp0build_jpackage.bat"
     if errorlevel 1 (
         echo [Error] Prerequisite build failed

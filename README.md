@@ -45,6 +45,7 @@ compile_and_run.bat
 run_tests.bat
 build_jpackage.bat
 build_msi.bat
+prepare_release.bat
 运行程序.bat
 ```
 
@@ -62,6 +63,18 @@ mvn -q package
 ```
 
 版本号：由 `.mvn/maven.config` 中的 `-Drevision=…` 统一定义；Maven、jpackage 脚本和运行时 `AppVersion` 均从该值获得。发布标签必须是 `v<revision>`，例如 `v1.1.0`。
+
+## 发布产物约定
+
+执行 `prepare_release.bat` 会按当前 `revision` 构建 `release/` 下的三个文件：
+
+```text
+PPoEDialer-<revision>-windows.zip
+PPoEDialer-<revision>-windows.msi
+SHA256SUMS.txt
+```
+
+该脚本依赖 Windows PowerShell、JDK 21+（推荐 26）以及 MSI 打包所需的 WiX；它会先在 `release/.staging/` 构建，所有文件成功后才发布到 `release/`，只生成本地文件，不会创建或发布 GitHub Release。创建 GitHub Release 时，标签必须为 `v<revision>`，并且必须同时上传这三个文件。`SHA256SUMS.txt` 使用标准 SHA-256 格式，每行是两个空格分隔的 `哈希值  文件名`；更新器会在下载完成后以它校验安装包，缺失、格式不正确或不包含目标文件时会拒绝自动安装。
 
 无 Maven 时以 `run_tests.bat` 的 **SelfTest** 为准；本机有 `mvn` 时会顺带跑 JUnit。
 
@@ -87,6 +100,7 @@ curl -fsSL -o lib\flatlaf-3.5.4.jar https://repo1.maven.org/maven2/com/formdev/f
 
 - [x] 统一自动重连与 probe 配置
 - [x] 版本号单一来源（`.mvn/maven.config` 的 `revision`）
+- [x] 发布产物约定：版本化 ZIP / MSI + SHA256SUMS 清单
 - [x] GitHub Actions CI
 - [x] 拨号中按钮状态机
 - [x] Settings UI bridge 拆分
