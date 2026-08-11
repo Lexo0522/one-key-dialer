@@ -36,7 +36,7 @@ if not exist "bin\version.properties" (
     exit /b 1
 )
 
-javac -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
+javac --release 11 -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
 if errorlevel 1 (
     echo [错误] 编译失败！
     pause

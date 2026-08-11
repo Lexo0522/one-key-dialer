@@ -10,7 +10,7 @@ if not exist "bin\version.properties" (
   echo Missing revision in .mvn\maven.config
   exit /b 1
 )
-javac -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
+javac --release 11 -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
 if errorlevel 1 (
   echo Compile failed
   exit /b 1
@@ -19,7 +19,7 @@ if errorlevel 1 (
 echo [2/3] Compiling zero-dep SelfTest...
 if exist "bin-test" rmdir /s /q "bin-test"
 mkdir "bin-test"
-javac -encoding UTF-8 -d bin-test -cp bin test\SelfTest.java
+javac --release 11 -encoding UTF-8 -d bin-test -cp bin test\SelfTest.java
 if errorlevel 1 (
   echo Test compile failed
   exit /b 1

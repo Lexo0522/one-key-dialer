@@ -9,14 +9,17 @@ on:
 jobs:
   test:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        java: ['11', '26']
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up JDK 26
+      - name: Set up JDK ${{ matrix.java }}
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '26'
+          java-version: ${{ matrix.java }}
           cache: maven
 
       - name: Verify canonical version
@@ -43,9 +46,9 @@ jobs:
           mkdir bin
           for /f "tokens=2 delims==" %%A in ('findstr /b /c:"-Drevision=" ".mvn\maven.config"') do > bin\version.properties echo app.version=%%A
           mkdir bin-test
-          javac -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
+          javac --release 11 -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
           if errorlevel 1 exit /b 1
-          javac -encoding UTF-8 -d bin-test -cp bin test\SelfTest.java
+          javac --release 11 -encoding UTF-8 -d bin-test -cp bin test\SelfTest.java
           if errorlevel 1 exit /b 1
           java -cp bin-test;bin SelfTest
           if errorlevel 1 exit /b 1

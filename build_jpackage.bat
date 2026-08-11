@@ -40,7 +40,7 @@ if errorlevel 1 (
 jpackage --version >nul 2>&1
 if errorlevel 1 (
     echo [Error] jpackage not found!
-    echo Please install JDK 14 or higher
+    echo Please install JDK 21 or higher (jlink --compress=zip-6 is required)
     call :maybe_pause
     exit /b 1
 )
@@ -54,7 +54,7 @@ mkdir "bin"
 mkdir "build"
 
 echo [1/3] Compiling Java sources...
-javac -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
+javac --release 11 -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
 if errorlevel 1 (
     echo.
     echo [Error] Compile failed!
