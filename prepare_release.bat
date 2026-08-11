@@ -12,7 +12,7 @@ if not defined APP_VER (
     call :maybe_pause
     exit /b 1
 )
-echo %APP_VER% | findstr /r "^[0-9][0-9.]*$" >nul
+echo %APP_VER%| findstr /r "^[0-9][0-9.]*$" >nul
 if errorlevel 1 (
     echo [Error] Invalid revision: %APP_VER%
     call :maybe_pause
