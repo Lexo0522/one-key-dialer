@@ -1,7 +1,7 @@
 # PPPoE校园网自动拨号工具
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](https://github.com/Lexo0522/one-key-dialer)
+[![Version](https://img.shields.io/badge/version-v1.1.1-blue.svg)](https://github.com/Lexo0522/one-key-dialer)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)](https://github.com/Lexo0522/one-key-dialer)
 [![CI](https://github.com/Lexo0522/one-key-dialer/actions/workflows/ci.yml/badge.svg)](https://github.com/Lexo0522/one-key-dialer/actions/workflows/ci.yml)
 
