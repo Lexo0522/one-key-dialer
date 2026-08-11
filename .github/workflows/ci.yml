@@ -31,9 +31,14 @@ jobs:
             echo revision missing from .mvn\maven.config
             exit /b 1
           )
-          for /f "delims=" %%A in ('mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout') do set "MAVEN_VER=%%A"
-          if not "%APP_VER%"=="%MAVEN_VER%" (
-            echo Version mismatch: canonical=%APP_VER% Maven=%MAVEN_VER%
+          findstr /l /c:"<version>${revision}</version>" pom.xml >nul
+          if errorlevel 1 (
+            echo pom.xml must use ^<version^>${revision}^</version^> as its project version
+            exit /b 1
+          )
+          findstr /l /c:"app.version=${revision}" version.properties >nul
+          if errorlevel 1 (
+            echo version.properties must use app.version=${revision}
             exit /b 1
           )
           echo Canonical version: %APP_VER%
