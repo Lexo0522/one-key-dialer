@@ -33,7 +33,9 @@ public final class UpdateCheckService {
         }
 
         public boolean hasInstallableAsset() {
-            return release != null && release.preferredWindowsAsset().isPresent();
+            return release != null
+                && release.preferredWindowsAsset().isPresent()
+                && release.checksumManifest().isPresent();
         }
     }
 
@@ -71,9 +73,11 @@ public final class UpdateCheckService {
             int cmp = AppVersion.compareNumeric(current, tag);
             if (cmp < 0) {
                 String msg = "发现新版本 " + tag + "（当前 " + AppVersion.DISPLAY + "）";
-                if (release.preferredWindowsAsset().isPresent()) {
+                if (release.preferredWindowsAsset().isPresent() && release.checksumManifest().isPresent()) {
                     UpdateRelease.Asset a = release.preferredWindowsAsset().get();
                     msg += "\n可下载: " + a.name;
+                } else if (release.preferredWindowsAsset().isPresent()) {
+                    msg += "\n（发布包缺少 SHA256SUMS.txt，已禁用自动安装，请到发布页手动确认）";
                 } else {
                     msg += "\n（发布页暂无匹配的 Windows 安装包，可手动打开网页）";
                 }

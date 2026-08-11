@@ -99,13 +99,13 @@ public final class AccountUiController {
             session.accounts(),
             maxIdx -> session.clampIndexAfterListChange(),
             () -> {
-                session.setDirty(false);
                 refreshAccountComboBox();
             },
             () -> {
                 session.setDirty(true);
-                session.save();
-                session.setDirty(false);
+                if (session.save()) {
+                    session.setDirty(false);
+                }
             }
         );
         onAccountChanged();

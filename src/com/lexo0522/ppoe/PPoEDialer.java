@@ -197,6 +197,7 @@ public class PPoEDialer extends JFrame implements ShellBridge {
         LegacyDataMigrator.migrateIfNeeded(PPoEDialer.class,
             AppFiles.ACCOUNTS, AppFiles.SETTINGS, AppFiles.HISTORY, AppFiles.LOG);
         loadSettings();
+        reconcileAutoStartAsync();
         services.accountSession.load();
         accountsUi.refreshAccountComboBox();
         accountsUi.refreshDialCredentialCache();
@@ -411,13 +412,43 @@ public class PPoEDialer extends JFrame implements ShellBridge {
         toFront();
     }
 
+    private void reconcileAutoStartAsync() {
+        if (homePanel == null) return;
+        final boolean settingsWantAutoStart = homePanel.getChkAutoStart().isSelected();
+        homePanel.getChkAutoStart().setEnabled(false);
+        services.backgroundExecutor.submitLong(() -> {
+            boolean registered = services.startupService.isAutoStartEnabled();
+            if (settingsWantAutoStart || registered) {
+                registered = services.startupService.ensureAutoStartHealthy(PPoEDialer.class, true);
+            }
+            final boolean enabled = registered;
+            SwingUtilities.invokeLater(() -> {
+                if (homePanel == null) return;
+                homePanel.getChkAutoStart().setSelected(enabled);
+                homePanel.getChkAutoStart().setEnabled(true);
+                if (settingsWantAutoStart != enabled) saveSettings();
+            });
+        });
+    }
+
     private void toggleAutoStart() {
-        if (homePanel.getChkAutoStart().isSelected()) {
-            services.startupService.enableAutoStart(PPoEDialer.class);
-        } else {
-            services.startupService.disableAutoStart();
-        }
-        saveSettings();
+        if (homePanel == null) return;
+        final boolean requested = homePanel.getChkAutoStart().isSelected();
+        homePanel.getChkAutoStart().setEnabled(false);
+        services.backgroundExecutor.submitLong(() -> {
+            if (requested) {
+                services.startupService.enableAutoStart(PPoEDialer.class);
+            } else {
+                services.startupService.disableAutoStart();
+            }
+            final boolean enabled = services.startupService.isAutoStartEnabled();
+            SwingUtilities.invokeLater(() -> {
+                if (homePanel == null) return;
+                homePanel.getChkAutoStart().setSelected(enabled);
+                homePanel.getChkAutoStart().setEnabled(true);
+                saveSettings();
+            });
+        });
     }
 
     private void syncProbeFromUi(ProbeSettingsPanel panel) {
@@ -444,7 +475,6 @@ public class PPoEDialer extends JFrame implements ShellBridge {
             services,
             () -> homePanel,
             () -> tabs,
-            PPoEDialer.class,
             this::syncScheduleCacheFromUi,
             this::syncProbeFromUi,
             msg -> log(msg, UiTheme.COLOR_WARNING),

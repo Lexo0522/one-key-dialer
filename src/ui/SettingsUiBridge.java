@@ -21,10 +21,6 @@ public final class SettingsUiBridge implements SettingsCoordinator.Ui {
 
         DialOrchestrator dialOrchestrator();
 
-        boolean isAutoStartEnabledInRegistry();
-
-        boolean ensureAutoStartHealthy();
-
         void syncScheduleCacheFromUi();
 
         void syncProbeFromUi();
@@ -168,16 +164,6 @@ public final class SettingsUiBridge implements SettingsCoordinator.Ui {
     }
 
     @Override
-    public boolean isAutoStartEnabledInRegistry() {
-        return host.isAutoStartEnabledInRegistry();
-    }
-
-    @Override
-    public boolean ensureAutoStartHealthy() {
-        return host.ensureAutoStartHealthy();
-    }
-
-    @Override
     public void onLoadWarning(String message) {
         host.logWarning(message);
     }
@@ -185,10 +171,5 @@ public final class SettingsUiBridge implements SettingsCoordinator.Ui {
     @Override
     public void onSaveError(String message) {
         host.logError(message);
-    }
-
-    @Override
-    public void onAutostartLegacyWarning(String message) {
-        host.logWarning(message);
     }
 }

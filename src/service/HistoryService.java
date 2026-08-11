@@ -96,24 +96,27 @@ public class HistoryService {
         }
     }
 
-    public void save() {
+    public boolean save() {
         ensureLoaded();
         try {
             synchronized (records) {
                 store.save(records);
             }
+            return true;
         } catch (IOException e) {
             onWarn.accept("保存历史记录失败: " + e.getMessage());
+            return false;
         }
     }
 
     /** Save only if dirty; returns true if a save was attempted. */
     public boolean saveIfDirty() {
-        if (dirty.compareAndSet(true, false)) {
-            save();
-            return true;
+        if (!dirty.compareAndSet(true, false)) return false;
+        if (!save()) {
+            // A failed write must stay dirty so later shutdown / retry can preserve the record.
+            dirty.set(true);
         }
-        return false;
+        return true;
     }
 
     public void addRecord(String operation, String account, String result, String duration, String totalTraffic) {

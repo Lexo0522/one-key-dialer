@@ -39,6 +39,31 @@ class AccountSessionTest {
         assertFalse(session.accounts().isEmpty());
         assertNotNull(session.currentOrNull());
     }
+    @Test
+    void failedSavePreservesAccountDirtyState() throws Exception {
+        var file = Files.createTempFile("acc-fail", ".ini").toFile();
+        file.deleteOnExit();
+        FailingAccountStore store = new FailingAccountStore(file);
+        AccountSession session = new AccountSession(store, null);
+        session.accounts().add(new AccountInfo("n", "u", "old", ""));
+        session.setCurrentIndex(0);
+
+        session.saveCurrentIfNeeded("n", "u", "new".toCharArray());
+
+        assertTrue(session.isDirty());
+        assertFalse(session.save());
+    }
+
+    private static final class FailingAccountStore extends AccountStore {
+        private FailingAccountStore(java.io.File file) {
+            super(file);
+        }
+
+        @Override
+        public void save(java.util.List<AccountInfo> accounts) throws java.io.IOException {
+            throw new java.io.IOException("disk unavailable");
+        }
+    }
 }
 
 class RuntimeSettingsTest {

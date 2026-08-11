@@ -79,7 +79,7 @@ public final class AccountSession {
             store.load(accounts);
             if (store.consumeMigrationFlag()) {
                 logger.info("检测到旧版账号格式，正在迁移加密...");
-                save();
+                if (!save()) dirty = true;
             }
         } catch (IOException e) {
             logger.error("加载账号失败（未覆盖原文件）: " + e.getMessage());
@@ -94,18 +94,20 @@ public final class AccountSession {
     public void ensureDefaultAccount() {
         if (accounts.isEmpty()) {
             accounts.add(new AccountInfo("默认账号", "", "", ""));
-            if (!store.getFile().exists()) {
-                save();
+            if (!store.getFile().exists() && !save()) {
+                dirty = true;
             }
         }
     }
 
-    public void save() {
+    public boolean save() {
         try {
             store.save(accounts);
             FilePermissions.restrictToOwner(store.getFile());
+            return true;
         } catch (IOException e) {
-            logger.error("保存账号失败");
+            logger.error("保存账号失败: " + e.getMessage());
+            return false;
         }
     }
 
@@ -163,8 +165,9 @@ public final class AccountSession {
     public void saveCurrentIfNeeded(String name, String username, char[] passwordChars) {
         boolean changed = pullFromUi(name, username, passwordChars);
         if (changed || dirty) {
-            save();
-            dirty = false;
+            if (save()) {
+                dirty = false;
+            }
         }
     }
 

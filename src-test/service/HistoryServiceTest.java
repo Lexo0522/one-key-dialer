@@ -50,4 +50,36 @@ class HistoryServiceTest {
         assertEquals("拨号", reloaded.records().get(1)[1]);
         assertNull(warn.get());
     }
+
+    @Test
+    void failedSaveKeepsHistoryDirtyForRetry() throws Exception {
+        var tmp = Files.createTempFile("hist-save-failure", ".csv").toFile();
+        tmp.deleteOnExit();
+        AtomicReference<String> warn = new AtomicReference<>();
+        FailingHistoryStore store = new FailingHistoryStore(tmp);
+        HistoryService svc = new HistoryService(store, warn::set);
+        svc.addRecord("拨号", "u1", "成功", "--", "--");
+
+        assertTrue(svc.saveIfDirty());
+        assertTrue(svc.dirtyFlag().get());
+        assertNotNull(warn.get());
+
+        store.fail = false;
+        assertTrue(svc.saveIfDirty());
+        assertFalse(svc.dirtyFlag().get());
+    }
+
+    private static final class FailingHistoryStore extends HistoryStore {
+        private boolean fail = true;
+
+        private FailingHistoryStore(java.io.File file) {
+            super(file);
+        }
+
+        @Override
+        public void save(java.util.List<String[]> historyRecords) throws java.io.IOException {
+            if (fail) throw new java.io.IOException("disk unavailable");
+            super.save(historyRecords);
+        }
+    }
 }

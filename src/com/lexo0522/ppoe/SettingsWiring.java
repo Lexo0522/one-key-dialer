@@ -22,7 +22,6 @@ public final class SettingsWiring {
             AppServices services,
             Supplier<MainHomePanel> homePanel,
             Supplier<MainTabsController> tabs,
-            Class<?> appClass,
             Runnable syncScheduleCacheFromUi,
             Consumer<ProbeSettingsPanel> syncProbeFromUi,
             Consumer<String> logWarning,
@@ -53,16 +52,6 @@ public final class SettingsWiring {
             @Override
             public service.DialOrchestrator dialOrchestrator() {
                 return services.dialOrchestrator;
-            }
-
-            @Override
-            public boolean isAutoStartEnabledInRegistry() {
-                return services.startupService.isAutoStartEnabled();
-            }
-
-            @Override
-            public boolean ensureAutoStartHealthy() {
-                return services.startupService.ensureAutoStartHealthy(appClass, true);
             }
 
             @Override

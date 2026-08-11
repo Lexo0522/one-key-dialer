@@ -61,6 +61,10 @@ public final class UpdateRelease {
         public boolean isInstallerLike() {
             return isZip() || isMsi() || isExe();
         }
+
+        public boolean isChecksumManifest() {
+            return "sha256sums.txt".equals(lowerName());
+        }
     }
 
     /**
@@ -92,6 +96,17 @@ public final class UpdateRelease {
         if (bestMsi != null) return Optional.of(bestMsi);
         if (bestExe != null) return Optional.of(bestExe);
         return Optional.empty();
+    }
+
+    public Optional<Asset> checksumManifest() {
+        Asset manifest = null;
+        for (Asset asset : assets) {
+            if (asset != null && !asset.downloadUrl.isEmpty() && asset.isChecksumManifest()) {
+                if (manifest != null) return Optional.empty();
+                manifest = asset;
+            }
+        }
+        return Optional.ofNullable(manifest);
     }
 
     private static int scoreAsset(Asset a) {

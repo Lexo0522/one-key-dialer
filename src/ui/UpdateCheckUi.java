@@ -201,7 +201,7 @@ public final class UpdateCheckUi {
     }
 
     private void afterDownload(DownloadResult dr) {
-        host.logSuccess("更新包已保存: " + dr.file.getAbsolutePath());
+        host.logSuccess("更新包已下载并通过 SHA-256 校验: " + dr.file.getAbsolutePath());
         Object[] options = {"立即安装并重启", "仅保留文件", "打开发布页"};
         int opt = JOptionPane.showOptionDialog(host.dialogOwner(),
             "下载完成:\n" + dr.file.getAbsolutePath()

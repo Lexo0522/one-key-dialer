@@ -33,10 +33,13 @@ public class AccountStore {
     }
 
     public void load(List<AccountInfo> accounts) throws IOException {
-        accounts.clear();
         needsResaveAfterMigration = false;
-        if (!file.exists()) return;
+        if (!file.exists()) {
+            accounts.clear();
+            return;
+        }
 
+        List<AccountInfo> parsed = new ArrayList<>();
         try (BufferedReader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
             String line;
             boolean firstLine = true;
@@ -48,7 +51,7 @@ public class AccountStore {
                 }
                 line = line.trim();
                 if (line.startsWith("[Account") && line.endsWith("]")) {
-                    if (current != null) accounts.add(current);
+                    if (current != null) parsed.add(current);
                     current = new AccountInfo("", "", "", "");
                 } else if (current != null) {
                     String[] parts = line.split("=", 2);
@@ -79,8 +82,18 @@ public class AccountStore {
                     }
                 }
             }
-            if (current != null) accounts.add(current);
+            if (current != null) parsed.add(current);
+        } catch (IOException e) {
+            // Do not let an incomplete parse mark the original file as migrated or replace live data.
+            needsResaveAfterMigration = false;
+            for (AccountInfo account : parsed) {
+                if (account != null) account.clearPassword();
+            }
+            throw e;
         }
+
+        accounts.clear();
+        accounts.addAll(parsed);
     }
 
     private String decryptPasswordField(String raw) throws IOException {

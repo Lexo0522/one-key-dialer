@@ -10,7 +10,8 @@ import java.util.Objects;
 
 /**
  * Settings load/save bridge between UI panels, {@link RuntimeSettings}, and {@link SettingsStore}.
- * Autostart registry truth stays in {@link StartupService}; INI {@code auto.start} only drives heal.
+ * Autostart registry truth stays in {@link StartupService}; the shell reconciles it asynchronously
+ * after the INI preference has been applied to the UI.
  */
 public final class SettingsCoordinator {
     public interface Ui {
@@ -48,15 +49,9 @@ public final class SettingsCoordinator {
 
         void applyProbeFromRuntime();
 
-        boolean isAutoStartEnabledInRegistry();
-
-        boolean ensureAutoStartHealthy();
-
         void onLoadWarning(String message);
 
         void onSaveError(String message);
-
-        void onAutostartLegacyWarning(String message);
     }
 
     private final SettingsStore store;
@@ -100,9 +95,7 @@ public final class SettingsCoordinator {
     public void load() {
         try {
             Map<String, String> settings = store.load();
-            ui.setAutoStartChecked(ui.isAutoStartEnabledInRegistry());
             if (settings.isEmpty()) {
-                healAutoStartIfNeeded(settings);
                 return;
             }
             AppSettings s = AppSettings.fromMap(settings);
@@ -112,7 +105,8 @@ public final class SettingsCoordinator {
                 ui.onLoadWarning("配置项 interval 无效，已保留默认值");
             }
             ui.setAutoReconnect(s.autoReconnect);
-            ui.setAutoStartChecked(ui.isAutoStartEnabledInRegistry());
+            // Registry I/O runs asynchronously in the shell after UI settings have loaded.
+            ui.setAutoStartChecked(s.autoStart);
             ui.setStartMinimized(s.startMinimized);
             accounts.setCurrentIndex(s.accountIndex);
             ui.applyScheduleFrom(s);
@@ -121,30 +115,8 @@ public final class SettingsCoordinator {
             ui.setDisconnectOnNoInternetChecked(runtime.isDisconnectOnNoInternet());
             ui.setUpdateCheckEnabledChecked(runtime.isUpdateCheckEnabled());
             ui.syncScheduleCacheFromUi();
-            healAutoStartIfNeeded(settings);
         } catch (IOException e) {
             ui.onLoadWarning("加载设置失败: " + e.getMessage());
-        }
-    }
-
-    private void healAutoStartIfNeeded(Map<String, String> settings) {
-        boolean want = ui.autoStartChecked();
-        if (!want && settings != null) {
-            want = "true".equalsIgnoreCase(settings.getOrDefault("auto.start", "false"));
-        }
-        if (!want) return;
-        boolean ok = ui.ensureAutoStartHealthy();
-        if (ok) {
-            ui.setAutoStartChecked(true);
-            return;
-        }
-        if (ui.isAutoStartEnabledInRegistry()) {
-            ui.setAutoStartChecked(true);
-            ui.onAutostartLegacyWarning(
-                "开机自启动条目存在但非最新格式，请用打包版 EXE 重新勾选以升级为直接启动");
-        } else {
-            ui.setAutoStartChecked(false);
-            save();
         }
     }
 }

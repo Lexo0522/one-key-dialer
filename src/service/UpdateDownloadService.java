@@ -18,12 +18,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.Enumeration;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -34,6 +39,9 @@ import java.util.zip.ZipFile;
  * MSI/EXE: download then launch installer after user confirms; app exits first for MSI.
  */
 public final class UpdateDownloadService {
+    private static final Pattern SHA256SUM_LINE = Pattern.compile("(?i)^([0-9a-f]{64}) {2}([^\\r\\n]+)$");
+    private static final int MAX_CHECKSUM_MANIFEST_CHARS = 1024 * 1024;
+
     public interface Progress {
         /**
          * @param downloaded bytes so far
@@ -86,11 +94,13 @@ public final class UpdateDownloadService {
         File out = new File(updatesDir(), safeName);
         File part = new File(updatesDir(), safeName + ".part");
 
-        p.onStatus("正在下载 " + asset.name + " …");
         HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.ALWAYS)
             .build();
+        String expectedSha256 = fetchExpectedSha256(client, release, asset, p, cancelled);
+
+        p.onStatus("正在下载 " + asset.name + " …");
         HttpRequest req = HttpRequest.newBuilder(URI.create(asset.downloadUrl))
             .timeout(Duration.ofMinutes(10))
             .header("User-Agent", AppVersion.USER_AGENT)
@@ -128,10 +138,95 @@ public final class UpdateDownloadService {
             part.delete();
             throw e;
         }
+        try {
+            p.onStatus("正在验证 SHA-256 …");
+            String actualSha256 = sha256(part.toPath());
+            if (!expectedSha256.equals(actualSha256)) {
+                throw new IOException("更新包 SHA-256 校验失败");
+            }
+        } catch (Exception e) {
+            //noinspection ResultOfMethodCallIgnored
+            part.delete();
+            throw e;
+        }
         Files.move(part.toPath(), out.toPath(), StandardCopyOption.REPLACE_EXISTING);
         p.onProgress(downloaded, total > 0 ? total : downloaded);
         p.onStatus("下载完成: " + out.getAbsolutePath());
         return new DownloadResult(out, asset, release);
+    }
+
+    private static String fetchExpectedSha256(HttpClient client, UpdateRelease release,
+                                              UpdateRelease.Asset asset, Progress progress,
+                                              AtomicBoolean cancelled) throws Exception {
+        if (cancelled.get()) throw new IOException("下载已取消");
+        Optional<UpdateRelease.Asset> manifest = release.checksumManifest();
+        if (!manifest.isPresent()) {
+            throw new IOException("该 Release 未提供 SHA256SUMS.txt，已拒绝下载未校验的更新包");
+        }
+        progress.onStatus("正在下载 SHA-256 校验清单…");
+        HttpRequest request = HttpRequest.newBuilder(URI.create(manifest.get().downloadUrl))
+            .timeout(Duration.ofSeconds(20))
+            .header("User-Agent", AppVersion.USER_AGENT)
+            .header("Accept", "text/plain")
+            .GET()
+            .build();
+        HttpResponse<String> response = client.send(request,
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() / 100 != 2) {
+            throw new IOException("无法下载 SHA-256 校验清单 HTTP " + response.statusCode());
+        }
+        String contents = response.body();
+        if (contents == null || contents.length() > MAX_CHECKSUM_MANIFEST_CHARS) {
+            throw new IOException("SHA-256 校验清单无效或过大");
+        }
+        return expectedSha256(contents, asset.name);
+    }
+
+    static String expectedSha256(String manifest, String assetName) throws IOException {
+        if (manifest == null || assetName == null || assetName.isEmpty()) {
+            throw new IOException("SHA-256 校验清单缺少目标文件");
+        }
+        String expected = null;
+        String[] lines = manifest.split("\\R", -1);
+        for (String line : lines) {
+            if (line.isEmpty()) continue;
+            Matcher matcher = SHA256SUM_LINE.matcher(line);
+            if (!matcher.matches()) {
+                throw new IOException("SHA-256 校验清单格式无效");
+            }
+            if (assetName.equals(matcher.group(2))) {
+                if (expected != null) {
+                    throw new IOException("SHA-256 校验清单包含重复文件名");
+                }
+                expected = matcher.group(1).toLowerCase(Locale.ROOT);
+            }
+        }
+        if (expected == null) {
+            throw new IOException("SHA-256 校验清单未包含 " + assetName);
+        }
+        return expected;
+    }
+
+    static String sha256(Path file) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream in = Files.newInputStream(file)) {
+                byte[] buffer = new byte[64 * 1024];
+                int count;
+                while ((count = in.read(buffer)) >= 0) {
+                    if (count > 0) digest.update(buffer, 0, count);
+                }
+            }
+            byte[] bytes = digest.digest();
+            StringBuilder hex = new StringBuilder(bytes.length * 2);
+            for (byte b : bytes) {
+                hex.append(Character.forDigit((b >>> 4) & 0x0f, 16));
+                hex.append(Character.forDigit(b & 0x0f, 16));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IOException("当前 Java 运行时不支持 SHA-256", e);
+        }
     }
 
     public static void downloadAsync(BackgroundExecutor executor,

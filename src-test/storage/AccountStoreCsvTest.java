@@ -55,4 +55,22 @@ class AccountStoreCsvTest {
         assertEquals("", list.get(0).getPassword());
         assertEquals("only-remark", list.get(0).remark);
     }
+
+    @Test
+    void corruptPasswordDoesNotReplaceExistingAccountsWithPartialParse() throws Exception {
+        File tmp = Files.createTempFile("accounts", ".ini").toFile();
+        tmp.deleteOnExit();
+        Files.writeString(tmp.toPath(),
+            "[Account1]\nname=first\nusername=user1\npassword=\nremark=\n\n"
+                + "[Account2]\nname=broken\nusername=user2\npassword=AES1:not-valid-base64\nremark=\n",
+            StandardCharsets.UTF_8);
+        AccountStore store = new AccountStore(tmp);
+        List<AccountInfo> live = new java.util.ArrayList<>();
+        live.add(new AccountInfo("existing", "saved-user", "", ""));
+
+        assertThrows(java.io.IOException.class, () -> store.load(live));
+        assertEquals(1, live.size());
+        assertEquals("existing", live.get(0).name);
+        assertFalse(store.consumeMigrationFlag());
+    }
 }
