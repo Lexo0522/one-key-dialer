@@ -126,19 +126,19 @@ class SettingsBindingTest {
         }, new service.LogService(null));
 
         // Busy dialing: disabled with progress label.
-        panel.setDialProgress("连接中…", UiTheme.COLOR_WARNING);
+        panel.setDialProgress(i18n.Messages.get("home.dial.dialing"), UiTheme.COLOR_WARNING);
         assertFalse(panel.getBtnDial().isEnabled());
-        assertEquals("连接中…", panel.getBtnDial().getText());
+        assertEquals(i18n.Messages.get("home.dial.dialing"), panel.getBtnDial().getText());
 
         // Online: button re-enabled and switches to disconnect semantics.
         panel.setOnlineStatus(true);
         assertTrue(panel.getBtnDial().isEnabled());
-        assertEquals("断开连接", panel.getBtnDial().getText());
+        assertEquals(i18n.Messages.get("home.dial.disconnect"), panel.getBtnDial().getText());
 
         // Offline again.
         panel.setOnlineStatus(false);
         assertTrue(panel.getBtnDial().isEnabled());
-        assertEquals("连接宽带", panel.getBtnDial().getText());
+        assertEquals(i18n.Messages.get("home.dial.connect"), panel.getBtnDial().getText());
 
         // Explicit disable path (busy disconnect).
         panel.setDialProgress("断开中…", UiTheme.COLOR_WARNING);

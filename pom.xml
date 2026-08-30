@@ -75,6 +75,12 @@
           <include>version.properties</include>
         </includes>
       </resource>
+      <resource>
+        <directory>src</directory>
+        <includes>
+          <include>i18n/*.properties</include>
+        </includes>
+      </resource>
     </resources>
     <sourceDirectory>src</sourceDirectory>
     <testSourceDirectory>src-test</testSourceDirectory>

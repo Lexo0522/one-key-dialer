@@ -399,9 +399,11 @@ public class PPoEDialer extends JFrame implements ShellBridge, DialView {
         invokeIfUiActive(() -> {
             if (homePanel == null) return;
             if ("dialing".equals(phase)) {
-                homePanel.setDialProgress("连接中…", UiTheme.COLOR_WARNING);
+                homePanel.setDialProgress(i18n.Messages.get("home.dial.dialing"),
+                    UiTheme.COLOR_WARNING);
             } else if ("disconnecting".equals(phase)) {
-                homePanel.setDialProgress("断开中…", UiTheme.COLOR_WARNING);
+                homePanel.setDialProgress(i18n.Messages.get("home.dial.disconnecting"),
+                    UiTheme.COLOR_WARNING);
             } else {
                 homePanel.setOnlineStatus(services.isOnline.get());
             }

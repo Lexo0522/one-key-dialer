@@ -82,14 +82,17 @@ public final class MainTabsController {
     public MainTabsController(Host host) {
         this.host = host;
         tabbedPane.setFont(UiTheme.FONT_CN);
-        tabbedPane.addTab("主页", host.homePanel());
-        tabbedPane.addTab("定时任务", lazyPlaceholder("定时任务设置将在打开时加载..."));
-        tabbedPane.addTab("网络探测", lazyPlaceholder("网络探测设置将在打开时加载..."));
-        historyPanel = lazyPlaceholder("历史记录将在打开时加载...");
-        tabbedPane.addTab("历史记录", historyPanel);
-        tabbedPane.addTab("统计", lazyPlaceholder("拨号统计将在打开时加载..."));
-        diagPanel = lazyPlaceholder("网络诊断工具将在打开时初始化...");
-        tabbedPane.addTab("网络诊断", diagPanel);
+        tabbedPane.addTab(i18n.Messages.get("tab.home"), host.homePanel());
+        tabbedPane.addTab(i18n.Messages.get("tab.schedule"),
+            lazyPlaceholder(i18n.Messages.get("tab.schedule.placeholder")));
+        tabbedPane.addTab(i18n.Messages.get("tab.probe"),
+            lazyPlaceholder(i18n.Messages.get("tab.probe.placeholder")));
+        historyPanel = lazyPlaceholder(i18n.Messages.get("tab.history.placeholder"));
+        tabbedPane.addTab(i18n.Messages.get("tab.history"), historyPanel);
+        tabbedPane.addTab(i18n.Messages.get("tab.stats"),
+            lazyPlaceholder(i18n.Messages.get("tab.stats.placeholder")));
+        diagPanel = lazyPlaceholder(i18n.Messages.get("tab.diag.placeholder"));
+        tabbedPane.addTab(i18n.Messages.get("tab.diag"), diagPanel);
         tabbedPane.addChangeListener(e -> ensureLazyTabContent());
     }
 

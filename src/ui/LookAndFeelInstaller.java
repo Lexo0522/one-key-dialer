@@ -2,16 +2,21 @@ package ui;
 
 import javax.swing.*;
 
-/** Install FlatLaf when present, else system L&F, then apply shared fonts. */
+/** Install FlatLaf (light or dark) when present, else system L&F, then apply shared fonts. */
 public final class LookAndFeelInstaller {
     private LookAndFeelInstaller() {
     }
 
     public static void install() {
+        install(false);
+    }
+
+    public static void install(boolean dark) {
         System.setProperty("awt.font", UiTheme.FONT_NAME_CN);
         boolean flat = false;
         try {
-            Class<?> laf = Class.forName("com.formdev.flatlaf.FlatLightLaf");
+            Class<?> laf = Class.forName(dark
+                ? "com.formdev.flatlaf.FlatDarkLaf" : "com.formdev.flatlaf.FlatLightLaf");
             LookAndFeel instance = (LookAndFeel) laf.getDeclaredConstructor().newInstance();
             UIManager.setLookAndFeel(instance);
             flat = true;

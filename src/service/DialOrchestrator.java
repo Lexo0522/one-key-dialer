@@ -306,7 +306,8 @@ public final class DialOrchestrator {
             }
             view.onConnectionState(false);
             env.addHistory(OP_USER_DISCONNECT, env.currentAccountName(),
-                code == 0 ? "成功" : "完成", duration, traffic);
+                code == 0 ? model.DialOutcome.SUCCESS.text() : model.DialOutcome.DONE.text(),
+                duration, traffic);
             if (code == 0) {
                 view.log(DialView.Level.SUCCESS, "网络已断开");
             } else {
@@ -333,10 +334,12 @@ public final class DialOrchestrator {
             String traffic = FormatUtil.formatBytes(env.sessionTrafficBytes());
             if (code == 0) {
                 view.onConnectionState(false);
-                env.addHistory(OP_SCHEDULE_DISCONNECT, env.currentAccountName(), "成功", "--", traffic);
+                env.addHistory(OP_SCHEDULE_DISCONNECT, env.currentAccountName(),
+                    model.DialOutcome.SUCCESS.text(), "--", traffic);
             } else {
                 view.log(DialView.Level.WARNING, "定时断开命令执行失败，退出码: " + code);
-                env.addHistory(OP_SCHEDULE_DISCONNECT, env.currentAccountName(), "失败", "--", traffic);
+                env.addHistory(OP_SCHEDULE_DISCONNECT, env.currentAccountName(),
+                    model.DialOutcome.FAILURE.text(), "--", traffic);
             }
         } catch (Exception e) {
             view.log(DialView.Level.WARNING, "定时断开失败: " + e.getClass().getSimpleName()

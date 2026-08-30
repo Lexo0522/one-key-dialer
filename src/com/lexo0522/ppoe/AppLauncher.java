@@ -1,21 +1,30 @@
 package com.lexo0522.ppoe;
 
+import model.AppFiles;
 import model.AppVersion;
+import model.SettingsSnapshot;
 import service.StartupService;
+import storage.SettingsStore;
 import ui.LookAndFeelInstaller;
 import ui.UiTheme;
+import util.AppPaths;
 
 import javax.swing.SwingUtilities;
+import java.io.File;
 
 /**
- * Process entry: L&F, optional autostart delay, create shell, first-run log lines.
+ * Process entry: theme, L&F, optional autostart delay, create shell, first-run log lines.
  */
 public final class AppLauncher {
     private AppLauncher() {
     }
 
     public static void main(String[] args) {
-        LookAndFeelInstaller.install();
+        // Resolve the theme before any component exists — components capture the
+        // palette at construction; a theme change therefore needs a restart.
+        String themePref = loadThemePreference();
+        UiTheme.init(themePref);
+        LookAndFeelInstaller.install(UiTheme.isDark());
 
         final boolean fromAutostart = StartupService.argsContainAutostart(args);
         if (fromAutostart && StartupService.AUTOSTART_DELAY_MS > 0) {
@@ -27,6 +36,19 @@ public final class AppLauncher {
         }
 
         SwingUtilities.invokeLater(() -> launchOnEdt(fromAutostart));
+    }
+
+    /** Best-effort early read of the theme preference; the full load happens in the shell. */
+    static String loadThemePreference() {
+        try {
+            File settingsFile = new File(AppPaths.getDataDir(PPoEDialer.class), AppFiles.SETTINGS);
+            SettingsSnapshot stored = new SettingsStore(settingsFile).load();
+            if (stored != null && stored.uiTheme != null) {
+                return stored.uiTheme;
+            }
+        } catch (Exception ignored) {
+        }
+        return SettingsSnapshot.THEME_SYSTEM;
     }
 
     static void launchOnEdt(boolean fromAutostart) {

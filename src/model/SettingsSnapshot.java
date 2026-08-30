@@ -9,6 +9,10 @@ import util.ConnectivityConfirm;
 public final class SettingsSnapshot {
     public static final int MIN_INTERVAL_SECONDS = 5;
 
+    public static final String THEME_SYSTEM = "system";
+    public static final String THEME_LIGHT = "light";
+    public static final String THEME_DARK = "dark";
+
     public final int intervalSeconds;
     public final boolean autoReconnect;
     public final boolean autoStart;
@@ -30,6 +34,8 @@ public final class SettingsSnapshot {
     public final boolean disconnectOnNoInternet;
     /** Quiet startup GitHub Releases check; manual tray check unaffected. */
     public final boolean updateCheckEnabled;
+    /** system | light | dark — UI theme; a change needs an app restart. */
+    public final String uiTheme;
 
     private SettingsSnapshot(Builder b) {
         this.intervalSeconds = b.intervalSeconds;
@@ -50,6 +56,7 @@ public final class SettingsSnapshot {
         this.probeDelayMs = b.probeDelayMs;
         this.disconnectOnNoInternet = b.disconnectOnNoInternet;
         this.updateCheckEnabled = b.updateCheckEnabled;
+        this.uiTheme = b.uiTheme;
     }
 
     public static SettingsSnapshot defaults() {
@@ -81,6 +88,7 @@ public final class SettingsSnapshot {
         b.probeDelayMs = probeDelayMs;
         b.disconnectOnNoInternet = disconnectOnNoInternet;
         b.updateCheckEnabled = updateCheckEnabled;
+        b.uiTheme = uiTheme;
         return b;
     }
 
@@ -109,6 +117,7 @@ public final class SettingsSnapshot {
             && probeDelayMs == s.probeDelayMs
             && disconnectOnNoInternet == s.disconnectOnNoInternet
             && updateCheckEnabled == s.updateCheckEnabled
+            && uiTheme.equals(s.uiTheme)
             && probeMode.equals(s.probeMode)
             && probeHost.equals(s.probeHost)
             && probeHttpUrl.equals(s.probeHttpUrl);
@@ -134,6 +143,7 @@ public final class SettingsSnapshot {
         result = 31 * result + probeDelayMs;
         result = 31 * result + (disconnectOnNoInternet ? 1 : 0);
         result = 31 * result + (updateCheckEnabled ? 1 : 0);
+        result = 31 * result + uiTheme.hashCode();
         return result;
     }
 
@@ -156,6 +166,12 @@ public final class SettingsSnapshot {
         private int probeDelayMs = (int) ConnectivityConfirm.DEFAULT_DELAY_MS;
         private boolean disconnectOnNoInternet = false;
         private boolean updateCheckEnabled = true;
+        private String uiTheme = THEME_SYSTEM;
+
+        public Builder uiTheme(String v) {
+            this.uiTheme = v != null ? v.trim().toLowerCase(java.util.Locale.ROOT) : THEME_SYSTEM;
+            return this;
+        }
 
         public Builder intervalSeconds(int v) {
             this.intervalSeconds = Math.max(MIN_INTERVAL_SECONDS, v);
@@ -231,6 +247,10 @@ public final class SettingsSnapshot {
                 ? this.probeHttpUrl.trim() : ConnectivityConfirm.DEFAULT_HTTP_URL;
             this.probeAttempts = Math.max(1, this.probeAttempts);
             this.probeDelayMs = Math.max(0, this.probeDelayMs);
+            if (!THEME_SYSTEM.equals(this.uiTheme) && !THEME_LIGHT.equals(this.uiTheme)
+                && !THEME_DARK.equals(this.uiTheme)) {
+                this.uiTheme = THEME_SYSTEM;
+            }
             return new SettingsSnapshot(this);
         }
 

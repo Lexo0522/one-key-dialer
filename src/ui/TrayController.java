@@ -246,38 +246,38 @@ public final class TrayController {
         JPopupMenu popup = new JPopupMenu();
         popup.setFont(UiTheme.FONT_CN);
 
-        JMenuItem showItem = new JMenuItem("显示窗口");
+        JMenuItem showItem = new JMenuItem(i18n.Messages.get("tray.showWindow"));
         showItem.setFont(UiTheme.FONT_CN);
         showItem.addActionListener(e -> host.showWindow());
         popup.add(showItem);
 
-        JMenuItem dialItem = new JMenuItem("连接宽带");
+        JMenuItem dialItem = new JMenuItem(i18n.Messages.get("home.dial.connect"));
         dialItem.setFont(UiTheme.FONT_CN);
         dialItem.addActionListener(e -> host.dialNow());
         popup.add(dialItem);
 
-        JMenuItem discItem = new JMenuItem("断开连接");
+        JMenuItem discItem = new JMenuItem(i18n.Messages.get("home.dial.disconnect"));
         discItem.setFont(UiTheme.FONT_CN);
         discItem.addActionListener(e -> host.disconnectNow());
         popup.add(discItem);
 
         popup.addSeparator();
 
-        accountsMenu = new JMenu("切换账号");
+        accountsMenu = new JMenu(i18n.Messages.get("tray.switchAccount"));
         accountsMenu.setFont(UiTheme.FONT_CN);
         popup.add(accountsMenu);
         refreshAccountMenu();
 
         popup.addSeparator();
 
-        JMenuItem updateItem = new JMenuItem("检查更新");
+        JMenuItem updateItem = new JMenuItem(i18n.Messages.get("tray.checkUpdates"));
         updateItem.setFont(UiTheme.FONT_CN);
         updateItem.addActionListener(e -> host.checkForUpdates());
         popup.add(updateItem);
 
         popup.addSeparator();
 
-        JMenuItem exitItem = new JMenuItem("退出");
+        JMenuItem exitItem = new JMenuItem(i18n.Messages.get("tray.exit"));
         exitItem.setFont(UiTheme.FONT_CN);
         exitItem.addActionListener(e -> host.exitProgram());
         popup.add(exitItem);

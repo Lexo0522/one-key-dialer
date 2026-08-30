@@ -57,7 +57,7 @@ class DialOrchestratorTest {
         assertEquals(1, stats.totalDialCount().get());
         assertEquals(1, stats.successDialCount().get());
         assertEquals("拨号", env.history.get(0)[0]);
-        assertEquals("成功", env.history.get(0)[2]);
+        assertEquals(model.DialOutcome.SUCCESS.text(), env.history.get(0)[2]);
         // busy state released
         assertTrue(lifecycle.isIdle());
     }
@@ -158,7 +158,7 @@ class DialOrchestratorTest {
 
         assertEquals(1, env.history.size());
         assertEquals("定时断开", env.history.get(0)[0]);
-        assertEquals("失败", env.history.get(0)[2]);
+        assertEquals(model.DialOutcome.FAILURE.text(), env.history.get(0)[2]);
     }
 
     @Test

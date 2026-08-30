@@ -1,5 +1,6 @@
 package ui;
 
+import i18n.Messages;
 import model.SettingsSnapshot;
 import service.LogService;
 
@@ -45,18 +46,20 @@ public class MainHomePanel extends JPanel {
     private final JPanel statusBar = new JPanel(new BorderLayout());
 
     private final JComboBox<String> cmbAccounts = new JComboBox<>();
+    private final JComboBox<String> cmbTheme = new JComboBox<>(new String[]{
+        Messages.get("theme.system"), Messages.get("theme.light"), Messages.get("theme.dark")});
     private final JTextField txtConnectionName = new JTextField(20);
     private final JTextField txtUsername = new JTextField(20);
     private final JPasswordField txtPassword = new JPasswordField(20);
     private final JSpinner spnInterval = new JSpinner(new SpinnerNumberModel(DEFAULT_INTERVAL, 5, 3600, 5));
-    private final JCheckBox chkAutoReconnect = new JCheckBox("断网自动重连");
-    private final JCheckBox chkAutoStart = new JCheckBox("开机自动启动");
-    private final JCheckBox chkStartMinimized = new JCheckBox("启动时最小化到托盘");
-    private final JCheckBox chkDisconnectOnNoInternet = new JCheckBox("无外网时自动断开宽带");
-    private final JCheckBox chkUpdateCheck = new JCheckBox("启动时检查更新");
+    private final JCheckBox chkAutoReconnect = new JCheckBox(Messages.get("home.autoReconnect"));
+    private final JCheckBox chkAutoStart = new JCheckBox(Messages.get("home.autoStart"));
+    private final JCheckBox chkStartMinimized = new JCheckBox(Messages.get("home.startMinimized"));
+    private final JCheckBox chkDisconnectOnNoInternet = new JCheckBox(Messages.get("home.disconnectNoInternet"));
+    private final JCheckBox chkUpdateCheck = new JCheckBox(Messages.get("home.updateCheck"));
     private final JTextPane logPane = new JTextPane();
     private final JButton btnDial;
-    private final JLabel lblStatus = new JLabel("未连接");
+    private final JLabel lblStatus = new JLabel(Messages.get("home.status.disconnected"));
     private final JLabel lblStatusDot = new JLabel("●");
     private final JLabel lblSpeed = new JLabel("↓ -- ↑ --");
     private final JLabel lblUptime = new JLabel("时长: --");
@@ -70,7 +73,7 @@ public class MainHomePanel extends JPanel {
         buildStatusBar();
         add(buildCenter(), BorderLayout.CENTER);
 
-        btnDial = createStyledButton("连接宽带", UiTheme.COLOR_INFO);
+        btnDial = createStyledButton(Messages.get("home.dial.connect"), UiTheme.COLOR_INFO);
         btnDial.setPreferredSize(new Dimension(300, 45));
         btnDial.addActionListener(e -> host.onDialToggle());
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 5));
@@ -152,6 +155,9 @@ public class MainHomePanel extends JPanel {
             "启动数秒后静默查询 GitHub Releases；关闭后仍可在托盘「检查更新」手动检查");
         chkUpdateCheck.addActionListener(e ->
             host.onUpdateCheckToggled(chkUpdateCheck.isSelected()));
+        cmbTheme.setFont(UiTheme.FONT_CN);
+        cmbTheme.setToolTipText("重启应用后生效");
+        cmbTheme.addActionListener(e -> host.saveSettings());
     }
 
     private JPanel buildCenter() {
@@ -174,10 +180,10 @@ public class MainHomePanel extends JPanel {
         panel.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(UiTheme.COLOR_BORDER),
             BorderFactory.createEmptyBorder(8, 10, 8, 10)));
-        JButton btnAccountConfig = new JButton("账号配置");
+        JButton btnAccountConfig = new JButton(Messages.get("home.account.config"));
         btnAccountConfig.setFont(UiTheme.FONT_CN);
         btnAccountConfig.addActionListener(e -> host.openAccountManager());
-        JLabel lbl = new JLabel("  账号:");
+        JLabel lbl = new JLabel(Messages.get("home.account.label"));
         lbl.setFont(UiTheme.FONT_CN);
         panel.add(lbl, BorderLayout.WEST);
         panel.add(cmbAccounts, BorderLayout.CENTER);
@@ -196,15 +202,15 @@ public class MainHomePanel extends JPanel {
         gbc.fill = GridBagConstraints.HORIZONTAL;
         int row = 0;
 
-        addLabeled(panel, gbc, row++, "昵称:", txtConnectionName);
-        addLabeled(panel, gbc, row++, "学号/账号:", txtUsername);
-        addLabeled(panel, gbc, row++, "密 码:", txtPassword);
+        addLabeled(panel, gbc, row++, Messages.get("home.nickname.label"), txtConnectionName);
+        addLabeled(panel, gbc, row++, Messages.get("home.username.label"), txtUsername);
+        addLabeled(panel, gbc, row++, Messages.get("home.password.label"), txtPassword);
 
         gbc.gridx = 0;
         gbc.gridy = row;
         gbc.weightx = 0;
         gbc.gridwidth = 1;
-        JLabel n4 = new JLabel("检测间隔(秒):");
+        JLabel n4 = new JLabel(Messages.get("home.interval.label"));
         n4.setFont(UiTheme.FONT_CN);
         panel.add(n4, gbc);
         gbc.gridx = 1;
@@ -234,12 +240,25 @@ public class MainHomePanel extends JPanel {
         panel.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(UiTheme.COLOR_BORDER),
             BorderFactory.createEmptyBorder(6, 10, 6, 10)));
+
+        JPanel themeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 2));
+        themeRow.setOpaque(false);
+        JLabel themeLabel = new JLabel(Messages.get("theme.label") + " ");
+        themeLabel.setFont(UiTheme.FONT_CN);
+        themeRow.add(themeLabel);
+        themeRow.add(cmbTheme);
+        JLabel themeHint = new JLabel(Messages.get("theme.restartHint"));
+        themeHint.setFont(UiTheme.FONT_CN_SMALL);
+        themeHint.setForeground(UiTheme.COLOR_HINT);
+        themeRow.add(themeHint);
+        panel.add(wrapLeft(themeRow));
+
         panel.add(wrapLeft(chkAutoReconnect));
         panel.add(wrapLeft(chkAutoStart));
         panel.add(wrapLeft(chkStartMinimized));
         panel.add(wrapLeft(chkDisconnectOnNoInternet));
         panel.add(wrapLeft(chkUpdateCheck));
-        JLabel autostartHint = new JLabel("  开机自启以注册表为准（非仅 INI）");
+        JLabel autostartHint = new JLabel(Messages.get("home.autostartHint"));
         autostartHint.setFont(UiTheme.FONT_CN_SMALL);
         autostartHint.setForeground(UiTheme.COLOR_HINT);
         panel.add(wrapLeft(autostartHint));
@@ -271,7 +290,7 @@ public class MainHomePanel extends JPanel {
             BorderFactory.createLineBorder(UiTheme.COLOR_BORDER_LIGHT),
             BorderFactory.createTitledBorder(
                 BorderFactory.createEmptyBorder(5, 5, 0, 5),
-                "  运行日志",
+                Messages.get("home.log.title"),
                 TitledBorder.LEFT,
                 TitledBorder.TOP,
                 UiTheme.FONT_CN_BOLD,
@@ -311,7 +330,8 @@ public class MainHomePanel extends JPanel {
             .autoStart(chkAutoStart.isSelected())
             .startMinimized(chkStartMinimized.isSelected())
             .disconnectOnNoInternet(chkDisconnectOnNoInternet.isSelected())
-            .updateCheckEnabled(chkUpdateCheck.isSelected());
+            .updateCheckEnabled(chkUpdateCheck.isSelected())
+            .uiTheme(selectedTheme());
     }
 
     /** Write option controls from the snapshot (EDT). */
@@ -323,20 +343,39 @@ public class MainHomePanel extends JPanel {
         chkStartMinimized.setSelected(s.startMinimized);
         chkDisconnectOnNoInternet.setSelected(s.disconnectOnNoInternet);
         chkUpdateCheck.setSelected(s.updateCheckEnabled);
+        applyThemeSelection(s.uiTheme);
+    }
+
+    private String selectedTheme() {
+        switch (cmbTheme.getSelectedIndex()) {
+            case 1: return SettingsSnapshot.THEME_LIGHT;
+            case 2: return SettingsSnapshot.THEME_DARK;
+            default: return SettingsSnapshot.THEME_SYSTEM;
+        }
+    }
+
+    private void applyThemeSelection(String theme) {
+        if (SettingsSnapshot.THEME_LIGHT.equals(theme)) {
+            cmbTheme.setSelectedIndex(1);
+        } else if (SettingsSnapshot.THEME_DARK.equals(theme)) {
+            cmbTheme.setSelectedIndex(2);
+        } else {
+            cmbTheme.setSelectedIndex(0);
+        }
     }
 
     public void setOnlineStatus(boolean online) {
         if (online) {
-            lblStatus.setText("已连接");
+            lblStatus.setText(Messages.get("home.status.connected"));
             lblStatusDot.setForeground(Color.WHITE);
             statusBar.setBackground(new Color(22, 163, 74));
-            btnDial.setText("断开连接");
+            btnDial.setText(Messages.get("home.dial.disconnect"));
             btnDial.setBackground(UiTheme.COLOR_ERROR);
         } else {
-            lblStatus.setText("未连接");
+            lblStatus.setText(Messages.get("home.status.disconnected"));
             lblStatusDot.setForeground(Color.WHITE);
             statusBar.setBackground(UiTheme.COLOR_INFO);
-            btnDial.setText("连接宽带");
+            btnDial.setText(Messages.get("home.dial.connect"));
             btnDial.setBackground(UiTheme.COLOR_INFO);
             lblSpeed.setText("↓ -- ↑ --");
             lblUptime.setText("时长: 未连接");
