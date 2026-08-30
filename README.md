@@ -1,7 +1,7 @@
 # PPPoE校园网自动拨号工具
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v1.1.3-blue.svg)](https://github.com/Lexo0522/one-key-dialer)
+[![Version](https://img.shields.io/badge/version-v1.1.4-blue.svg)](https://github.com/Lexo0522/one-key-dialer)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)](https://github.com/Lexo0522/one-key-dialer)
 [![CI](https://github.com/Lexo0522/one-key-dialer/actions/workflows/ci.yml/badge.svg)](https://github.com/Lexo0522/one-key-dialer/actions/workflows/ci.yml)
 
@@ -43,7 +43,7 @@ Windows 校园网 PPPoE 图形拨号工具（Swing + RAS）：一键拨号/断�
 
 ## 自动发布
 
-推送标签 `v<revision>`（如 `v1.1.3`）会触发 `.github/workflows/release.yml`：
+推送标签 `v<revision>`（如 `v1.1.4`）会触发 `.github/workflows/release.yml`：
 
 1. 校验标签与 `.mvn/maven.config` 中的 revision 一致
 2. windows-latest + JDK 26 上先跑全量测试，再用 `prepare_release.bat` 构建 ZIP / MSI / `SHA256SUMS.txt`
@@ -89,7 +89,7 @@ mvn -q package
 
 工程化入口：`mvn -Pcoverage test` 生成 JaCoCo 覆盖率报告（CI 在 JDK 17 腿自动上传）；`mvn -Perrorprone compile` 运行 Error Prone 静态分析（需要 JDK 17–25，发现项以 warning 呈现）。
 
-版本号：由 `.mvn/maven.config` 中的 `-Drevision=…` 统一定义；Maven、jpackage 脚本和运行时 `AppVersion` 均从该值获得。发布标签必须是 `v<revision>`，例如 `v1.1.3`。
+版本号：由 `.mvn/maven.config` 中的 `-Drevision=…` 统一定义；Maven、jpackage 脚本和运行时 `AppVersion` 均从该值获得。发布标签必须是 `v<revision>`，例如 `v1.1.4`。
 
 ## 发布产物约定
 
