@@ -30,3 +30,4 @@ CLAUDE.md
 Thumbs.db
 *.class
 *.log
+.claude/

@@ -11,7 +11,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        java: ['11', '26']
+        java: ['17', '26']
     steps:
       - uses: actions/checkout@v5
 
@@ -44,7 +44,17 @@ jobs:
           echo Canonical version: %APP_VER%
 
       - name: Maven JUnit
-        run: mvn -B -q clean test
+        # coverage (JaCoCo) + errorprone run on the JDK 17 leg only
+        # (ErrorProne does not yet support the JDK 26 javac internals)
+        run: mvn -B -q clean test ${{ matrix.java == '17' && '-Pcoverage,errorprone' || '' }}
+
+      - name: Upload coverage report
+        if: matrix.java == '17'
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-report
+          path: target/site/jacoco/
+          if-no-files-found: error
 
   package:
     needs: test
