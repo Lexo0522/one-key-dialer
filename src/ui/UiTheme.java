@@ -4,7 +4,6 @@ import model.SettingsSnapshot;
 
 import java.awt.Color;
 import java.awt.Font;
-import java.awt.GraphicsEnvironment;
 import java.util.Locale;
 
 /**
@@ -16,14 +15,12 @@ import java.util.Locale;
  * palette is active.
  */
 public final class UiTheme {
-    public static final String FONT_NAME_EN = "Consolas";
-    /** CJK-capable UI font; falls back when Microsoft YaHei is not installed. */
+    /** CJK-capable UI font; falls back to a logical composite font when YaHei is absent. */
     public static final String FONT_NAME_CN = resolveCjkFontName();
 
     public static final Font FONT_CN = new Font(FONT_NAME_CN, Font.PLAIN, 13);
     public static final Font FONT_CN_BOLD = new Font(FONT_NAME_CN, Font.BOLD, 13);
     public static final Font FONT_CN_SMALL = new Font(FONT_NAME_CN, Font.PLAIN, 11);
-    public static final Font FONT_LOG = new Font(FONT_NAME_EN, Font.PLAIN, 12);
     public static final Font FONT_DIAG = new Font(FONT_NAME_CN, Font.PLAIN, 12);
 
     public static Color COLOR_SUCCESS;
@@ -134,17 +131,24 @@ public final class UiTheme {
     }
 
     private static String resolveCjkFontName() {
-        try {
-            for (String family : GraphicsEnvironment.getLocalGraphicsEnvironment()
-                .getAvailableFontFamilyNames()) {
-                if ("Microsoft YaHei".equals(family)) {
-                    return "Microsoft YaHei";
-                }
+        // Family-name enumeration is NOT a reliable existence probe: on zh-CN
+        // Windows the JDK lists the localized name (微软雅黑) and "Microsoft YaHei
+        // UI", but not "Microsoft YaHei" — an exact-match check there silently
+        // degraded the whole UI to a bare physical font. Java2D never falls back
+        // for physical fonts, and Segoe UI/Consolas have no CJK glyphs, so every
+        // Chinese character rendered as a hollow box. Construct + verify instead:
+        // an unknown name resolves to the logical Dialog family, which must be
+        // rejected as a false positive.
+        for (String candidate : new String[]{
+            "Microsoft YaHei", "Microsoft YaHei UI", "\u5fae\u8f6f\u96c5\u9ed1"}) {
+            Font f = new Font(candidate, Font.PLAIN, 13);
+            if (f.canDisplayUpTo("\u4e2d\u6587") == -1
+                && !"Dialog".equals(f.getFamily(Locale.US))) {
+                return candidate;
             }
-        } catch (Throwable probeFailed) {
-            return "Microsoft YaHei";
         }
-        // non-Chinese Windows without YaHei: Segoe UI renders CJK fallback via font linking
-        return "Segoe UI";
+        // Logical composite fonts keep the platform CJK mapping on any machine;
+        // a bare physical font (e.g. Segoe UI) would tofu every CJK character.
+        return Font.SANS_SERIF;
     }
 }

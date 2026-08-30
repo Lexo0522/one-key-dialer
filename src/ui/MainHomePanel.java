@@ -83,7 +83,8 @@ public class MainHomePanel extends JPanel {
 
         logPane.setEditable(false);
         logPane.setBackground(UiTheme.COLOR_DARK);
-        logPane.setFont(UiTheme.FONT_LOG);
+        // CJK-capable font — the log stream is Chinese; monospace western fonts tofu it.
+        logPane.setFont(UiTheme.FONT_DIAG);
         logPane.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
         StyledDocument doc = logPane.getStyledDocument();
         logService.attach(logPane, doc);

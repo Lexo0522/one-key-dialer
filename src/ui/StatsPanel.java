@@ -23,7 +23,7 @@ public final class StatsPanel extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
         area.setEditable(false);
-        // Use CJK-capable font (Consolas/FONT_LOG cannot render 中文 → tofu/garbled glyphs).
+        // Use CJK-capable font — western monospace fonts (Consolas) cannot render 中文 → tofu/garbled glyphs.
         area.setFont(UiTheme.FONT_DIAG);
         area.setBackground(UiTheme.COLOR_DARK);
         area.setForeground(Color.WHITE);

@@ -29,13 +29,14 @@ import java.util.concurrent.RejectedExecutionException;
 public class LogService {
     private static final int MAX_LOG_LINES = 500;
     private static final int LOG_FLUSH_THRESHOLD = 4096;
-    private static final String FONT_NAME_EN = "Consolas";
     private static final Color DEFAULT_ERROR_COLOR = new Color(0xC62828);
 
     private final File logFile;
     private final ExecutorService fileWriter;
     private JTextPane logPane;
     private StyledDocument logDocument;
+    /** Family captured from the attached pane; a hardcoded western monospace font (e.g. Consolas) has no CJK glyphs and tofus the Chinese log stream. */
+    private String logFontFamily = null;
 
     private int logLineCount = 0;
     private final StringBuilder logFileBuffer = new StringBuilder(8192);
@@ -55,6 +56,9 @@ public class LogService {
     public void attach(JTextPane pane, StyledDocument document) {
         this.logPane = pane;
         this.logDocument = document;
+        this.logFontFamily = pane.getFont() != null ? pane.getFont().getFamily() : null;
+        // attribute sets are cached per color; drop any built before the family was known
+        logAttrCache.clear();
     }
 
     public void log(String message, Color color) {
@@ -129,7 +133,11 @@ public class LogService {
         return logAttrCache.computeIfAbsent(color, c -> {
             SimpleAttributeSet a = new SimpleAttributeSet();
             StyleConstants.setForeground(a, c);
-            StyleConstants.setFontFamily(a, FONT_NAME_EN);
+            // Follow the attached pane's family so the log never renders with a
+            // font lacking CJK glyphs; default Swing family when not attached.
+            if (logFontFamily != null) {
+                StyleConstants.setFontFamily(a, logFontFamily);
+            }
             StyleConstants.setFontSize(a, 12);
             return a;
         });
