@@ -43,25 +43,6 @@ public class ScheduleService {
                            Runnable onScheduledDisconnect,
                            Runnable onDialTriggerLog,
                            Runnable onDisconnectTriggerLog,
-                           Consumer<String> errorLogger) {
-        this(scheduledDialEnabled, scheduledDisconnectEnabled, dialHourSupplier, dialMinuteSupplier,
-            disconnectHourSupplier, disconnectMinuteSupplier, isOnline, isBusy,
-            onScheduledDial, onScheduledDisconnect, onDialTriggerLog, onDisconnectTriggerLog,
-            errorLogger, null);
-    }
-
-    public ScheduleService(BooleanSupplier scheduledDialEnabled,
-                           BooleanSupplier scheduledDisconnectEnabled,
-                           IntSupplier dialHourSupplier,
-                           IntSupplier dialMinuteSupplier,
-                           IntSupplier disconnectHourSupplier,
-                           IntSupplier disconnectMinuteSupplier,
-                           BooleanSupplier isOnline,
-                           BooleanSupplier isBusy,
-                           Runnable onScheduledDial,
-                           Runnable onScheduledDisconnect,
-                           Runnable onDialTriggerLog,
-                           Runnable onDisconnectTriggerLog,
                            Consumer<String> errorLogger,
                            BackgroundExecutor executor) {
         this.scheduledDialEnabled = scheduledDialEnabled;
@@ -78,24 +59,6 @@ public class ScheduleService {
         this.onDisconnectTriggerLog = onDisconnectTriggerLog;
         this.errorLogger = errorLogger != null ? errorLogger : msg -> {};
         this.executor = executor;
-    }
-
-    /** Back-compat constructor without error logger. */
-    public ScheduleService(BooleanSupplier scheduledDialEnabled,
-                           BooleanSupplier scheduledDisconnectEnabled,
-                           IntSupplier dialHourSupplier,
-                           IntSupplier dialMinuteSupplier,
-                           IntSupplier disconnectHourSupplier,
-                           IntSupplier disconnectMinuteSupplier,
-                           BooleanSupplier isOnline,
-                           BooleanSupplier isBusy,
-                           Runnable onScheduledDial,
-                           Runnable onScheduledDisconnect,
-                           Runnable onDialTriggerLog,
-                           Runnable onDisconnectTriggerLog) {
-        this(scheduledDialEnabled, scheduledDisconnectEnabled, dialHourSupplier, dialMinuteSupplier,
-            disconnectHourSupplier, disconnectMinuteSupplier, isOnline, isBusy,
-            onScheduledDial, onScheduledDisconnect, onDialTriggerLog, onDisconnectTriggerLog, null, null);
     }
 
     public static boolean shouldFireDial(boolean enabled,

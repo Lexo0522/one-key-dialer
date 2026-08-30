@@ -1,7 +1,6 @@
 package ui;
 
-import model.AppFiles;
-import model.DialSnapshot;
+import model.DialCredentials;
 import model.PasswordChars;
 import service.DialPrecheck;
 import service.DialPrecheck.Failure;
@@ -13,7 +12,8 @@ import java.util.Optional;
 import java.util.function.BooleanSupplier;
 
 /**
- * Pre-dial validation + EDT credential snapshot for the main shell.
+ * Pre-dial validation + one-shot credential capture for the main shell.
+ * Both methods must run on the EDT.
  */
 public final class DialUiActions {
     public interface Host {
@@ -39,7 +39,7 @@ public final class DialUiActions {
      * @param interactive show JOptionPane for user-facing failures
      * @return true if dial may proceed
      */
-    public boolean validateBeforeDial(boolean interactive) {
+    public boolean validateDialInput(boolean interactive) {
         MainHomePanel home = host.homePanel();
         if (home == null) return false;
 
@@ -68,16 +68,16 @@ public final class DialUiActions {
         }
     }
 
-    /** Must run on EDT. Password cleared inside snapshot factory path. */
-    public DialSnapshot captureDialSnapshotOnEdt() {
+    /** Must run on EDT. The returned credentials are one-shot and cleared by the consumer. */
+    public DialCredentials captureDialCredentials() {
         MainHomePanel home = host.homePanel();
         if (home == null) {
-            return new DialSnapshot(AppFiles.RAS_CONNECTION, "", new char[0]);
+            return new DialCredentials("", new char[0]);
         }
         String user = home.getTxtUsername().getText().trim();
         char[] pw = home.getTxtPassword().getPassword();
         try {
-            return new DialSnapshot(AppFiles.RAS_CONNECTION, user, pw);
+            return new DialCredentials(user, pw);
         } finally {
             PasswordChars.clear(pw);
         }

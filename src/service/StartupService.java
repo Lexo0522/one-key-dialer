@@ -12,7 +12,7 @@ import java.util.function.BiConsumer;
 
 /**
  * Windows logon auto-start via HKCU\...\Run → direct EXE or javaw -jar.
- * No VBS/WSH. Optional {@link #AUTOSTART_FLAG} lets the app delay tray init after logon.
+ * Optional {@link #AUTOSTART_FLAG} lets the app delay tray init after logon.
  */
 public class StartupService {
     public static final String RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -23,10 +23,6 @@ public class StartupService {
      * so Explorer/tray are more likely to be ready.
      */
     public static final int AUTOSTART_DELAY_MS = 3_000;
-    /** @deprecated Prefer {@link #AUTOSTART_DELAY_MS}; kept for any external refs. */
-    public static final int STARTUP_DELAY_MS = AUTOSTART_DELAY_MS;
-    private static final String[] LEGACY_RUN_VALUE_NAMES = {"自动PPoE拨号"};
-    private static final String LEGACY_VBS_FILE = "pppoe_startup.vbs";
 
     private final String appExeName;
     private final Runnable onRegistered;
@@ -66,27 +62,15 @@ public class StartupService {
             + " " + AUTOSTART_FLAG;
     }
 
-    public static boolean isLegacyVbsCommand(String cmd) {
-        if (cmd == null) return false;
-        String lower = cmd.toLowerCase(Locale.ROOT);
-        return lower.contains("wscript") && lower.contains(".vbs");
-    }
-
     public static boolean isDirectLaunchCommand(String cmd) {
         if (cmd == null) return false;
         String c = cmd.trim();
-        if (c.isEmpty() || isLegacyVbsCommand(c)) return false;
+        if (c.isEmpty()) return false;
         String lower = c.toLowerCase(Locale.ROOT);
+        // Script interpreters are not direct app launches.
+        if (lower.contains("wscript") || lower.contains("cscript")) return false;
         if (lower.contains("javaw") && lower.contains("-jar")) return true;
         return lower.contains(".exe");
-    }
-
-    public static boolean isPlausibleStartupCommand(String cmd) {
-        if (cmd == null) return false;
-        String c = cmd.trim();
-        if (c.isEmpty()) return false;
-        if (isLegacyVbsCommand(c)) return true;
-        return isDirectLaunchCommand(c);
     }
 
     /**
@@ -149,7 +133,6 @@ public class StartupService {
                 : buildJarRunCommand(target.javawPath, target.primaryPath);
 
             deleteAllKnownRunValues();
-            deleteLegacyStartupArtifacts();
 
             int code = runReg(new String[]{
                 "reg", "add", RUN_KEY,
@@ -173,7 +156,6 @@ public class StartupService {
     public void disableAutoStart() {
         try {
             deleteAllKnownRunValues();
-            deleteLegacyStartupArtifacts();
             logger.accept("已取消开机自启动", true);
             onUnregistered.run();
         } catch (Exception e) {
@@ -192,7 +174,7 @@ public class StartupService {
             for (String name : allValueNames()) {
                 String data = queryRunValue(name);
                 if (data == null) continue;
-                if (!isPlausibleStartupCommand(data)) continue;
+                if (!isDirectLaunchCommand(data)) continue;
                 if (commandTargetLooksPresent(data)) return true;
                 // Key present with plausible cmd but missing file — still "enabled" for UI truth of intent
                 return true;
@@ -252,10 +234,6 @@ public class StartupService {
     private List<String> allValueNames() {
         List<String> names = new ArrayList<>();
         names.add(appExeName);
-        names.addAll(Arrays.asList(LEGACY_RUN_VALUE_NAMES));
-        if (!"PPoEDialer".equals(appExeName)) {
-            names.add("PPoEDialer");
-        }
         return names;
     }
 
@@ -263,24 +241,6 @@ public class StartupService {
         for (String name : allValueNames()) {
             runReg(new String[]{"reg", "delete", RUN_KEY, "/v", name, "/f"}, false);
         }
-    }
-
-    /** Best-effort cleanup of old VBS helper under %APPDATA%\PPoEDialer. */
-    private void deleteLegacyStartupArtifacts() {
-        File vbs = getLegacyStartupScriptFile();
-        if (vbs != null && vbs.isFile()) {
-            if (!vbs.delete()) {
-                logger.accept("旧启动脚本删除失败: " + vbs.getAbsolutePath(), false);
-            }
-        }
-    }
-
-    private File getLegacyStartupScriptFile() {
-        String appData = System.getenv("APPDATA");
-        if (appData != null) {
-            return new File(new File(appData, "PPoEDialer"), LEGACY_VBS_FILE);
-        }
-        return new File(System.getProperty("user.dir"), LEGACY_VBS_FILE);
     }
 
     private String queryRunValue(String valueName) throws Exception {
@@ -302,7 +262,7 @@ public class StartupService {
             if (q2 < 0) break;
             String path = cmd.substring(q1 + 1, q2);
             String pl = path.toLowerCase(Locale.ROOT);
-            if (pl.endsWith(".vbs") || pl.endsWith(".exe") || pl.endsWith(".jar")) {
+            if (pl.endsWith(".exe") || pl.endsWith(".jar")) {
                 if (new File(path).isFile()) return true;
             }
             from = q2 + 1;

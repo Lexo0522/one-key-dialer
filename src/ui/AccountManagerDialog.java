@@ -1,7 +1,7 @@
 package ui;
 
 import model.AccountInfo;
-import storage.AccountStore;
+import storage.AccountCsv;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -140,7 +140,7 @@ public final class AccountManagerDialog {
             JFileChooser fc = new JFileChooser();
             if (fc.showOpenDialog(dialog) == JFileChooser.APPROVE_OPTION) {
                 try {
-                    List<AccountInfo> imported = AccountStore.loadCsv(fc.getSelectedFile());
+                    List<AccountInfo> imported = AccountCsv.load(fc.getSelectedFile());
                     accounts.addAll(imported);
                     afterMutate(model, accounts, onListChanged, saveAccounts);
                     JOptionPane.showMessageDialog(dialog, "导入成功！");
@@ -208,10 +208,10 @@ public final class AccountManagerDialog {
                 new FileOutputStream(fc.getSelectedFile()), "UTF-8"))) {
                 if (withPassword) {
                     pw.println("昵称,账号,密码,备注");
-                    for (AccountInfo a : accounts) pw.println(AccountStore.toCsvLineWithPassword(a));
+                    for (AccountInfo a : accounts) pw.println(AccountCsv.toCsvLineWithPassword(a));
                 } else {
                     pw.println("昵称,账号,备注");
-                    for (AccountInfo a : accounts) pw.println(AccountStore.toCsvLineSafe(a));
+                    for (AccountInfo a : accounts) pw.println(AccountCsv.toCsvLineSafe(a));
                 }
                 JOptionPane.showMessageDialog(dialog, "导出成功！");
             } catch (Exception ex) {

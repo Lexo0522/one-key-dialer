@@ -1,5 +1,7 @@
 package ui;
 
+import model.SettingsSnapshot;
+
 import javax.swing.*;
 import java.awt.*;
 
@@ -159,23 +161,18 @@ public class SchedulePanel extends JPanel {
         spnDisconnectMinute.setValue(minute);
     }
 
-    /** Apply schedule fields from typed settings. */
-    public void applyFrom(model.AppSettings s) {
+    /** Read schedule controls into the builder (EDT). */
+    public void captureSettings(SettingsSnapshot.Builder builder) {
+        builder.scheduledDial(isDialEnabled(), dialHour(), dialMinute());
+        builder.scheduledDisconnect(isDisconnectEnabled(), disconnectHour(), disconnectMinute());
+    }
+
+    /** Write schedule controls from the snapshot (EDT). */
+    public void applySettings(SettingsSnapshot s) {
         if (s == null) return;
         setDialEnabled(s.scheduledDial);
         setDisconnectEnabled(s.scheduledDisconnect);
         try { setDialTime(s.scheduledDialHour, s.scheduledDialMinute); } catch (Exception ignored) { }
         try { setDisconnectTime(s.scheduledDisconnectHour, s.scheduledDisconnectMinute); } catch (Exception ignored) { }
-    }
-
-    /** Write schedule fields into settings object. */
-    public void writeTo(model.AppSettings s) {
-        if (s == null) return;
-        s.scheduledDial = isDialEnabled();
-        s.scheduledDialHour = dialHour();
-        s.scheduledDialMinute = dialMinute();
-        s.scheduledDisconnect = isDisconnectEnabled();
-        s.scheduledDisconnectHour = disconnectHour();
-        s.scheduledDisconnectMinute = disconnectMinute();
     }
 }

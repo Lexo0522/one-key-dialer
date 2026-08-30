@@ -44,17 +44,6 @@ public class NetworkMonitorService {
                                  Consumer<SpeedSample> onSpeedSample,
                                  Runnable onSpeedUnavailable,
                                  Runnable onTooltipRefresh,
-                                 Consumer<Long> onUptimeTick) {
-        this(isOnline, trafficSupplier, connectTimeSupplier, onSpeedSample, onSpeedUnavailable,
-            onTooltipRefresh, onUptimeTick, null);
-    }
-
-    public NetworkMonitorService(BooleanSupplier isOnline,
-                                 Supplier<long[]> trafficSupplier,
-                                 LongSupplier connectTimeSupplier,
-                                 Consumer<SpeedSample> onSpeedSample,
-                                 Runnable onSpeedUnavailable,
-                                 Runnable onTooltipRefresh,
                                  Consumer<Long> onUptimeTick,
                                  BackgroundExecutor executor) {
         this.isOnline = isOnline;

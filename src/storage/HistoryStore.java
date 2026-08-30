@@ -1,123 +1,92 @@
 package storage;
 
-import util.AtomicFiles;
-
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * JSON dial history document. Missing file = empty history;
+ * malformed JSON / unknown schemaVersion throw {@link StorageException}.
+ */
 public class HistoryStore {
-    private final File file;
+    public static final int SCHEMA_VERSION = 1;
+
+    private final Path file;
 
     public HistoryStore(File file) {
-        this.file = file;
+        this.file = file.toPath();
     }
 
-    public HistoryStore(String fileName) {
-        this(new File(fileName));
-    }
-
-    public void load(List<String[]> historyRecords) throws IOException {
-        historyRecords.clear();
-        if (!file.exists()) return;
-
-        try (BufferedReader r = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
-            String line;
-            boolean firstLine = true;
-            while ((line = r.readLine()) != null) {
-                if (firstLine) {
-                    firstLine = false;
-                    if (!line.isEmpty() && line.charAt(0) == '﻿') line = line.substring(1);
-                    String lower = line.toLowerCase();
-                    if (lower.startsWith("时间") || lower.startsWith("time")) {
-                        continue;
-                    }
-                }
-                String[] parts = parseCsvLine(line);
-                if (parts.length >= 5) {
-                    if (parts.length < 6) {
-                        String[] padded = new String[6];
-                        System.arraycopy(parts, 0, padded, 0, parts.length);
-                        for (int i = parts.length; i < 6; i++) padded[i] = "--";
-                        parts = padded;
-                    } else if (parts.length > 6) {
-                        String[] merged = new String[6];
-                        System.arraycopy(parts, 0, merged, 0, 5);
-                        StringBuilder rest = new StringBuilder(parts[5]);
-                        for (int i = 6; i < parts.length; i++) {
-                            rest.append(',').append(parts[i]);
-                        }
-                        merged[5] = rest.toString();
-                        parts = merged;
-                    }
-                    historyRecords.add(parts);
-                }
-            }
+    /** @return stored rows ({@code [time, operation, account, result, duration, traffic]}), or null when missing. */
+    public List<String[]> load() throws StorageException {
+        Document doc = JsonFiles.read(file, SCHEMA_VERSION, Document.class);
+        if (doc == null) {
+            return null;
         }
-    }
-
-    public void save(List<String[]> historyRecords) throws IOException {
-        StringBuilder sb = new StringBuilder();
-        for (String[] r : historyRecords) {
-            sb.append(toCsvLine(r)).append('\n');
+        List<String[]> out = new ArrayList<>();
+        if (doc.data == null) return out;
+        for (HistoryRecord r : doc.data) {
+            if (r == null) continue;
+            out.add(new String[]{
+                nn(r.time), nn(r.operation), nn(r.account),
+                nn(r.result), nn(r.duration), nn(r.traffic)
+            });
         }
-        AtomicFiles.writeUtf8(file.toPath(), sb.toString());
+        return out;
     }
 
-    public static String toCsvLine(String[] values) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < values.length; i++) {
-            if (i > 0) sb.append(',');
-            sb.append(escapeCsv(values[i]));
+    public void save(List<String[]> records) throws IOException {
+        List<HistoryRecord> rows = new ArrayList<>(records.size());
+        for (String[] r : records) {
+            if (r == null) continue;
+            rows.add(new HistoryRecord(
+                at(r, 0), at(r, 1), at(r, 2), at(r, 3), at(r, 4), at(r, 5)));
         }
-        return sb.toString();
-    }
-
-    private static String escapeCsv(String value) {
-        if (value == null) return "";
-        boolean needQuote = value.indexOf(',') >= 0 || value.indexOf('"') >= 0
-            || value.indexOf('\n') >= 0 || value.indexOf('\r') >= 0;
-        if (!needQuote) return value;
-        return '"' + value.replace("\"", "\"\"") + '"';
-    }
-
-    static String[] parseCsvLine(String line) {
-        List<String> values = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        boolean inQuotes = false;
-        for (int i = 0; i < line.length(); i++) {
-            char ch = line.charAt(i);
-            if (inQuotes) {
-                if (ch == '"') {
-                    if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
-                        current.append('"');
-                        i++;
-                    } else {
-                        inQuotes = false;
-                    }
-                } else {
-                    current.append(ch);
-                }
-            } else {
-                if (ch == '"') {
-                    inQuotes = true;
-                } else if (ch == ',') {
-                    values.add(current.toString());
-                    current.setLength(0);
-                } else {
-                    current.append(ch);
-                }
-            }
-        }
-        values.add(current.toString());
-        return values.toArray(new String[0]);
+        JsonFiles.write(file, SCHEMA_VERSION, new Document(rows));
     }
 
     public File getFile() {
-        return file;
+        return file.toFile();
+    }
+
+    private static String at(String[] row, int i) {
+        return i < row.length && row[i] != null ? row[i] : "";
+    }
+
+    private static String nn(String s) {
+        return s != null ? s : "";
+    }
+
+    private static final class HistoryRecord {
+        // non-final: populated reflectively by Gson on load
+        private String time;
+        private String operation;
+        private String account;
+        private String result;
+        private String duration;
+        private String traffic;
+
+        HistoryRecord(String time, String operation, String account,
+                      String result, String duration, String traffic) {
+            this.time = time;
+            this.operation = operation;
+            this.account = account;
+            this.result = result;
+            this.duration = duration;
+            this.traffic = traffic;
+        }
+    }
+
+    private static final class Document {
+        private List<HistoryRecord> data;
+
+        Document() {
+        }
+
+        Document(List<HistoryRecord> data) {
+            this.data = data;
+        }
     }
 }

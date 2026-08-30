@@ -1,5 +1,6 @@
 package ui;
 
+import model.SettingsSnapshot;
 import util.ConnectivityConfirm;
 
 import javax.swing.*;
@@ -178,6 +179,18 @@ public class ProbeSettingsPanel extends JPanel {
             BorderFactory.createEmptyBorder(12, 12, 12, 12)));
         card.setAlignmentX(Component.LEFT_ALIGNMENT);
         return card;
+    }
+
+    /** Read probe controls into the builder (EDT). */
+    public void captureSettings(SettingsSnapshot.Builder builder) {
+        builder.probe(getProbeMode(), getProbeHost(), getProbeHttpUrl(),
+            getProbeAttempts(), getProbeDelayMs());
+    }
+
+    /** Write probe controls from the snapshot (EDT). */
+    public void applySettings(SettingsSnapshot s) {
+        if (s == null) return;
+        applyFrom(s.probeMode, s.probeHost, s.probeHttpUrl, s.probeAttempts, s.probeDelayMs);
     }
 
     public void applyFrom(String mode, String host, String httpUrl, int attempts, int delayMs) {

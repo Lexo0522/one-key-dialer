@@ -74,8 +74,12 @@ public class HistoryService {
 
     private void loadFromDisk() {
         try {
+            List<String[]> stored = store.load();
             synchronized (records) {
-                store.load(records);
+                records.clear();
+                if (stored != null) {
+                    records.addAll(stored);
+                }
                 while (records.size() > MAX_HISTORY_RECORDS) {
                     records.remove(records.size() - 1);
                 }
@@ -152,7 +156,7 @@ public class HistoryService {
             w.println("时间,操作,账号,结果,连接时长,流量总和");
             synchronized (records) {
                 for (String[] r : records) {
-                    w.println(HistoryStore.toCsvLine(r));
+                    w.println(storage.AccountCsv.toCsvLine(r));
                 }
             }
         }

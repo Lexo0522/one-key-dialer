@@ -7,9 +7,8 @@ target/
 installer/
 release/
 
-# Runtime jars: ignore extras, keep vendored FlatLaf
-lib/*
-!lib/flatlaf-3.5.4.jar
+# Runtime jars (deps resolved by Maven)
+lib/
 
 # Runtime data / secrets
 pppoe_accounts.ini
@@ -17,7 +16,10 @@ pppoe_settings.ini
 pppoe_history.csv
 pppoe_log.txt
 *.bak
-pppoe_startup.vbs
+settings.json
+accounts.json
+history.json
+master.key
 
 # Local agent / IDE / OS
 CLAUDE.md

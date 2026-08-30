@@ -4,7 +4,6 @@ import model.AppVersion;
 import service.StartupService;
 import ui.LookAndFeelInstaller;
 import ui.UiTheme;
-import util.CryptoUtil;
 
 import javax.swing.SwingUtilities;
 
@@ -43,9 +42,6 @@ public final class AppLauncher {
         if (fromAutostart) {
             dialer.log("通过开机自启动启动 (延迟 "
                 + (StartupService.AUTOSTART_DELAY_MS / 1000) + "s)", UiTheme.COLOR_INFO);
-        }
-        if (CryptoUtil.isKeyDpapiProtected()) {
-            dialer.log("主密钥已使用 Windows DPAPI 保护", UiTheme.COLOR_INFO);
         }
         dialer.log("作者：Lexo0522", UiTheme.COLOR_INFO);
         dialer.log("仓库：" + AppVersion.GITHUB_URL, UiTheme.COLOR_INFO);

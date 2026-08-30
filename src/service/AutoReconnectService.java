@@ -37,18 +37,6 @@ public class AutoReconnectService {
                                 Runnable onNetworkLost,
                                 Consumer<String> infoLogger,
                                 Consumer<String> warnLogger,
-                                Consumer<String> errorLogger) {
-        this(isBusy, checkNetworkStatus, performDialSync, onNetworkRecovered, onNetworkLost,
-            infoLogger, warnLogger, errorLogger, null);
-    }
-
-    public AutoReconnectService(BooleanSupplier isBusy,
-                                BooleanSupplier checkNetworkStatus,
-                                Runnable performDialSync,
-                                Runnable onNetworkRecovered,
-                                Runnable onNetworkLost,
-                                Consumer<String> infoLogger,
-                                Consumer<String> warnLogger,
                                 Consumer<String> errorLogger,
                                 BackgroundExecutor executor) {
         this.isBusy = isBusy;

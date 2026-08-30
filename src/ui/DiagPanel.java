@@ -60,7 +60,7 @@ public class DiagPanel extends JPanel {
         default String probeReport() { return ""; }
 
         /** List PPPoE device options for user selection; empty if unsupported. */
-        default java.util.List<service.RasPhonebook.DeviceHint> listPppoeDevices() {
+        default java.util.List<service.WindowsRasModule.DeviceHint> listPppoeDevices() {
             return java.util.Collections.emptyList();
         }
 
@@ -68,7 +68,7 @@ public class DiagPanel extends JPanel {
          * Apply preferred device and optionally rewrite phonebook entry.
          * @return status message for the log
          */
-        default String applyPppoeDevice(service.RasPhonebook.DeviceHint hint, boolean rewrite) {
+        default String applyPppoeDevice(service.WindowsRasModule.DeviceHint hint, boolean rewrite) {
             return "当前构建不支持设备选择";
         }
     }
@@ -178,14 +178,14 @@ public class DiagPanel extends JPanel {
     }
 
     public void choosePppoeDevice() {
-        java.util.List<service.RasPhonebook.DeviceHint> options = status.listPppoeDevices();
+        java.util.List<service.WindowsRasModule.DeviceHint> options = status.listPppoeDevices();
         if (options == null || options.isEmpty()) {
             append("\n[未找到可用 PPPoE 设备提示]\n");
             return;
         }
         String[] labels = new String[options.size()];
         for (int i = 0; i < options.size(); i++) {
-            service.RasPhonebook.DeviceHint h = options.get(i);
+            service.WindowsRasModule.DeviceHint h = options.get(i);
             labels[i] = h.device + "  [" + h.port + "]" + (h.fromExisting ? "" : " (默认)");
         }
         Object picked = JOptionPane.showInputDialog(
@@ -197,7 +197,7 @@ public class DiagPanel extends JPanel {
             if (labels[i].equals(picked)) { idx = i; break; }
         }
         if (idx < 0) return;
-        service.RasPhonebook.DeviceHint chosen = options.get(idx);
+        service.WindowsRasModule.DeviceHint chosen = options.get(idx);
         int rewrite = JOptionPane.showConfirmDialog(this,
             "是否立即重写电话簿连接条目？\n（否则仅记住选择，下次自动创建时生效）",
             "重写电话簿", JOptionPane.YES_NO_CANCEL_OPTION);

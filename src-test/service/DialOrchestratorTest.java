@@ -1,199 +1,224 @@
 package service;
 
 import model.DialLifecycle;
-import model.DialSnapshot;
-import util.ConnectivityConfirm;
-
+import model.SessionTraffic;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BooleanSupplier;
-import java.util.function.LongSupplier;
-import java.util.function.Supplier;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+import static service.DialFakes.FakeEnv;
+import static service.DialFakes.FakePort;
+import static service.DialFakes.FakeView;
 
+/** Dial orchestration: precheck, lifecycle, no-internet policy, history/stats, exit races. */
 class DialOrchestratorTest {
-
+    private FakePort port;
+    private FakeView view;
+    private FakeEnv env;
+    private DialLifecycle lifecycle;
+    private SessionTraffic stats;
     private DialOrchestrator orch;
+
+    @BeforeEach
+    void setUp() {
+        port = new FakePort();
+        view = new FakeView();
+        env = new FakeEnv();
+        lifecycle = new DialLifecycle();
+        stats = new SessionTraffic();
+        orch = new DialOrchestrator(port, view, env, lifecycle, stats);
+        // Never touch the real network from tests.
+        orch.setPostDialConnectivity(() -> true);
+    }
 
     @AfterEach
     void tearDown() {
-        if (orch != null) orch.shutdown();
+        orch.shutdown();
     }
 
     @Test
-    void credentialCachePreferedForBackgroundSnapshot() {
-        DialLifecycle life = new DialLifecycle();
-        FakeHost host = new FakeHost(life);
-        orch = new DialOrchestrator(host);
-        orch.setPostDialInternetConfirm(() -> true);
-        orch.updateCredentials("user1", "secret".toCharArray());
+    void userDialCapturesOneShotCredentialsAndClearsThem() throws Exception {
+        orch.dialAsyncUser();
+        waitFor(() -> !lifecycle.isIdle() || port.connectCalls.get() == 1);
+        waitFor(() -> !lifecycle.isBusy());
 
-        AtomicInteger dialCalls = new AtomicInteger();
-        host.dialImpl = snap -> {
-            dialCalls.incrementAndGet();
-            assertEquals("user1", snap.username);
-            assertEquals("secret", snap.passwordAsString());
-            return new DialService.DialResult(0, "ok");
-        };
+        assertEquals(1, port.connectCalls.get());
+        assertEquals(1, port.receivedCredentials.size());
+        assertArrayEquals(new String[]{"user1", "pass1"}, port.receivedCredentials.get(0));
+        // history + counters: exactly one history row, one attempt, one success
+        assertEquals(1, env.history.size());
+        assertEquals(1, stats.totalDialCount().get());
+        assertEquals(1, stats.successDialCount().get());
+        assertEquals("拨号", env.history.get(0)[0]);
+        assertEquals("成功", env.history.get(0)[2]);
+        // busy state released
+        assertTrue(lifecycle.isIdle());
+    }
+
+    @Test
+    void concurrentDialRequestsOnlyOneRuns() throws Exception {
+        port.slowConnect = true;
+        orch.dialAsyncUser();
+        waitFor(lifecycle::isBusy); // first attempt in flight
+        orch.dialAsyncUser();       // second EDT entry while busy
+        waitFor(() -> !lifecycle.isBusy());
+
+        assertEquals(1, port.connectCalls.get(), "second request must be refused while busy");
+        assertEquals(1, stats.totalDialCount().get());
+    }
+
+    @Test
+    void precheckFailureAbortsDial() {
+        view.allowDial = false;
+        orch.dialAsyncUser();
+        assertEquals(0, port.connectCalls.get());
+        assertEquals(0, stats.totalDialCount().get());
+        assertTrue(env.history.isEmpty());
+    }
+
+    @Test
+    void noInternetPolicyDisconnectsWhenEnabled() throws Exception {
+        env.disconnectOnNoInternet = true;
+        orch.setPostDialConnectivity(() -> false);
+
+        orch.dialAsyncUser();
+        waitFor(() -> env.history.size() == 1);
+
+        assertEquals(1, port.disconnectCalls.get(), "policy must disconnect the PPP session");
+        assertEquals(1, env.history.size());
+        assertEquals("RAS成功无外网/已断开", env.history.get(0)[2]);
+    }
+
+    @Test
+    void noInternetPolicyKeepsSessionWhenDisabled() throws Exception {
+        env.disconnectOnNoInternet = false;
+        orch.setPostDialConnectivity(() -> false);
+
+        orch.dialAsyncUser();
+        waitFor(() -> env.history.size() == 1);
+
+        assertEquals(0, port.disconnectCalls.get());
+        assertEquals("RAS成功无外网", env.history.get(0)[2]);
+    }
+
+    @Test
+    void dialFailureWritesHistoryOnceAndNoSuccessCount() throws Exception {
+        port.dialResults.add(new DialPort.DialResult(691, "ERROR 691"));
+        orch.dialAsyncUser();
+        waitFor(() -> env.history.size() == 1);
+
+        assertEquals(1, stats.totalDialCount().get());
+        assertEquals(0, stats.successDialCount().get());
+        assertEquals(1, env.history.size());
+        assertEquals("失败:691", env.history.get(0)[2]);
+    }
+
+    @Test
+    void autoDialSkipsWhenAlreadyOnline() {
+        env.online = true;
+        orch.dialSyncAuto();
+        assertEquals(0, port.connectCalls.get());
+        assertEquals(0, stats.totalDialCount().get());
+        assertTrue(env.history.isEmpty());
+    }
+
+    @Test
+    void autoDialMarshalsCaptureThroughView() {
+        view.pretendOnEdt = false; // background caller
+        orch.dialSyncAuto();
+        assertEquals(1, port.connectCalls.get());
+        assertEquals(1, view.credentialCaptures.get());
+    }
+
+    @Test
+    void userDisconnectWritesHistoryOnce() throws Exception {
+        env.connectTimeMillis = System.currentTimeMillis() - 65_000;
+        env.trafficBytes = 1024;
+        orch.disconnectAsyncUser();
+        waitFor(() -> env.history.size() == 1);
+
+        assertEquals(1, port.disconnectCalls.get());
+        assertEquals("断开", env.history.get(0)[0]);
+        assertTrue(lifecycle.isIdle());
+    }
+
+    @Test
+    void scheduledDisconnectRecordsFailureCode() throws Exception {
+        port.disconnectResult = 825;
+        orch.disconnectSyncScheduled();
+        waitFor(() -> !lifecycle.isBusy());
+
+        assertEquals(1, env.history.size());
+        assertEquals("定时断开", env.history.get(0)[0]);
+        assertEquals("失败", env.history.get(0)[2]);
+    }
+
+    @Test
+    void shutdownPreventsNewDials() {
+        orch.shutdown();
+        orch.dialSyncAuto();
+        assertEquals(0, port.connectCalls.get());
+    }
+
+    @Test
+    void connectThrowingStillClearsLifecycleAndCountsAttempt() throws Exception {
+        port.connectFailure = new RuntimeException("boom");
+        orch.dialAsyncUser();
+        waitFor(() -> stats.totalDialCount().get() == 1 && !lifecycle.isBusy());
+        assertTrue(lifecycle.isIdle());
+        assertEquals(1, stats.totalDialCount().get());
+        assertEquals(0, env.history.size(), "no result ⇒ no history row");
+    }
+
+    @Test
+    void saveAfterSuccessOnlyForUserDial() throws Exception {
+        orch.dialAsyncUser();
+        waitFor(() -> env.history.size() == 1);
+        assertEquals(1, env.persistCalls.get());
 
         orch.dialSyncAuto();
-        assertEquals(1, dialCalls.get());
-        assertEquals(0, host.edtWaits.get());
-        assertTrue(host.online.get());
-        assertEquals(1, host.history.size());
-        assertEquals(ConnectivityConfirm.HISTORY_STATUS_SUCCESS, host.history.get(0)[2]);
+        waitFor(() -> port.connectCalls.get() == 2 && env.history.size() == 2);
+        assertEquals(1, env.persistCalls.get(), "auto dial must not persist settings");
     }
 
     @Test
-    void rasSuccessNoInternetHistory() {
-        DialLifecycle life = new DialLifecycle();
-        FakeHost host = new FakeHost(life);
-        orch = new DialOrchestrator(host);
-        orch.setPostDialInternetConfirm(() -> false);
-        orch.updateCredentials("u", "p".toCharArray());
-        host.dialImpl = snap -> new DialService.DialResult(0, "ok");
-
-        orch.dialSyncAuto();
-        assertFalse(host.online.get());
-        assertEquals(ConnectivityConfirm.HISTORY_STATUS_RAS_NO_INTERNET, host.history.get(0)[2]);
-        assertEquals(0, host.disconnectCalls.get());
+    void busyViewPhaseTransitionsEndAtNull() throws Exception {
+        orch.dialAsyncUser();
+        waitFor(() -> !lifecycle.isBusy());
+        assertNull(view.lastPhase.get(), "phase must be cleared after the op");
+        assertTrue(view.phaseChanges.get() >= 2, "dialing + clear");
     }
 
     @Test
-    void rasSuccessNoInternetDisconnectPolicy() {
-        DialLifecycle life = new DialLifecycle();
-        FakeHost host = new FakeHost(life);
-        orch = new DialOrchestrator(host);
-        orch.setPostDialInternetConfirm(() -> false);
-        orch.setDisconnectOnNoInternet(true);
-        orch.updateCredentials("u", "p".toCharArray());
-        host.dialImpl = snap -> new DialService.DialResult(0, "ok");
-
-        orch.dialSyncAuto();
-        assertFalse(host.online.get());
-        assertEquals(1, host.disconnectCalls.get());
-        assertTrue(host.history.get(0)[2].contains(ConnectivityConfirm.HISTORY_STATUS_RAS_NO_INTERNET));
-        assertTrue(host.history.get(0)[2].contains("已断开"));
+    void shutdownWhileDialInFlightEndsIdle() throws Exception {
+        final AtomicBoolean dialReturned = new AtomicBoolean(false);
+        port.slowConnect = true;
+        Thread t = new Thread(() -> {
+            orch.dialSyncAuto();
+            dialReturned.set(true);
+        });
+        t.start();
+        waitFor(lifecycle::isBusy);
+        orch.shutdown();
+        t.join(10_000);
+        assertTrue(dialReturned.get(), "queued dial call must return after shutdown");
+        assertTrue(lifecycle.isIdle(), "lifecycle must end idle");
     }
 
-    @Test
-    void busySkipsSecondDial() {
-        DialLifecycle life = new DialLifecycle();
-        FakeHost host = new FakeHost(life);
-        orch = new DialOrchestrator(host);
-        orch.setPostDialInternetConfirm(() -> true);
-        orch.updateCredentials("u", "p".toCharArray());
-        AtomicInteger dialCalls = new AtomicInteger();
-        host.dialImpl = snap -> {
-            dialCalls.incrementAndGet();
-            // stay "busy" is handled by lifecycle around call; second concurrent not in this unit
-            return new DialService.DialResult(0, "ok");
-        };
-        assertTrue(life.tryBeginDial());
-        orch.dialSyncAuto();
-        assertEquals(0, dialCalls.get());
-        life.end();
-    }
-
-    @Test
-    void handleDialResultFailureMapsCode() {
-        DialLifecycle life = new DialLifecycle();
-        FakeHost host = new FakeHost(life);
-        orch = new DialOrchestrator(host);
-        orch.handleDialResult(new DialService.DialResult(691, ""), "拨号", false);
-        assertEquals("失败:691", host.history.get(0)[2]);
-        assertFalse(host.online.get());
-    }
-
-    /** Minimal host with injectable dial. */
-    static final class FakeHost implements DialOrchestrator.Host {
-        final DialLifecycle life;
-        final AtomicBoolean online = new AtomicBoolean(false);
-        final AtomicLong totalDial = new AtomicLong();
-        final AtomicLong successDial = new AtomicLong();
-        final AtomicInteger edtWaits = new AtomicInteger();
-        final AtomicInteger disconnectCalls = new AtomicInteger();
-        final List<String[]> history = new ArrayList<>();
-        final AtomicReference<String> lastLog = new AtomicReference<>();
-        java.util.function.Function<DialSnapshot, DialService.DialResult> dialImpl =
-            s -> new DialService.DialResult(-1, "unset");
-
-        final DialService dialService = new DialService(
-            "pppoe_native_java",
-            () -> "pppoe_native_java",
-            v -> {
-            },
-            () -> {
-            },
-            m -> {
-            },
-            m -> {
-            },
-            m -> {
+    private static void waitFor(java.util.function.BooleanSupplier condition) throws Exception {
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (!condition.getAsBoolean()) {
+            if (System.currentTimeMillis() > deadline) {
+                fail("timed out waiting for condition");
             }
-        ) {
-            @Override
-            public DialResult dial(DialSnapshot snapshot) {
-                return dialImpl.apply(snapshot);
-            }
-
-            @Override
-            public int disconnect(String activeConnName) {
-                disconnectCalls.incrementAndGet();
-                return 0;
-            }
-
-            @Override
-            public int disconnectSync(String activeConnName) {
-                disconnectCalls.incrementAndGet();
-                return 0;
-            }
-        };
-
-        FakeHost(DialLifecycle life) {
-            this.life = life;
-        }
-
-        @Override public DialLifecycle lifecycle() { return life; }
-        @Override public DialService dialService() { return dialService; }
-        @Override public String connectionName() { return "pppoe_native_java"; }
-        @Override public String activeConnectionName() { return "pppoe_native_java"; }
-        @Override public BooleanSupplier isOnline() { return online::get; }
-        @Override public LongSupplier connectTimeMillis() { return () -> 0L; }
-        @Override public LongSupplier sessionTrafficBytes() { return () -> 0L; }
-        @Override public Supplier<String> currentAccountName() { return () -> "acc"; }
-        @Override public AtomicLong totalDialCount() { return totalDial; }
-        @Override public AtomicLong successDialCount() { return successDial; }
-        @Override public boolean validateBeforeDialInteractive() { return true; }
-        @Override public boolean validateBeforeDialQuiet() { return !online.get(); }
-        @Override public DialSnapshot captureSnapshotFromUi() {
-            return new DialSnapshot("pppoe_native_java", "ui-user", "ui-pass".toCharArray());
-        }
-        @Override public void saveCurrentAccount() { }
-        @Override public void updateStatus(boolean on) { online.set(on); }
-        @Override public void setDialControlsEnabled(boolean enabled) { }
-        @Override public void logInfo(String message) { lastLog.set(message); }
-        @Override public void logSuccess(String message) { lastLog.set(message); }
-        @Override public void logWarning(String message) { lastLog.set(message); }
-        @Override public void logError(String message) { lastLog.set(message); }
-        @Override public void notifyUser(String title, String message) { }
-        @Override public void addHistory(String operation, String account, String result,
-                                         String duration, String traffic) {
-            history.add(new String[]{operation, account, result, duration, traffic});
-        }
-        @Override public void saveSettingsAfterSuccess() { }
-        @Override public boolean isEventDispatchThread() { return false; }
-        @Override public void runOnEdtAndWait(Runnable action) {
-            edtWaits.incrementAndGet();
-            action.run();
+            Thread.sleep(20);
         }
     }
 }

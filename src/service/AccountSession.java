@@ -3,6 +3,7 @@ package service;
 import model.AccountInfo;
 import model.PasswordChars;
 import storage.AccountStore;
+import storage.StorageException;
 import util.FilePermissions;
 
 import java.io.IOException;
@@ -12,8 +13,10 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * Multi-account list, selection index, dirty flag, and store I/O.
- * Does not own the dial credential cache (that stays on {@link DialOrchestrator}).
+ * Multi-account list, selection index, and persistence. Owns nothing about dialing:
+ * credentials are handed out as one-shot copies consumed by the orchestrator.
+ * Secrets at rest are DPAPI-protected via {@link AccountStore}; when protection is
+ * unavailable passwords are not persisted and must be re-entered before dialing.
  */
 public final class AccountSession {
     public interface Logger {
@@ -75,16 +78,22 @@ public final class AccountSession {
     }
 
     public void load() {
+        AccountStore.LoadResult result;
         try {
-            store.load(accounts);
-            if (store.consumeMigrationFlag()) {
-                logger.info("检测到旧版账号格式，正在迁移加密...");
-                if (!save()) dirty = true;
-            }
-        } catch (IOException e) {
-            logger.error("加载账号失败（未覆盖原文件）: " + e.getMessage());
-            if (accounts.isEmpty()) {
-                accounts.add(new AccountInfo("默认账号", "", "", ""));
+            result = store.load();
+        } catch (StorageException e) {
+            logger.error("加载账号失败（使用空账号列表，未覆盖原文件）: " + e.getMessage());
+            accounts.clear();
+            ensureDefaultAccount();
+            setCurrentIndex(currentIndex);
+            return;
+        }
+        accounts.clear();
+        if (result != null) {
+            accounts.addAll(result.accounts);
+            if (result.droppedSecrets > 0) {
+                logger.error("有 " + result.droppedSecrets
+                    + " 个账号密码无法解密（DPAPI 不可用或密钥损坏），拨号前请重新输入");
             }
         }
         ensureDefaultAccount();
@@ -94,9 +103,6 @@ public final class AccountSession {
     public void ensureDefaultAccount() {
         if (accounts.isEmpty()) {
             accounts.add(new AccountInfo("默认账号", "", "", ""));
-            if (!store.getFile().exists() && !save()) {
-                dirty = true;
-            }
         }
     }
 

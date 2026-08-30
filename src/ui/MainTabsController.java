@@ -1,13 +1,12 @@
 package ui;
 
-import model.AppSettings;
+import model.SettingsSnapshot;
 import model.AccountInfo;
 import service.BackgroundExecutor;
-import service.DialService;
 import service.HistoryService;
-import service.RasPhonebook;
-import service.RuntimeSettings;
+import service.SettingsManager;
 import service.ScheduleService;
+import service.WindowsRasModule;
 import util.ConnectivityConfirm;
 import util.FormatUtil;
 import util.ProbeOutcome;
@@ -31,11 +30,11 @@ public final class MainTabsController {
 
         HistoryService historyService();
 
-        RuntimeSettings runtimeSettings();
+        SettingsManager settingsManager();
 
         ScheduleService scheduleService();
 
-        DialService dialService();
+        WindowsRasModule rasModule();
 
         BackgroundExecutor backgroundExecutor();
 
@@ -53,6 +52,8 @@ public final class MainTabsController {
 
         long speedUp();
 
+        String probeReport();
+
         boolean isUiActive();
 
         void flushPendingPersistence();
@@ -60,10 +61,6 @@ public final class MainTabsController {
         void saveSettings();
 
         void log(String message, java.awt.Color color);
-
-        void syncScheduleCacheFromUi();
-
-        void syncProbeFromUi(ProbeSettingsPanel panel);
 
         JFrame frame();
     }
@@ -150,7 +147,6 @@ public final class MainTabsController {
         schedulePanelUi = new SchedulePanel(new SchedulePanel.Host() {
             @Override
             public void onScheduleChanged() {
-                host.syncScheduleCacheFromUi();
                 host.scheduleService().restart();
             }
 
@@ -159,9 +155,7 @@ public final class MainTabsController {
                 host.saveSettings();
             }
         });
-        AppSettings scheduleSnap = new AppSettings();
-        host.runtimeSettings().writeScheduleTo(scheduleSnap);
-        schedulePanelUi.applyFrom(scheduleSnap);
+        schedulePanelUi.applySettings(host.settingsManager().current());
         return schedulePanelUi;
     }
 
@@ -169,7 +163,7 @@ public final class MainTabsController {
         probeSettingsPanel = new ProbeSettingsPanel(new ProbeSettingsPanel.Host() {
             @Override
             public void onProbeSettingsChanged() {
-                host.syncProbeFromUi(probeSettingsPanel);
+                host.saveSettings();
             }
 
             @Override
@@ -181,7 +175,7 @@ public final class MainTabsController {
             public void runConnectivityTest(ConnectivityConfirm.Config config,
                                             Consumer<ProbeOutcome> onDone) {
                 ConnectivityConfirm.Config cfg = config != null
-                    ? config : host.runtimeSettings().toProbeConfig();
+                    ? config : host.settingsManager().current().toProbeConfig();
                 host.log("开始连通测试: mode=" + cfg.mode + " host=" + cfg.host, UiTheme.COLOR_INFO);
                 host.backgroundExecutor().submit(() -> {
                     ProbeOutcome outcome;
@@ -192,7 +186,6 @@ public final class MainTabsController {
                             cfg.attempts, "manual-test", System.currentTimeMillis());
                         host.log("连通测试异常: " + ex.getMessage(), UiTheme.COLOR_WARNING);
                     }
-                    host.runtimeSettings().recordProbeOutcome(outcome);
                     final ProbeOutcome result = outcome;
                     SwingUtilities.invokeLater(() -> {
                         host.log("连通测试: " + result.shortLine(),
@@ -202,10 +195,9 @@ public final class MainTabsController {
                 });
             }
         });
-        RuntimeSettings rs = host.runtimeSettings();
+        SettingsSnapshot s = host.settingsManager().current();
         probeSettingsPanel.applyFrom(
-            rs.getProbeMode(), rs.getProbeHost(), rs.getProbeHttpUrl(),
-            rs.getProbeAttempts(), rs.getProbeDelayMs()
+            s.probeMode, s.probeHost, s.probeHttpUrl, s.probeAttempts, s.probeDelayMs
         );
         return probeSettingsPanel;
     }
@@ -220,20 +212,20 @@ public final class MainTabsController {
             @Override public long speedDown() { return host.speedDown(); }
             @Override public long speedUp() { return host.speedUp(); }
             @Override public String phonebookReport() {
-                return RasPhonebook.formatStatus(host.dialService().phonebook().snapshotStatus());
+                return WindowsRasModule.formatStatus(host.rasModule().snapshotStatus());
             }
             @Override public String probeReport() {
-                return host.runtimeSettings().probeReportLine();
+                return host.probeReport();
             }
-            @Override public java.util.List<RasPhonebook.DeviceHint> listPppoeDevices() {
-                return host.dialService().phonebook().listDeviceOptions();
+            @Override public java.util.List<WindowsRasModule.DeviceHint> listPppoeDevices() {
+                return host.rasModule().listDeviceOptions();
             }
-            @Override public String applyPppoeDevice(RasPhonebook.DeviceHint hint, boolean rewrite) {
+            @Override public String applyPppoeDevice(WindowsRasModule.DeviceHint hint, boolean rewrite) {
                 if (hint != null) {
-                    host.dialService().phonebook().setPreferredDevice(hint);
+                    host.rasModule().setPreferredDevice(hint);
                 }
                 if (rewrite) {
-                    boolean ok = host.dialService().phonebook().rewriteEntry();
+                    boolean ok = host.rasModule().rewriteEntry();
                     return ok
                         ? "电话簿条目已重写"
                             + (hint != null ? (" → " + hint.device + " / " + hint.port) : "")

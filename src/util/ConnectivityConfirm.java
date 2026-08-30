@@ -7,7 +7,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Locale;
-import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -111,11 +110,6 @@ public final class ConnectivityConfirm {
         return confirm(probe, host, attempts, delayMs, Thread::sleep);
     }
 
-    /** ICMP/ping only (legacy default). */
-    public static boolean confirmDefault() {
-        return confirm(Config.defaults());
-    }
-
     public static boolean confirm(Config config) {
         return confirmDetailed(config, "probe").ok;
     }
@@ -128,11 +122,6 @@ public final class ConnectivityConfirm {
         Config cfg = config != null ? config : Config.defaults();
         Config oneShot = new Config(cfg.mode, cfg.host, cfg.httpUrl, 1, 0L, cfg.httpTimeoutMs);
         return confirm(oneShot);
-    }
-
-    /** Convenience: quick check with defaults (auto mode). */
-    public static boolean quickCheckDefault() {
-        return quickCheck(Config.defaults());
     }
 
     /**
@@ -245,15 +234,5 @@ public final class ConnectivityConfirm {
             return HISTORY_STATUS_RAS_NO_INTERNET;
         }
         return HISTORY_STATUS_SUCCESS;
-    }
-
-    /** Test helper equality. */
-    public static boolean sameConfig(Config a, Config b) {
-        return a != null && b != null
-            && Objects.equals(normalizeMode(a.mode), normalizeMode(b.mode))
-            && Objects.equals(a.host, b.host)
-            && Objects.equals(a.httpUrl, b.httpUrl)
-            && a.attempts == b.attempts
-            && a.delayMs == b.delayMs;
     }
 }

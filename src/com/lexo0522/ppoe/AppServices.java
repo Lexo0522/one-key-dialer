@@ -6,72 +6,73 @@ import model.SessionTraffic;
 import service.AccountSession;
 import service.AutoReconnectService;
 import service.BackgroundExecutor;
+import service.DialEnvironment;
 import service.DialOrchestrator;
-import service.DialService;
+import service.DialView;
 import service.HistoryService;
 import service.LogService;
 import service.NetworkMonitorService;
-import service.RuntimeSettings;
 import service.ScheduleService;
+import service.SettingsManager;
 import service.StartupService;
+import service.UpdateModule;
+import service.WindowsRasModule;
 import storage.AccountStore;
+import storage.DpapiSecretProtector;
 import storage.HistoryStore;
+import storage.SecretProtector;
 import storage.SettingsStore;
 import ui.MainHomePanel;
 import ui.TrayController;
 import ui.UiTheme;
 import util.AppPaths;
 import util.ConnectivityConfirm;
-import util.CryptoUtil;
 import util.FormatUtil;
+import util.ProbeOutcome;
 import util.TrafficSampler;
 
 import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
+import java.util.function.Consumer;
 
 /**
- * Composition root for non-UI services. Constructed once with a live {@link ShellBridge}.
+ * Composition root for non-UI services. Constructed once with a live {@link ShellBridge}
+ * that also implements {@link DialView}.
  */
 public final class AppServices {
-    public final AccountStore accountStore;
-    public final HistoryStore historyStore;
     public final SettingsStore settingsStore;
+    public final HistoryStore historyStore;
+    public final AccountStore accountStore;
     public final LogService logService;
+    public final SettingsManager settingsManager;
     public final HistoryService historyService;
     public final AccountSession accountSession;
     public final BackgroundExecutor backgroundExecutor;
     public final StartupService startupService;
-    public final DialService dialService;
+    public final WindowsRasModule rasModule;
     public final DialOrchestrator dialOrchestrator;
     public final AutoReconnectService autoReconnectService;
     public final NetworkMonitorService networkMonitorService;
     public final ScheduleService scheduleService;
-    public final RuntimeSettings runtimeSettings = new RuntimeSettings();
+    public final UpdateModule updateModule;
     public final DialLifecycle dialLifecycle = new DialLifecycle();
     public final SessionTraffic sessionTraffic = new SessionTraffic();
     public final AtomicBoolean isOnline = new AtomicBoolean(false);
-    public final AtomicReference<String> activeConnName =
-        new AtomicReference<>(AppFiles.RAS_CONNECTION);
 
     private final TrafficSampler trafficSampler;
+    private volatile ProbeOutcome lastProbeOutcome;
     private volatile boolean tooltipDirty;
 
-    public AppServices(ShellBridge bridge, Supplier<MainHomePanel> homePanel,
-                       Supplier<TrayController> tray) {
-        try {
-            CryptoUtil.init(AppPaths.masterKeyFile(PPoEDialer.class));
-        } catch (Exception e) {
-            System.err.println("Crypto init failed: " + e.getMessage());
-        }
-
+    public AppServices(ShellBridge bridge, DialView dialView) {
         File dataDir = AppPaths.getDataDir(PPoEDialer.class);
-        accountStore = new AccountStore(new File(dataDir, AppFiles.ACCOUNTS));
+        SecretProtector protector = new DpapiSecretProtector();
+        accountStore = new AccountStore(new File(dataDir, AppFiles.ACCOUNTS), protector);
         historyStore = new HistoryStore(new File(dataDir, AppFiles.HISTORY));
-        settingsStore = new SettingsStore(new File(dataDir, AppFiles.SETTINGS),
-            AppFiles.SETTINGS_BACKUP_SUFFIX);
+        settingsStore = new SettingsStore(new File(dataDir, AppFiles.SETTINGS));
         logService = new LogService(new File(dataDir, AppFiles.LOG));
+
+        settingsManager = new SettingsManager(settingsStore,
+            msg -> bridge.log(msg, UiTheme.COLOR_WARNING));
         historyService = new HistoryService(historyStore,
             msg -> bridge.log(msg, UiTheme.COLOR_WARNING));
         accountSession = new AccountSession(accountStore, new AccountSession.Logger() {
@@ -90,41 +91,30 @@ public final class AppServices {
         startupService = new StartupService(
             "PPoEDialer",
             () -> bridge.invokeIfUiActive(() -> {
-                MainHomePanel h = homePanel.get();
+                MainHomePanel h = homePanel(bridge);
                 if (h != null) h.getChkAutoStart().setSelected(true);
             }),
             () -> bridge.invokeIfUiActive(() -> {
-                MainHomePanel h = homePanel.get();
+                MainHomePanel h = homePanel(bridge);
                 if (h != null) h.getChkAutoStart().setSelected(false);
             }),
             (message, success) -> bridge.log(message,
                 success ? UiTheme.COLOR_SUCCESS : UiTheme.COLOR_ERROR)
         );
 
-        dialService = new DialService(
-            AppFiles.RAS_CONNECTION,
-            activeConnName::get,
-            activeConnName::set,
-            () -> { },
-            message -> bridge.log(message, UiTheme.COLOR_INFO),
-            message -> bridge.log(message, UiTheme.COLOR_WARNING),
-            message -> bridge.log(message, UiTheme.COLOR_ERROR)
-        );
+        rasModule = new WindowsRasModule(AppFiles.RAS_CONNECTION);
 
-        dialOrchestrator = new DialOrchestrator(new ShellDialHost(
-            bridge, dialLifecycle, dialService, sessionTraffic, accountSession,
-            isOnline, activeConnName::get));
-        dialOrchestrator.setProbeConfigSupplier(runtimeSettings::toProbeConfig);
-        dialOrchestrator.setDisconnectOnNoInternet(runtimeSettings.isDisconnectOnNoInternet());
-        dialOrchestrator.setOnProbeOutcome(runtimeSettings::recordProbeOutcome);
+        dialOrchestrator = new DialOrchestrator(
+            rasModule, dialView, dialEnvironment(bridge), dialLifecycle, sessionTraffic);
 
         autoReconnectService = new AutoReconnectService(
             dialLifecycle::isBusy,
-            () -> ConnectivityConfirm.quickCheck(runtimeSettings.toProbeConfig()),
+            () -> ConnectivityConfirm.quickCheck(settingsManager.current().toProbeConfig()),
             dialOrchestrator::dialSyncAuto,
             () -> {
                 bridge.log("网络已恢复", UiTheme.COLOR_SUCCESS);
-                bridge.showNotification("网络恢复", "已自动重连");
+                TrayController tray = bridge.trayController();
+                if (tray != null) tray.displayMessage("网络恢复", "已自动重连");
                 bridge.updateStatus(true);
             },
             () -> bridge.updateStatus(false),
@@ -141,7 +131,7 @@ public final class AppServices {
             sample -> {
                 sessionTraffic.applySample(sample.downBytes, sample.upBytes);
                 bridge.invokeIfUiActive(() -> {
-                    MainHomePanel h = homePanel.get();
+                    MainHomePanel h = homePanel(bridge);
                     if (h != null) {
                         h.setSpeedText("↓" + FormatUtil.formatSpeedLabel(sample.downBytes)
                             + "  ↑" + FormatUtil.formatSpeedLabel(sample.upBytes));
@@ -150,20 +140,20 @@ public final class AppServices {
                 tooltipDirty = true;
             },
             () -> bridge.invokeIfUiActive(() -> {
-                MainHomePanel h = homePanel.get();
+                MainHomePanel h = homePanel(bridge);
                 if (h != null) h.setSpeedText("↓ -- ↑ --");
             }),
             () -> {
                 if (tooltipDirty) {
                     tooltipDirty = false;
                     bridge.invokeIfUiActive(() -> {
-                        TrayController t = tray.get();
+                        TrayController t = bridge.trayController();
                         if (t != null) t.updateTooltip();
                     });
                 }
             },
             connTime -> bridge.invokeIfUiActive(() -> {
-                MainHomePanel h = homePanel.get();
+                MainHomePanel h = homePanel(bridge);
                 if (h == null) return;
                 if (connTime > 0) {
                     long seconds = (System.currentTimeMillis() - connTime) / 1000;
@@ -176,12 +166,12 @@ public final class AppServices {
         );
 
         scheduleService = new ScheduleService(
-            runtimeSettings::isScheduledDialEnabled,
-            runtimeSettings::isScheduledDisconnectEnabled,
-            runtimeSettings::getScheduledDialHour,
-            runtimeSettings::getScheduledDialMinute,
-            runtimeSettings::getScheduledDisconnectHour,
-            runtimeSettings::getScheduledDisconnectMinute,
+            () -> settingsManager.current().scheduledDial,
+            () -> settingsManager.current().scheduledDisconnect,
+            () -> settingsManager.current().scheduledDialHour,
+            () -> settingsManager.current().scheduledDialMinute,
+            () -> settingsManager.current().scheduledDisconnectHour,
+            () -> settingsManager.current().scheduledDisconnectMinute,
             isOnline::get,
             dialLifecycle::isBusy,
             dialOrchestrator::dialSyncAuto,
@@ -191,6 +181,72 @@ public final class AppServices {
             msg -> bridge.log(msg, UiTheme.COLOR_WARNING),
             backgroundExecutor
         );
+
+        updateModule = new UpdateModule(UpdateModule.defaultUpdatesDir(), null, null, null);
+    }
+
+    private DialEnvironment dialEnvironment(ShellBridge bridge) {
+        return new DialEnvironment() {
+            @Override public boolean isOnline() {
+                return isOnline.get();
+            }
+
+            @Override public long connectTimeMillis() {
+                return sessionTraffic.connectTimeMillis().get();
+            }
+
+            @Override public long sessionTrafficBytes() {
+                return sessionTraffic.sessionTrafficBytes();
+            }
+
+            @Override public String currentAccountName() {
+                return accountSession.currentName();
+            }
+
+            @Override public ConnectivityConfirm.Config probeConfig() {
+                return settingsManager.current().toProbeConfig();
+            }
+
+            @Override public boolean disconnectOnNoInternet() {
+                return settingsManager.current().disconnectOnNoInternet;
+            }
+
+            @Override public void addHistory(String operation, String account, String result,
+                                             String duration, String traffic) {
+                historyService.addRecord(operation, account, result, duration, traffic);
+            }
+
+            @Override public void persistAfterSuccess() {
+                bridge.saveSettings();
+            }
+
+            @Override public void recordProbeOutcome(ProbeOutcome outcome) {
+                AppServices.this.recordProbeOutcome(outcome);
+            }
+        };
+    }
+
+    private static MainHomePanel homePanel(ShellBridge bridge) {
+        return bridge.homePanel();
+    }
+
+    /** Aggregate dial history into the diag probe/status report line. */
+    public String probeReportLine() {
+        model.SettingsSnapshot s = settingsManager.current();
+        String base = "mode=" + s.probeMode + " host=" + s.probeHost + " http=" + s.probeHttpUrl
+            + " attempts=" + s.probeAttempts + " delayMs=" + s.probeDelayMs
+            + " disconnectOnNoInternet=" + s.disconnectOnNoInternet;
+        ProbeOutcome last = lastProbeOutcome;
+        if (last != null) {
+            base += " | last=[" + last.detailLine() + "]";
+        }
+        return base;
+    }
+
+    public void recordProbeOutcome(ProbeOutcome outcome) {
+        if (outcome != null) {
+            lastProbeOutcome = outcome;
+        }
     }
 
     public void markTooltipDirty() {
@@ -201,7 +257,6 @@ public final class AppServices {
         autoReconnectService.stop();
         scheduleService.stop();
         networkMonitorService.stop();
-        dialOrchestrator.clearCredentials();
         dialOrchestrator.shutdown();
         backgroundExecutor.shutdown();
     }

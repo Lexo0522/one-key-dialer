@@ -1,9 +1,10 @@
 @echo off
+setlocal EnableExtensions
 chcp 65001 >nul
 cd /d "%~dp0"
 
 echo ========================================
-echo   Build EXE with jpackage (JDK 26 recommended)
+echo   Build EXE with jpackage (via Maven)
 echo ========================================
 echo.
 
@@ -16,88 +17,62 @@ if not defined APP_VER (
     exit /b 1
 )
 
-java -version >nul 2>nul
+set "MVN_CMD=mvn"
+where mvn >nul 2>nul
 if errorlevel 1 (
-    echo [Error] Java runtime not found!
+    if exist "mvnw.cmd" (
+        set "MVN_CMD=mvnw.cmd"
+    ) else (
+        echo [Error] Maven not found. Install Maven 3.9+ or use mvnw.
+        call :maybe_pause
+        exit /b 1
+    )
+)
+
+call %MVN_CMD% -B -q -DskipTests package
+if errorlevel 1 (
+    echo [Error] Maven package build failed
     call :maybe_pause
     exit /b 1
 )
 
-javac -version >nul 2>nul
-if errorlevel 1 (
-    echo [Error] javac not found! Please install JDK and check PATH
-    call :maybe_pause
-    exit /b 1
-)
-
-jar --version >nul 2>nul
-if errorlevel 1 (
-    echo [Error] jar tool not found! Please install JDK and check PATH
+if not exist "target\one-key-dialer-%APP_VER%.jar" (
+    echo [Error] target\one-key-dialer-%APP_VER%.jar missing
     call :maybe_pause
     exit /b 1
 )
 
 jpackage --version >nul 2>&1
 if errorlevel 1 (
-    echo [Error] jpackage not found!
-    echo Please install JDK 21 or higher ^(jlink --compress=zip-6 is required^)
+    echo [Error] jpackage not found! Please install JDK 21+ ^(26 recommended^)
     call :maybe_pause
     exit /b 1
 )
 
-if exist "bin" rmdir /s /q "bin"
-if exist "build" rmdir /s /q "build"
 if exist "output" rmdir /s /q "output"
+if exist "build\jpackage-input" rmdir /s /q "build\jpackage-input"
+mkdir "build\jpackage-input" 2>nul
+copy /y "target\one-key-dialer-%APP_VER%.jar" "build\jpackage-input\" >nul
+xcopy "target\lib" "build\jpackage-input\lib\" /E /I /Y /Q >nul
 
-mkdir "bin"
-> "bin\version.properties" echo app.version=%APP_VER%
-mkdir "build"
-
-echo [1/3] Compiling Java sources...
-javac --release 11 -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
-if errorlevel 1 (
-    echo.
-    echo [Error] Compile failed!
-    call :maybe_pause
-    exit /b 1
-)
-
-echo.
-echo [2/3] Building JAR...
-> build\MANIFEST.MF echo Main-Class: com.lexo0522.ppoe.PPoEDialer
-if exist "lib\flatlaf-3.5.4.jar" (
-    >> build\MANIFEST.MF echo Class-Path: flatlaf-3.5.4.jar
-    copy /y "lib\flatlaf-3.5.4.jar" "build\flatlaf-3.5.4.jar" >nul
-)
-jar cfm build\PPoEDialer.jar build\MANIFEST.MF -C bin .
-if errorlevel 1 (
-    echo.
-    echo [Error] JAR build failed!
-    call :maybe_pause
-    exit /b 1
-)
-
-echo.
-echo [3/3] Building EXE...
-echo.
+echo [1/2] Maven package: done
+echo [2/2] Building EXE (app-image)...
 REM jlink --compress=zip-6 requires JDK 21+ (recommended JDK 26). Do not use legacy 0/1/2 on modern JDKs.
-jpackage --input build --name PPoEDialer --main-jar PPoEDialer.jar --main-class com.lexo0522.ppoe.PPoEDialer --type app-image --dest output --app-version %APP_VER% --java-options "-Xms16m" --java-options "-Xmx96m" --java-options "-XX:+UseSerialGC" --java-options "-XX:MaxMetaspaceSize=96m" --java-options "-Dfile.encoding=UTF-8" --jlink-options "--strip-debug --no-header-files --no-man-pages --compress=zip-6"
-
+jpackage --input build\jpackage-input --name PPoEDialer --main-jar one-key-dialer-%APP_VER%.jar --main-class com.lexo0522.ppoe.PPoEDialer --type app-image --dest output --app-version %APP_VER% --java-options "-Xms16m" --java-options "-Xmx96m" --java-options "-XX:+UseSerialGC" --java-options "-XX:MaxMetaspaceSize=96m" --java-options "-Dfile.encoding=UTF-8" --jlink-options "--strip-debug --no-header-files --no-man-pages --compress=zip-6"
 if errorlevel 1 (
     echo.
-    echo [Error] Build failed!
+    echo [Error] jpackage failed!
     call :maybe_pause
     exit /b 1
 )
 
-echo.
 if exist "output\PPoEDialer\runtime\lib\ct.sym" del /q "output\PPoEDialer\runtime\lib\ct.sym"
 
 echo.
 echo ========================================
 echo   Build complete!
 echo ========================================
-echo JAR location: build\PPoEDialer.jar
+echo JAR location: target\one-key-dialer-%APP_VER%.jar
 echo EXE location: output\PPoEDialer\PPoEDialer.exe
 echo.
 call :maybe_pause

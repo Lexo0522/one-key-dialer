@@ -3,51 +3,40 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 echo ========================================
-echo   PPPoE校园网拨号工具 - 编译运行
+echo   PPPoE校园网拨号工具 - 编译运行 (Maven)
 echo ========================================
 echo.
 
-java -version 2>nul
+where mvn >nul 2>nul
 if errorlevel 1 (
-    echo [错误] 未检测到Java运行环境！
+    if exist "mvnw.cmd" (
+        set "MVN_CMD=mvnw.cmd"
+        goto :run
+    )
+    echo [错误] 未检测到 Maven，请安装 Maven 3.9+ 或使用 mvnw。
+    pause
+    exit /b 1
+)
+set "MVN_CMD=mvn"
+
+:run
+echo [1/2] Maven 编译打包（跳过测试）...
+call %MVN_CMD% -B -q -DskipTests package
+if errorlevel 1 (
+    echo [错误] Maven 打包失败！
     pause
     exit /b 1
 )
 
-javac -version >nul 2>nul
-if errorlevel 1 (
-    echo [错误] 未检测到Java编译器 javac，请安装JDK并检查环境变量！
-    pause
-    exit /b 1
-)
-
-if not exist "lib\flatlaf-3.5.4.jar" (
-    echo [提示] 未找到 lib\flatlaf-3.5.4.jar，将使用系统外观。
-    echo        可运行: curl -fsSL -o lib\flatlaf-3.5.4.jar https://repo1.maven.org/maven2/com/formdev/flatlaf/3.5.4/flatlaf-3.5.4.jar
-)
-
-echo [1/2] 编译Java源码...
-if exist "bin" rmdir /s /q "bin"
-mkdir "bin"
-for /f "tokens=2 delims==" %%A in ('findstr /b /c:"-Drevision=" ".mvn\maven.config"') do > "bin\version.properties" echo app.version=%%A
-if not exist "bin\version.properties" (
+set "APP_VER="
+for /f "tokens=2 delims==" %%A in ('findstr /b /c:"-Drevision=" ".mvn\maven.config"') do set "APP_VER=%%A"
+if not defined APP_VER (
     echo [错误] .mvn\maven.config 中缺少 revision
     pause
     exit /b 1
 )
 
-javac --release 11 -encoding UTF-8 -Xlint:none -d bin src\PPoEDialer.java src\com\lexo0522\ppoe\*.java src\model\*.java src\service\*.java src\storage\*.java src\util\*.java src\ui\*.java
-if errorlevel 1 (
-    echo [错误] 编译失败！
-    pause
-    exit /b 1
-)
-echo 编译成功！
-
-set "CP=bin"
-if exist "lib\flatlaf-3.5.4.jar" set "CP=bin;lib\flatlaf-3.5.4.jar"
-
 echo [2/2] 运行程序...
 echo.
-java -Xms16m -Xmx96m -XX:+UseSerialGC -XX:MaxMetaspaceSize=96m -Dfile.encoding=UTF-8 -cp "%CP%" com.lexo0522.ppoe.PPoEDialer
+java -Xms16m -Xmx96m -XX:+UseSerialGC -XX:MaxMetaspaceSize=96m -Dfile.encoding=UTF-8 -cp "target\one-key-dialer-%APP_VER%.jar;target\lib\*" com.lexo0522.ppoe.PPoEDialer
 pause

@@ -43,8 +43,8 @@ if /I not "%REUSE_APP_IMAGE%"=="true" (
     )
 )
 
-if not exist "build\PPoEDialer.jar" (
-    echo [Error] build\PPoEDialer.jar missing
+if not exist "build\jpackage-input" (
+    echo [Error] build\jpackage-input missing ^(run build_jpackage.bat first^)
     call :maybe_pause
     exit /b 1
 )
@@ -54,7 +54,7 @@ mkdir "installer"
 
 echo [2/2] Building MSI...
 REM jlink --compress=zip-6 requires JDK 21+ (recommended JDK 26), same as build_jpackage.bat
-jpackage --input build --name PPoEDialer --main-jar PPoEDialer.jar --main-class com.lexo0522.ppoe.PPoEDialer --type msi --dest installer --app-version %APP_VER% --vendor "Lexo0522" --description "PPPoE campus dialer" --win-menu --win-shortcut --java-options "-Xms16m" --java-options "-Xmx96m" --java-options "-XX:+UseSerialGC" --java-options "-XX:MaxMetaspaceSize=96m" --java-options "-Dfile.encoding=UTF-8" --jlink-options "--strip-debug --no-header-files --no-man-pages --compress=zip-6"
+jpackage --input build\jpackage-input --name PPoEDialer --main-jar one-key-dialer-%APP_VER%.jar --main-class com.lexo0522.ppoe.PPoEDialer --type msi --dest installer --app-version %APP_VER% --vendor "Lexo0522" --description "PPPoE campus dialer" --win-menu --win-shortcut --java-options "-Xms16m" --java-options "-Xmx96m" --java-options "-XX:+UseSerialGC" --java-options "-XX:MaxMetaspaceSize=96m" --java-options "-Dfile.encoding=UTF-8" --jlink-options "--strip-debug --no-header-files --no-man-pages --compress=zip-6"
 
 if errorlevel 1 (
     echo.

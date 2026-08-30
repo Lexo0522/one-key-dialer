@@ -47,18 +47,6 @@ public final class AppPaths {
         return new File(getDataDir(appClass), name);
     }
 
-    public static File masterKeyFile(Class<?> appClass) {
-        // Always keep master key under AppData when possible (not next to shared install)
-        String appData = System.getenv("APPDATA");
-        if (appData != null) {
-            File dir = new File(appData, APP_DATA_FOLDER);
-            //noinspection ResultOfMethodCallIgnored
-            dir.mkdirs();
-            return new File(dir, "master.key");
-        }
-        return file(appClass, "master.key");
-    }
-
     private static File resolveBesideApp(Class<?> appClass) {
         try {
             String processCmd = ProcessHandle.current().info().command().orElse("");

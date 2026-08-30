@@ -48,25 +48,13 @@ class StartupServiceTest {
     }
 
     @Test
-    void isPlausibleStartupCommand() {
-        assertTrue(StartupService.isPlausibleStartupCommand(
-            "wscript.exe //B \"C:\\a\\pppoe_startup.vbs\""));
-        assertTrue(StartupService.isPlausibleStartupCommand(
-            "\"C:\\path\\PPoEDialer.exe\" --autostart"));
-        assertTrue(StartupService.isPlausibleStartupCommand(
-            "\"C:\\j\\javaw.exe\" -jar \"C:\\a\\app.jar\" --autostart"));
-        assertFalse(StartupService.isPlausibleStartupCommand(""));
-        assertFalse(StartupService.isPlausibleStartupCommand(null));
-    }
-
-    @Test
-    void legacyVsDirectCommands() {
+    void directLaunchCommands() {
         String vbs = "wscript.exe //B \"C:\\a\\pppoe_startup.vbs\"";
         String exe = "\"C:\\path\\PPoEDialer.exe\" --autostart";
-        assertTrue(StartupService.isLegacyVbsCommand(vbs));
         assertFalse(StartupService.isDirectLaunchCommand(vbs));
-        assertFalse(StartupService.isLegacyVbsCommand(exe));
         assertTrue(StartupService.isDirectLaunchCommand(exe));
+        assertFalse(StartupService.isDirectLaunchCommand(""));
+        assertFalse(StartupService.isDirectLaunchCommand(null));
     }
 
     @Test

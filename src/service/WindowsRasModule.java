@@ -1,25 +1,43 @@
 package service;
 
+import model.DialCredentials;
 import util.AtomicFiles;
+import util.ProcessIO;
 
 import java.io.File;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Pure + file IO helpers for Windows rasphone.pbk editing.
- * DialService stays a thin rasdial wrapper.
+ * The single Windows RAS module. Phonebook preparation, device selection, encoding,
+ * rasdial execution, active-connection tracking, timeouts, and error mapping are all
+ * internal; the outside sees {@link DialPort} plus a small diagnostics surface.
+ * <p>
+ * Internal test seams: {@link ProcessRunner} (child processes) and the phonebook
+ * file location — automated tests use fakes and temp files, never a real network.
  */
-public final class RasPhonebook {
+public final class WindowsRasModule implements DialPort {
+    private static final Pattern CONN_NAME_OK = Pattern.compile("^[A-Za-z0-9_\\-]{1,64}$");
     private static final Pattern SECTION = Pattern.compile("^\\[([^\\]]+)]\\s*$");
+    private static final long DIAL_TIMEOUT_SECONDS = 60;
+    private static final long DISCONNECT_TIMEOUT_SECONDS = 30;
+
+    /** Executed-process seam. Production delegates to {@link ProcessIO}. */
+    public interface ProcessRunner {
+        ProcessIO.Result run(List<String> command, long timeout, TimeUnit unit,
+                             Charset charset, Consumer<String> lineConsumer) throws Exception;
+    }
 
     public static final class DeviceHint {
         public final String port;
@@ -71,22 +89,139 @@ public final class RasPhonebook {
     }
 
     private final String connectionName;
-    private final Consumer<String> infoLogger;
-    private final Consumer<String> warnLogger;
-    private final Consumer<String> errorLogger;
-    private final AtomicReference<Status> lastStatus = new AtomicReference<>();
+    private final ProcessRunner runner;
+    private final File phonebookFile;
+    private final AtomicRef activeConnection = new AtomicRef();
     /** Optional preferred PPPoE device (port + device name); null = auto-detect / default. */
     private volatile DeviceHint preferredDevice;
 
-    public RasPhonebook(String connectionName,
-                        Consumer<String> infoLogger,
-                        Consumer<String> warnLogger,
-                        Consumer<String> errorLogger) {
-        this.connectionName = connectionName;
-        this.infoLogger = infoLogger != null ? infoLogger : m -> {};
-        this.warnLogger = warnLogger != null ? warnLogger : m -> {};
-        this.errorLogger = errorLogger != null ? errorLogger : m -> {};
+    public WindowsRasModule(String connectionName) {
+        this(connectionName, ProcessIO::run, defaultPbkFile());
     }
+
+    public WindowsRasModule(String connectionName, ProcessRunner runner, File phonebookFile) {
+        this.connectionName = connectionName;
+        this.runner = runner;
+        this.phonebookFile = phonebookFile;
+    }
+
+    public static File defaultPbkFile() {
+        String appData = System.getenv("APPDATA");
+        if (appData == null) return null;
+        return new File(appData, "Microsoft\\Network\\Connections\\PBK\\rasphone.pbk");
+    }
+
+    @Override public String connectionName() {
+        return connectionName;
+    }
+
+    public static boolean isValidConnectionName(String name) {
+        return name != null && CONN_NAME_OK.matcher(name).matches();
+    }
+
+    // ==================== DialPort ====================
+
+    @Override
+    public DialResult connect(DialCredentials credentials) throws Exception {
+        if (credentials == null) {
+            return new DialResult(-1, "empty credentials");
+        }
+        String username = credentials.username();
+        String password = credentials.passwordAsString();
+        try {
+            if (!isValidConnectionName(connectionName)) {
+                return new DialResult(-1, "invalid connection name");
+            }
+            if (!ensureEntry()) {
+                return new DialResult(-1, "ensure connection failed");
+            }
+            activeConnection.set(connectionName);
+
+            // argv form — never embed the password in a cmd string
+            ProcessIO.Result result = runner.run(
+                Arrays.asList("rasdial", connectionName, username, password),
+                DIAL_TIMEOUT_SECONDS, TimeUnit.SECONDS, ProcessIO.childCharset(),
+                null);
+            return new DialResult(result.exitCode, result.output);
+        } finally {
+            // the credential instance is cleared by the orchestrator; this String
+            // reference dies with the frame
+        }
+    }
+
+    @Override
+    public int disconnect() throws Exception {
+        String target = activeConnection.get() != null ? activeConnection.get() : connectionName;
+        if (!isValidConnectionName(target)) {
+            return -1;
+        }
+        ProcessIO.Result result = runner.run(
+            Arrays.asList("rasdial", target, "/disconnect"),
+            DISCONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS, ProcessIO.childCharset(), null);
+        if (result.exitCode == 0) {
+            activeConnection.compareAndSet(target, null);
+        }
+        return result.exitCode;
+    }
+
+    /** The connection name a disconnect would currently target. */
+    public String activeConnectionName() {
+        String active = activeConnection.get();
+        return active != null ? active : connectionName;
+    }
+
+    // ==================== failure mapping ====================
+
+    /** Prefer exit code; fall back to output substrings for localized rasdial text. */
+    public static String describeFailure(DialResult result) {
+        if (result == null) {
+            return "拨号失败：未知错误。请查看运行日志，或到「网络诊断」检查网卡/电话簿。";
+        }
+        String outStr = result.output == null ? "" : result.output;
+        int code = result.code;
+        if (code == 691 || outStr.contains("691")) {
+            return "账号或密码错误（691）。请核对学号/账号与密码后重试。";
+        }
+        if (code == 678 || outStr.contains("678")) {
+            return "服务器无响应（678）。请确认已插网线/连上校园网，稍后再试。";
+        }
+        if (code == 651 || outStr.contains("651")) {
+            return "调制解调器/宽带设备出错（651）。请检查网卡驱动或重启电脑。";
+        }
+        if (code == 623 || outStr.contains("623")) {
+            return "找不到宽带连接（623）。程序会尝试写入电话簿；可到「网络诊断 → 电话簿/探测」查看。";
+        }
+        if (code == 633 || outStr.contains("633")) {
+            return "设备正忙或配置异常（633）。请关闭其他拨号程序后重试。";
+        }
+        if (code == 676 || outStr.contains("676")) {
+            return "线路忙（676）。请稍后再拨。";
+        }
+        if (code == 680 || outStr.contains("680")) {
+            return "无拨号音/链路未就绪（680）。请检查网线或校园网端口。";
+        }
+        if (code == 720 || outStr.contains("720")) {
+            return "PPP 配置错误（720）。可尝试重启网卡或联系校园网运维。";
+        }
+        if (code == 734 || outStr.contains("734")) {
+            return "PPP 链路被服务器终止（734）。常见于认证失败或会话冲突。";
+        }
+        if (code == 735 || outStr.contains("735")) {
+            return "地址被服务器拒绝（735）。请稍后重试或更换网络环境。";
+        }
+        if (code == 797 || outStr.contains("797")) {
+            return "找不到调制解调器驱动（797）。请在设备管理器检查 WAN Miniport (PPPOE)。";
+        }
+        if (code == -1) {
+            return "拨号超时或流程异常。请查看日志，或到「网络诊断」运行 Ping/IP 配置。";
+        }
+        if (code != 0) {
+            return "拨号失败（错误码 " + code + "）。可到「网络诊断」排查，或把日志末尾发给支持人员。";
+        }
+        return "拨号未成功。请查看运行日志。";
+    }
+
+    // ==================== phonebook ====================
 
     /**
      * Override Port/Device used when creating (or force-rewriting) the RAS entry.
@@ -102,15 +237,13 @@ public final class RasPhonebook {
 
     /**
      * List PPPoE-like device hints from the phonebook (and a safe default).
-     * Pure-ish: reads rasphone.pbk if present.
      */
-    public java.util.List<DeviceHint> listDeviceOptions() {
-        java.util.LinkedHashMap<String, DeviceHint> map = new java.util.LinkedHashMap<>();
-        File pbk = defaultPbkFile();
-        if (pbk != null && pbk.exists()) {
+    public List<DeviceHint> listDeviceOptions() {
+        LinkedHashMap<String, DeviceHint> map = new LinkedHashMap<>();
+        if (phonebookFile != null && phonebookFile.exists()) {
             try {
-                Charset cs = detectPbkCharset(pbk);
-                String content = new String(Files.readAllBytes(pbk.toPath()), cs);
+                Charset cs = detectPbkCharset(phonebookFile);
+                String content = new String(Files.readAllBytes(phonebookFile.toPath()), cs);
                 for (DeviceHint h : collectPppoeDevices(content)) {
                     String key = h.port + "|" + h.device;
                     map.putIfAbsent(key, h);
@@ -120,156 +253,90 @@ public final class RasPhonebook {
         }
         DeviceHint def = new DeviceHint("PPPoE5-0", "WAN Miniport (PPPOE)", false);
         map.putIfAbsent(def.port + "|" + def.device, def);
-        return new java.util.ArrayList<>(map.values());
+        return new ArrayList<>(map.values());
     }
 
-    /** Collect unique PreferredPort/PreferredDevice pairs that look like PPPoE. */
-    public static java.util.List<DeviceHint> collectPppoeDevices(String content) {
-        java.util.ArrayList<DeviceHint> out = new java.util.ArrayList<>();
-        if (content == null || content.isEmpty()) return out;
-        String port = null;
-        String device = null;
-        for (String line : content.split("\\R")) {
-            String t = line.trim();
-            if (t.startsWith("[")) {
-                if (port != null && device != null && looksPppoe(port, device)) {
-                    out.add(new DeviceHint(port, device, true));
-                }
-                port = null;
-                device = null;
-                continue;
-            }
-            if (t.startsWith("PreferredPort=")) {
-                port = t.substring("PreferredPort=".length()).trim();
-            } else if (t.startsWith("PreferredDevice=")) {
-                device = t.substring("PreferredDevice=".length()).trim();
-            } else if (t.startsWith("Port=") && port == null) {
-                port = t.substring("Port=".length()).trim();
-            } else if (t.startsWith("Device=") && device == null) {
-                device = t.substring("Device=".length()).trim();
-            }
-        }
-        if (port != null && device != null && looksPppoe(port, device)) {
-            out.add(new DeviceHint(port, device, true));
-        }
-        return out;
-    }
-
-    private static boolean looksPppoe(String port, String device) {
-        String p = port != null ? port.toUpperCase() : "";
-        String d = device != null ? device.toUpperCase() : "";
-        return p.contains("PPPOE") || d.contains("PPPOE") || d.contains("PPPoE".toUpperCase());
-    }
-
-    /**
-     * Force rewrite of the connection section (e.g. after user picks another device).
-     * @return true if entry present after rewrite
-     */
+    /** Force rewrite of the connection section (e.g. after user picks another device). */
     public boolean rewriteEntry() {
-        File pbkFile = defaultPbkFile();
-        if (pbkFile == null) {
-            errorLogger.accept("无法获取 APPDATA");
+        if (phonebookFile == null) {
             return false;
         }
         try {
-            if (pbkFile.exists()) {
-                // remove existing section so ensureEntry recreates with preferred device
-                Charset charset = detectPbkCharset(pbkFile);
-                String existing = new String(Files.readAllBytes(pbkFile.toPath()), charset);
+            if (phonebookFile.exists()) {
+                Charset charset = detectPbkCharset(phonebookFile);
+                String existing = new String(Files.readAllBytes(phonebookFile.toPath()), charset);
                 String without = removeSection(existing, connectionName);
-                AtomicFiles.writeString(pbkFile.toPath(), without, charset);
+                AtomicFiles.writeString(phonebookFile.toPath(), without, charset);
             }
             return ensureEntry();
         } catch (Exception e) {
-            errorLogger.accept("重写电话簿失败: " + e.getMessage());
             return false;
         }
     }
 
-    public static File defaultPbkFile() {
-        String appData = System.getenv("APPDATA");
-        if (appData == null) return null;
-        return new File(appData, "Microsoft\\Network\\Connections\\PBK\\rasphone.pbk");
-    }
-
-    public Status getLastStatus() {
-        return lastStatus.get();
-    }
-
     public Status snapshotStatus() {
-        File pbk = defaultPbkFile();
-        if (pbk == null) {
-            Status s = new Status(null, false, false, "-", null, null, "APPDATA 不可用", 0L);
-            lastStatus.set(s);
-            return s;
+        if (phonebookFile == null) {
+            return new Status(null, false, false, "-", null, null, "APPDATA 不可用", 0L);
         }
-        boolean exists = pbk.exists();
-        Charset cs = detectPbkCharset(pbk);
+        boolean exists = phonebookFile.exists();
+        Charset cs = detectPbkCharset(phonebookFile);
         boolean has = false;
         DeviceHint hint = null;
         try {
             if (exists) {
-                String content = new String(Files.readAllBytes(pbk.toPath()), cs);
+                String content = new String(Files.readAllBytes(phonebookFile.toPath()), cs);
                 has = contentContainsSection(content, connectionName);
                 hint = findPppoeDeviceHint(content);
             }
         } catch (Exception e) {
-            Status s = new Status(pbk, exists, false, cs.name(), null, null,
+            return new Status(phonebookFile, exists, false, cs.name(), null, null,
                 "读取失败: " + e.getMessage(), System.currentTimeMillis());
-            lastStatus.set(s);
-            return s;
         }
-        Status prev = lastStatus.get();
-        Status s = new Status(
-            pbk, exists, has, cs.name(),
-            hint != null ? hint.port : (prev != null ? prev.lastPort : null),
-            hint != null ? hint.device : (prev != null ? prev.lastDevice : null),
-            prev != null ? prev.lastWriteResult : "尚未写入",
-            prev != null ? prev.lastWriteMillis : 0L
-        );
-        lastStatus.set(s);
-        return s;
+        return new Status(phonebookFile, exists, has, cs.name(),
+            hint != null ? hint.port : null,
+            hint != null ? hint.device : null,
+            "尚未写入", 0L);
+    }
+
+    public boolean hasEntry() {
+        if (phonebookFile == null) return false;
+        try {
+            return phonebookFile.exists()
+                && contentContainsSection(readPbk(phonebookFile), connectionName);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**
-     * Ensure connection section exists; create via atomic rewrite if missing.
+     * Ensure the connection section exists; create via atomic rewrite if missing.
      * @return true if entry present after call
      */
     public boolean ensureEntry() {
-        if (!DialService.isValidConnectionName(connectionName)) {
-            errorLogger.accept("连接名不合法: " + connectionName);
+        if (!isValidConnectionName(connectionName)) {
             return false;
         }
-        File pbkFile = defaultPbkFile();
-        if (pbkFile == null) {
-            errorLogger.accept("无法获取 APPDATA");
+        if (phonebookFile == null) {
             return false;
         }
         try {
-            if (hasEntry(pbkFile, connectionName)) {
-                recordStatus(pbkFile, true, true, detectPbkCharset(pbkFile).name(),
-                    null, null, "已存在，未改写", System.currentTimeMillis());
+            if (hasEntry()) {
                 return true;
             }
-
-            infoLogger.accept("连接 \"" + connectionName + "\" 不存在，正在自动创建...");
-            File pbkDir = pbkFile.getParentFile();
+            File pbkDir = phonebookFile.getParentFile();
             if (pbkDir != null && !pbkDir.exists() && !pbkDir.mkdirs()) {
-                errorLogger.accept("无法创建电话簿目录");
                 return false;
             }
 
-            Charset charset = detectPbkCharset(pbkFile);
-            String existing = pbkFile.exists()
-                ? new String(Files.readAllBytes(pbkFile.toPath()), charset)
-                : "";
+            Charset charset = detectPbkCharset(phonebookFile);
+            String existing = phonebookFile.exists() ? readPbk(phonebookFile) : "";
 
-            if (pbkFile.exists()) {
+            if (phonebookFile.exists()) {
                 File backupPbk = new File(pbkDir, "rasphone.pbk.bak");
                 try {
-                    Files.copy(pbkFile.toPath(), backupPbk.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                } catch (Exception ex) {
-                    warnLogger.accept("电话簿备份失败: " + ex.getMessage());
+                    Files.copy(phonebookFile.toPath(), backupPbk.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING);
+                } catch (Exception ignored) {
                 }
             }
 
@@ -280,12 +347,6 @@ public final class RasPhonebook {
             }
             if (hint == null) {
                 hint = new DeviceHint("PPPoE5-0", "WAN Miniport (PPPOE)", false);
-                warnLogger.accept("未找到现有 PPPoE 设备条目，使用默认 Port=" + hint.port
-                    + "（若创建失败请检查适配器名称）");
-            } else if (preferredDevice != null) {
-                infoLogger.accept("使用用户指定 PPPoE 设备: " + hint.device + " / " + hint.port);
-            } else {
-                infoLogger.accept("复用现有 PPPoE 设备: " + hint.device + " / " + hint.port);
             }
 
             String entry = buildPhoneBookEntry(connectionName, hint.port, hint.device);
@@ -293,39 +354,18 @@ public final class RasPhonebook {
             if (!merged.isEmpty() && !merged.endsWith("\n")) merged += "\n";
             merged += entry;
 
-            AtomicFiles.writeString(pbkFile.toPath(), merged, charset);
-
-            boolean ok = hasEntry(pbkFile, connectionName);
-            if (ok) {
-                infoLogger.accept("PPPoE连接 \"" + connectionName + "\" 创建成功");
-                recordStatus(pbkFile, true, true, charset.name(), hint.port, hint.device,
-                    "创建成功", System.currentTimeMillis());
-            } else {
-                warnLogger.accept("连接已写入但验证失败，请重启程序后重试");
-                recordStatus(pbkFile, true, false, charset.name(), hint.port, hint.device,
-                    "写入后验证失败", System.currentTimeMillis());
-            }
-            return ok;
+            AtomicFiles.writeString(phonebookFile.toPath(), merged, charset);
+            return contentContainsSection(readPbk(phonebookFile), connectionName);
         } catch (Exception e) {
-            warnLogger.accept("创建失败: " + e.getMessage());
-            recordStatus(pbkFile, pbkFile.exists(), false, "-", null, null,
-                "异常: " + e.getMessage(), System.currentTimeMillis());
             return false;
         }
     }
 
-    public boolean hasEntry() {
-        File pbk = defaultPbkFile();
-        if (pbk == null) return false;
-        try {
-            return hasEntry(pbk, connectionName);
-        } catch (Exception e) {
-            errorLogger.accept("检测电话簿失败: " + e.getMessage());
-            return false;
-        }
+    private static String readPbk(File pbk) throws Exception {
+        return new String(Files.readAllBytes(pbk.toPath()), detectPbkCharset(pbk));
     }
 
-    // ---------- pure helpers (unit-testable) ----------
+    // ==================== pure helpers (unit-testable) ====================
 
     public static boolean contentContainsSection(String content, String connName) {
         if (content == null || connName == null) return false;
@@ -380,6 +420,44 @@ public final class RasPhonebook {
             return new DeviceHint(port, device != null ? device : "WAN Miniport (PPPOE)", true);
         }
         return null;
+    }
+
+    /** Collect unique PreferredPort/PreferredDevice pairs that look like PPPoE. */
+    public static List<DeviceHint> collectPppoeDevices(String content) {
+        ArrayList<DeviceHint> out = new ArrayList<>();
+        if (content == null || content.isEmpty()) return out;
+        String port = null;
+        String device = null;
+        for (String line : content.split("\\R")) {
+            String t = line.trim();
+            if (t.startsWith("[")) {
+                if (port != null && device != null && looksPppoe(port, device)) {
+                    out.add(new DeviceHint(port, device, true));
+                }
+                port = null;
+                device = null;
+                continue;
+            }
+            if (t.startsWith("PreferredPort=")) {
+                port = t.substring("PreferredPort=".length()).trim();
+            } else if (t.startsWith("PreferredDevice=")) {
+                device = t.substring("PreferredDevice=".length()).trim();
+            } else if (t.startsWith("Port=") && port == null) {
+                port = t.substring("Port=".length()).trim();
+            } else if (t.startsWith("Device=") && device == null) {
+                device = t.substring("Device=".length()).trim();
+            }
+        }
+        if (port != null && device != null && looksPppoe(port, device)) {
+            out.add(new DeviceHint(port, device, true));
+        }
+        return out;
+    }
+
+    private static boolean looksPppoe(String port, String device) {
+        String p = port != null ? port.toUpperCase() : "";
+        String d = device != null ? device.toUpperCase() : "";
+        return p.contains("PPPOE") || d.contains("PPPOE");
     }
 
     public static Charset detectPbkCharset(File pbkFile) {
@@ -558,25 +636,24 @@ public final class RasPhonebook {
             "TryNextAlternateOnFail=1\n\n";
     }
 
-    private boolean hasEntry(File pbkFile, String connName) throws Exception {
-        if (!pbkFile.exists()) return false;
-        Charset charset = detectPbkCharset(pbkFile);
-        List<String> lines = Files.readAllLines(pbkFile.toPath(), charset);
-        String target = "[" + connName + "]";
-        for (String line : lines) {
-            if (line != null && line.trim().equals(target)) return true;
-        }
-        return false;
-    }
+    /** Minimal single-slot reference for active-connection tracking. */
+    private static final class AtomicRef {
+        private volatile String value;
 
-    private void recordStatus(File pbk, boolean exists, boolean hasEntry, String charset,
-                              String port, String device, String writeResult, long millis) {
-        Status prev = lastStatus.get();
-        lastStatus.set(new Status(
-            pbk, exists, hasEntry, charset,
-            port != null ? port : (prev != null ? prev.lastPort : null),
-            device != null ? device : (prev != null ? prev.lastDevice : null),
-            writeResult, millis
-        ));
+        String get() {
+            return value;
+        }
+
+        void set(String v) {
+            value = v;
+        }
+
+        void compareAndSet(String expected, String next) {
+            synchronized (this) {
+                if (java.util.Objects.equals(value, expected)) {
+                    value = next;
+                }
+            }
+        }
     }
 }

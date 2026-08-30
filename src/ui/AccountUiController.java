@@ -1,7 +1,6 @@
 package ui;
 
 import model.AccountInfo;
-import model.PasswordChars;
 import service.AccountSession;
 import service.BackgroundExecutor;
 import model.DialLifecycle;
@@ -9,10 +8,10 @@ import service.DialOrchestrator;
 
 import javax.swing.SwingUtilities;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
 
 /**
- * Account combo / manager / credential-cache glue for the main shell.
+ * Account combo / manager glue for the main shell. No credential caching:
+ * the orchestrator captures one-shot credentials at dial time.
  */
 public final class AccountUiController {
     public interface Host {
@@ -74,21 +73,8 @@ public final class AccountUiController {
                 chars -> PasswordFields.setPassword(home.getTxtPassword(), chars)
             );
             host.markTooltipDirty();
-            refreshDialCredentialCache();
             TrayController tray = host.trayController();
             if (tray != null) tray.refreshAccountMenu();
-        }
-    }
-
-    public void refreshDialCredentialCache() {
-        DialOrchestrator orch = host.dialOrchestrator();
-        MainHomePanel home = host.homePanel();
-        if (orch == null || home == null) return;
-        char[] pw = home.getTxtPassword().getPassword();
-        try {
-            orch.updateCredentials(home.getTxtUsername().getText(), pw);
-        } finally {
-            PasswordChars.clear(pw);
         }
     }
 
@@ -122,7 +108,7 @@ public final class AccountUiController {
         );
     }
 
-    /** Tray: switch account; if online, disconnect then redial. */
+    /** Tray: switch account; if online, disconnect and wait for completion, then redial. */
     public void switchToAccountFromTray(int index) {
         AccountSession session = host.accountSession();
         if (index < 0 || index >= session.accounts().size()) return;
@@ -138,27 +124,10 @@ public final class AccountUiController {
             host.saveSettings();
             host.logInfo("已切换账号: " + session.currentName());
             if (wasOnline) {
-                host.dialOrchestrator().disconnectAsyncUser();
-                host.backgroundExecutor().schedule(() -> {
-                    if (!host.dialLifecycle().isBusy() && !host.isOnline().get()) {
-                        host.dialOrchestrator().dialSyncAuto();
-                    }
-                }, 1500L);
+                host.dialOrchestrator().redialAfterDisconnect();
             }
         };
         if (SwingUtilities.isEventDispatchThread()) apply.run();
         else SwingUtilities.invokeLater(apply);
-    }
-
-    public void bindCredentialCacheOnBlur() {
-        MainHomePanel home = host.homePanel();
-        java.awt.event.FocusAdapter cacheOnBlur = new java.awt.event.FocusAdapter() {
-            @Override
-            public void focusLost(java.awt.event.FocusEvent e) {
-                refreshDialCredentialCache();
-            }
-        };
-        home.getTxtUsername().addFocusListener(cacheOnBlur);
-        home.getTxtPassword().addFocusListener(cacheOnBlur);
     }
 }

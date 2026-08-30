@@ -1,12 +1,14 @@
 package ui;
 
+import model.AppVersion;
 import service.BackgroundExecutor;
-import service.UpdateCheckService;
-import service.UpdateCheckService.Result;
-import service.UpdateDownloadService;
-import service.UpdateDownloadService.DownloadResult;
-import service.UpdateDownloadService.Progress;
-import service.UpdateRelease;
+import service.UpdateModule;
+import service.UpdateModule.Asset;
+import service.UpdateModule.CheckResult;
+import service.UpdateModule.PreparedUpdate;
+import service.UpdateModule.Progress;
+import service.UpdateModule.Release;
+import service.UpdateModule.VerifiedPackage;
 
 import javax.swing.JOptionPane;
 import javax.swing.JProgressBar;
@@ -19,14 +21,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 
 /**
- * UI for update check / download / apply.
- * Network and file IO stay off the EDT.
+ * UI for update check / download / apply, backed by {@link UpdateModule}.
+ * Network and file IO stay off the EDT; the app exits only after the installer
+ * process was confirmed started.
  */
 public final class UpdateCheckUi {
     public interface Host {
         Component dialogOwner();
 
         BackgroundExecutor backgroundExecutor();
+
+        UpdateModule updateModule();
 
         void invokeIfUiActive(Runnable action);
 
@@ -58,17 +63,19 @@ public final class UpdateCheckUi {
             return;
         }
         host.logInfo("正在检查更新…");
-        UpdateCheckService.checkAsync(host.backgroundExecutor(), result ->
+        host.backgroundExecutor().submit(() -> {
+            CheckResult result = host.updateModule().check(AppVersion.NUMERIC);
             host.invokeIfUiActive(() -> {
                 try {
                     present(result, interactive);
                 } finally {
                     busy.set(false);
                 }
-            }));
+            });
+        });
     }
 
-    public void present(Result result, boolean interactive) {
+    public void present(CheckResult result, boolean interactive) {
         if (result == null) return;
         if (result.updateAvailable) {
             host.logWarning(result.message.replace('\n', ' '));
@@ -93,14 +100,14 @@ public final class UpdateCheckUi {
         offerUpdateActions(result, false);
     }
 
-    private void offerUpdateActions(Result result, boolean quietBanner) {
+    private void offerUpdateActions(CheckResult result, boolean quietBanner) {
         boolean canDownload = result.hasInstallableAsset();
         String base = result.message != null ? result.message : "发现新版本";
         if (quietBanner) {
             base = "启动检查：" + base;
         }
         if (canDownload) {
-            UpdateRelease.Asset asset = result.release.preferredWindowsAsset().get();
+            Asset asset = result.release.preferredWindowsAsset().get();
             Object[] options = {"下载并安装", "打开发布页", "稍后"};
             int opt = JOptionPane.showOptionDialog(host.dialogOwner(),
                 base + "\n\n推荐安装包: " + asset.name
@@ -126,7 +133,7 @@ public final class UpdateCheckUi {
         }
     }
 
-    private void startDownload(Result result, UpdateRelease.Asset asset) {
+    private void startDownload(CheckResult result, Asset asset) {
         if (!busy.compareAndSet(false, true)) {
             host.logWarning("已有下载任务进行中");
             return;
@@ -152,6 +159,7 @@ public final class UpdateCheckUi {
         dlg.setDefaultCloseOperation(javax.swing.WindowConstants.DO_NOTHING_ON_CLOSE);
         dlg.setVisible(true);
 
+        Release release = result.release;
         Progress progress = new Progress() {
             @Override
             public void onProgress(long downloaded, long total) {
@@ -180,49 +188,58 @@ public final class UpdateCheckUi {
             }
         };
 
-        UpdateDownloadService.downloadAsync(
-            host.backgroundExecutor(),
-            result.release,
-            asset,
-            progress,
-            cancel,
-            (dr, err) -> host.invokeIfUiActive(() -> {
+        host.backgroundExecutor().submitLong(() -> {
+            VerifiedPackage pkg = null;
+            Exception error = null;
+            try {
+                pkg = host.updateModule().download(release, asset, progress, cancel);
+            } catch (Exception ex) {
+                error = ex;
+            }
+            final VerifiedPackage finalPkg = pkg;
+            final Exception finalError = error;
+            host.invokeIfUiActive(() -> {
                 busy.set(false);
                 dlg.dispose();
-                if (err != null) {
-                    String msg = err.getMessage() != null ? err.getMessage() : err.getClass().getSimpleName();
+                if (finalError != null) {
+                    String msg = finalError.getMessage() != null
+                        ? finalError.getMessage() : finalError.getClass().getSimpleName();
                     host.logError("更新下载失败: " + msg);
                     JOptionPane.showMessageDialog(host.dialogOwner(),
                         "下载失败: " + msg, "更新", JOptionPane.ERROR_MESSAGE);
                     return;
                 }
-                afterDownload(dr);
-            }));
+                afterDownload(finalPkg);
+            });
+        });
     }
 
-    private void afterDownload(DownloadResult dr) {
-        host.logSuccess("更新包已下载并通过 SHA-256 校验: " + dr.file.getAbsolutePath());
+    private void afterDownload(VerifiedPackage pkg) {
+        host.logSuccess("更新包已下载并通过 SHA-256 校验: " + pkg.file.getAbsolutePath());
         Object[] options = {"立即安装并重启", "仅保留文件", "打开发布页"};
         int opt = JOptionPane.showOptionDialog(host.dialogOwner(),
-            "下载完成:\n" + dr.file.getAbsolutePath()
+            "下载完成:\n" + pkg.file.getAbsolutePath()
                 + "\n\n「立即安装」将退出程序，由更新脚本覆盖安装目录或启动安装包。",
             "安装更新",
             JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE,
             null, options, options[0]);
         if (opt == 1) return;
         if (opt == 2) {
-            openUrl(dr.release != null ? dr.release.htmlUrl : null);
+            openUrl(pkg.release != null ? pkg.release.htmlUrl : null);
             return;
         }
         try {
             host.prepareForUpdateApply();
-            java.io.File bat = UpdateDownloadService.prepareApplyAndRelaunch(dr);
-            if (bat == null) {
-                host.logWarning("无法生成更新脚本");
+            PreparedUpdate prepared = host.updateModule().prepare(pkg);
+            host.logInfo("即将应用更新: " + prepared.applyScript.getAbsolutePath());
+            if (!host.updateModule().launchInstall(prepared)) {
+                // Installer never started — keep running and report.
+                host.logError("安装启动失败，程序继续运行；请手动运行安装包");
+                JOptionPane.showMessageDialog(host.dialogOwner(),
+                    "安装启动失败，程序继续运行。\n可手动运行已下载的安装包。",
+                    "更新", JOptionPane.ERROR_MESSAGE);
                 return;
             }
-            host.logInfo("即将应用更新: " + bat.getAbsolutePath());
-            UpdateDownloadService.launchApplyScript(bat);
             host.exitForUpdate();
         } catch (Exception ex) {
             host.logError("准备安装失败: " + ex.getMessage());

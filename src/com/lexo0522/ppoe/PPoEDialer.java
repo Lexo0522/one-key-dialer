@@ -1,24 +1,23 @@
 /*
  * PPPoE校园网自动拨号工具
- * Thin Swing shell: window + Host adapters. Composition in AppServices / UI controllers.
+ * Thin Swing shell: window + UI adapters. Composition in AppServices / UI controllers.
  * Author: Lexo0522 — https://github.com/Lexo0522/one-key-dialer
  */
 
 package com.lexo0522.ppoe;
 
 import model.AccountInfo;
-import model.AppFiles;
-import model.AppVersion;
-import model.DialSnapshot;
-import service.LegacyDataMigrator;
-import service.SettingsCoordinator;
+import model.DialCredentials;
+import model.SettingsSnapshot;
+import service.BackgroundExecutor;
+import service.DialView;
+import service.SettingsManager;
 import service.StartupSelfCheck;
 import ui.AccountUiController;
 import ui.DialUiActions;
 import ui.MainHomePanel;
 import ui.MainTabsController;
 import ui.ProbeSettingsPanel;
-import ui.SchedulePanel;
 import ui.TrayController;
 import ui.UiTheme;
 import ui.UpdateCheckUi;
@@ -34,17 +33,17 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 
 /**
- * Main window shell. Business logic lives in {@code service/*};
- * wiring lives in {@link AppServices}, tabs in {@link MainTabsController},
- * accounts in {@link AccountUiController}, dial gates in {@link DialUiActions},
- * exit in {@link ShellShutdown}, settings in {@link SettingsWiring},
- * updates in {@link UpdateCheckUi}, process entry in {@link AppLauncher}.
+ * Main window shell. Business logic lives in {@code service/*}; wiring lives in
+ * {@link AppServices}, tabs in {@link MainTabsController}, accounts in
+ * {@link AccountUiController}, dial gates in {@link DialUiActions},
+ * exit in {@link ShellShutdown}, updates in {@link UpdateCheckUi},
+ * process entry in {@link AppLauncher}.
  */
 @SuppressWarnings("serial")
-public class PPoEDialer extends JFrame implements ShellBridge {
+public class PPoEDialer extends JFrame implements ShellBridge, DialView {
 
     public static final String APP_TITLE = "PPPoE校园网拨号工具";
-    public static final String APP_VERSION = AppVersion.DISPLAY;
+    public static final String APP_VERSION = model.AppVersion.DISPLAY;
     private static final int WINDOW_WIDTH = 580;
     private static final int WINDOW_HEIGHT = 700;
 
@@ -53,7 +52,6 @@ public class PPoEDialer extends JFrame implements ShellBridge {
     private MainTabsController tabs;
     private AccountUiController accountsUi;
     private AppServices services;
-    private SettingsCoordinator settingsCoordinator;
     private UpdateCheckUi updateCheckUi;
     private DialUiActions dialUi;
     private ShellShutdown shutdown;
@@ -67,7 +65,7 @@ public class PPoEDialer extends JFrame implements ShellBridge {
         setResizable(true);
         setMinimumSize(new Dimension(520, 560));
 
-        services = new AppServices(this, () -> homePanel, () -> trayController);
+        services = new AppServices(this, this);
 
         homePanel = createHomePanel();
         accountsUi = new AccountUiController(new AccountUiController.Host() {
@@ -83,7 +81,6 @@ public class PPoEDialer extends JFrame implements ShellBridge {
             @Override public void logInfo(String message) { log(message, UiTheme.COLOR_INFO); }
             @Override public void logWarning(String message) { log(message, UiTheme.COLOR_WARNING); }
         });
-        accountsUi.bindCredentialCacheOnBlur();
 
         dialUi = new DialUiActions(new DialUiActions.Host() {
             @Override public Component dialogOwner() { return PPoEDialer.this; }
@@ -98,9 +95,9 @@ public class PPoEDialer extends JFrame implements ShellBridge {
         tabs = new MainTabsController(new MainTabsController.Host() {
             @Override public MainHomePanel homePanel() { return homePanel; }
             @Override public service.HistoryService historyService() { return services.historyService; }
-            @Override public service.RuntimeSettings runtimeSettings() { return services.runtimeSettings; }
+            @Override public SettingsManager settingsManager() { return services.settingsManager; }
             @Override public service.ScheduleService scheduleService() { return services.scheduleService; }
-            @Override public service.DialService dialService() { return services.dialService; }
+            @Override public service.WindowsRasModule rasModule() { return services.rasModule; }
             @Override public service.BackgroundExecutor backgroundExecutor() { return services.backgroundExecutor; }
             @Override public java.util.function.BooleanSupplier isOnline() { return services.isOnline::get; }
             @Override public AccountInfo currentAccount() { return services.accountSession.currentOrNull(); }
@@ -109,14 +106,11 @@ public class PPoEDialer extends JFrame implements ShellBridge {
             @Override public long totalUpload() { return services.sessionTraffic.totalUpload().get(); }
             @Override public long speedDown() { return services.sessionTraffic.currentSpeedDown().get(); }
             @Override public long speedUp() { return services.sessionTraffic.currentSpeedUp().get(); }
+            @Override public String probeReport() { return services.probeReportLine(); }
             @Override public boolean isUiActive() { return PPoEDialer.this.isUiActive(); }
             @Override public void flushPendingPersistence() { shutdown.flushPendingPersistence(); }
             @Override public void saveSettings() { PPoEDialer.this.saveSettings(); }
             @Override public void log(String message, Color color) { PPoEDialer.this.log(message, color); }
-            @Override public void syncScheduleCacheFromUi() { PPoEDialer.this.syncScheduleCacheFromUi(); }
-            @Override public void syncProbeFromUi(ProbeSettingsPanel panel) {
-                PPoEDialer.this.syncProbeFromUi(panel);
-            }
             @Override public JFrame frame() { return PPoEDialer.this; }
         });
 
@@ -125,6 +119,7 @@ public class PPoEDialer extends JFrame implements ShellBridge {
             @Override public service.BackgroundExecutor backgroundExecutor() {
                 return services.backgroundExecutor;
             }
+            @Override public service.UpdateModule updateModule() { return services.updateModule; }
             @Override public void invokeIfUiActive(Runnable action) {
                 PPoEDialer.this.invokeIfUiActive(action);
             }
@@ -194,13 +189,11 @@ public class PPoEDialer extends JFrame implements ShellBridge {
             @Override public void checkForUpdates() { updateCheckUi.check(true); }
         }, msg -> log(msg, UiTheme.COLOR_ERROR));
 
-        LegacyDataMigrator.migrateIfNeeded(PPoEDialer.class,
-            AppFiles.ACCOUNTS, AppFiles.SETTINGS, AppFiles.HISTORY, AppFiles.LOG);
-        loadSettings();
+        // Settings: load snapshot, apply to controls + runtime.
+        applySettings(services.settingsManager.loadFromDisk());
         reconcileAutoStartAsync();
         services.accountSession.load();
         accountsUi.refreshAccountComboBox();
-        accountsUi.refreshDialCredentialCache();
         services.networkMonitorService.start();
         services.scheduleService.restart();
         restoreAutoReconnect();
@@ -212,7 +205,8 @@ public class PPoEDialer extends JFrame implements ShellBridge {
             services.settingsStore.getFile(),
             services.accountStore.getFile(),
             services.historyStore.getFile(),
-            services.runtimeSettings.probeSummaryLine()
+            services.settingsManager.current().probeMode + " / "
+                + services.settingsManager.current().probeHost
         ));
 
         addWindowListener(new WindowAdapter() {
@@ -228,7 +222,7 @@ public class PPoEDialer extends JFrame implements ShellBridge {
                 setVisible(false);
             }
             // Quiet GitHub check only when user left the option enabled.
-            if (services.runtimeSettings.isUpdateCheckEnabled()) {
+            if (services.settingsManager.current().updateCheckEnabled) {
                 updateCheckUi.scheduleQuietCheck(5000L);
             }
         });
@@ -250,12 +244,9 @@ public class PPoEDialer extends JFrame implements ShellBridge {
             @Override public void onAutoStartToggled() { toggleAutoStart(); }
             @Override public void saveSettings() { PPoEDialer.this.saveSettings(); }
             @Override public void onDisconnectOnNoInternetToggled(boolean enabled) {
-                services.runtimeSettings.setDisconnectOnNoInternet(enabled);
-                services.dialOrchestrator.setDisconnectOnNoInternet(enabled);
                 PPoEDialer.this.saveSettings();
             }
             @Override public void onUpdateCheckToggled(boolean enabled) {
-                services.runtimeSettings.setUpdateCheckEnabled(enabled);
                 PPoEDialer.this.saveSettings();
             }
             @Override public void onDialToggle() {
@@ -265,9 +256,44 @@ public class PPoEDialer extends JFrame implements ShellBridge {
         }, services.logService);
     }
 
+    // ---------- settings capture / apply (EDT) ----------
+
+    /** Merge current control state into one snapshot and swap it in as runtime state. */
+    private SettingsSnapshot captureSettingsFromUi() {
+        SettingsSnapshot.Builder builder =
+            services.settingsManager.current().toBuilder();
+        homePanel.captureSettings(builder);
+        ui.SchedulePanel schedulePanel = tabs.schedulePanel();
+        if (schedulePanel != null) schedulePanel.captureSettings(builder);
+        ProbeSettingsPanel probePanel = tabs.probePanel();
+        if (probePanel != null) probePanel.captureSettings(builder);
+        builder.accountIndex(services.accountSession.currentIndex());
+        return builder.build();
+    }
+
+    /** Push a snapshot into all created panels (runtime state is swapped by the caller). */
+    private void applySettingsToUi(SettingsSnapshot s) {
+        homePanel.applySettings(s);
+        ui.SchedulePanel schedulePanel = tabs.schedulePanel();
+        if (schedulePanel != null) schedulePanel.applySettings(s);
+        ProbeSettingsPanel probePanel = tabs.probePanel();
+        if (probePanel != null) probePanel.applySettings(s);
+    }
+
+    private void applySettings(SettingsSnapshot s) {
+        services.settingsManager.update(s);
+        applySettingsToUi(s);
+    }
+
+    @Override
+    public void saveSettings() {
+        SettingsSnapshot snapshot = captureSettingsFromUi();
+        services.settingsManager.update(snapshot);
+        services.settingsManager.saveToDisk(snapshot);
+    }
+
     // ---------- ShellBridge ----------
 
-    @Override public Component dialogOwner() { return this; }
     @Override public MainHomePanel homePanel() { return homePanel; }
     @Override public TrayController trayController() { return trayController; }
 
@@ -308,23 +334,33 @@ public class PPoEDialer extends JFrame implements ShellBridge {
         });
     }
 
-    @Override
-    public void showNotification(String title, String message) {
-        if (!isUiActive()) return;
-        if (trayController != null) trayController.displayMessage(title, message);
+    // ---------- DialView ----------
+
+    @Override public boolean onEventDispatchThread() {
+        return SwingUtilities.isEventDispatchThread();
     }
 
-    @Override
-    public void updateButtonState(boolean enabled) {
-        invokeIfUiActive(() -> {
-            if (homePanel == null) return;
-            if (enabled) homePanel.setOnlineStatus(services.isOnline.get());
-            else homePanel.setDialEnabled(false);
-        });
+    @Override public void runOnEdt(Runnable action) {
+        invokeIfUiActive(action);
     }
 
-    @Override
-    public void updateDialProgress(String phase) {
+    @Override public void runOnEdtAndWait(Runnable action) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            action.run();
+        } else {
+            SwingUtilities.invokeAndWait(action);
+        }
+    }
+
+    @Override public DialCredentials captureDialCredentials() {
+        return dialUi.captureDialCredentials();
+    }
+
+    @Override public boolean validateDialInput(boolean interactive) {
+        return dialUi.validateDialInput(interactive);
+    }
+
+    @Override public void onDialPhase(String phase) {
         invokeIfUiActive(() -> {
             if (homePanel == null) return;
             if ("dialing".equals(phase)) {
@@ -337,45 +373,30 @@ public class PPoEDialer extends JFrame implements ShellBridge {
         });
     }
 
-    @Override
-    public boolean validateBeforeDial(boolean interactive) {
-        return dialUi.validateBeforeDial(interactive);
+    @Override public void onConnectionState(boolean online) {
+        updateStatus(online);
     }
 
-    @Override
-    public DialSnapshot captureDialSnapshotOnEdt() {
-        return dialUi.captureDialSnapshotOnEdt();
+    @Override public void notifyUser(String title, String message) {
+        if (!isUiActive()) return;
+        if (trayController != null) trayController.displayMessage(title, message);
     }
 
-    @Override
-    public void saveCurrentAccount() {
-        accountsUi.saveCurrentAccount();
-    }
-
-    @Override
-    public void saveSettings() {
-        ensureSettingsCoordinator();
-        settingsCoordinator.save();
-    }
-
-    @Override
-    public void addHistoryRecord(String operation, String account, String result,
-                                 String duration, String totalTraffic) {
-        services.historyService.addRecord(operation, account, result, duration, totalTraffic);
-        if ((services.historyService.records().size() & 0x0F) == 0) {
-            shutdown.flushPendingPersistence();
+    @Override public void log(DialView.Level level, String message) {
+        Color color;
+        switch (level) {
+            case SUCCESS: color = UiTheme.COLOR_SUCCESS; break;
+            case WARNING: color = UiTheme.COLOR_WARNING; break;
+            case ERROR: color = UiTheme.COLOR_ERROR; break;
+            case INFO:
+            default: color = UiTheme.COLOR_INFO; break;
         }
-    }
-
-    @Override
-    public void markTooltipDirty() {
-        services.markTooltipDirty();
+        log(message, color);
     }
 
     // ---------- shell actions ----------
 
     private void performDial() {
-        accountsUi.refreshDialCredentialCache();
         services.dialOrchestrator.dialAsyncUser();
     }
 
@@ -385,9 +406,8 @@ public class PPoEDialer extends JFrame implements ShellBridge {
 
     private void startAutoReconnect() {
         if (services.autoReconnectService.isRunning()) return;
-        accountsUi.refreshDialCredentialCache();
         services.autoReconnectService.start(
-            (int) homePanel.getSpnInterval().getValue(), true);
+            services.settingsManager.current().intervalSeconds, true);
     }
 
     private void stopAutoReconnect() {
@@ -449,42 +469,6 @@ public class PPoEDialer extends JFrame implements ShellBridge {
                 saveSettings();
             });
         });
-    }
-
-    private void syncProbeFromUi(ProbeSettingsPanel panel) {
-        if (panel == null) return;
-        services.runtimeSettings.setProbe(
-            panel.getProbeMode(), panel.getProbeHost(), panel.getProbeHttpUrl(),
-            panel.getProbeAttempts(), panel.getProbeDelayMs()
-        );
-        services.dialOrchestrator.setProbeConfigSupplier(services.runtimeSettings::toProbeConfig);
-    }
-
-    private void syncScheduleCacheFromUi() {
-        SchedulePanel p = tabs.schedulePanel();
-        if (p == null) return;
-        services.runtimeSettings.setSchedule(
-            p.isDialEnabled(), p.dialHour(), p.dialMinute(),
-            p.isDisconnectEnabled(), p.disconnectHour(), p.disconnectMinute()
-        );
-    }
-
-    private void ensureSettingsCoordinator() {
-        if (settingsCoordinator != null) return;
-        settingsCoordinator = SettingsWiring.create(
-            services,
-            () -> homePanel,
-            () -> tabs,
-            this::syncScheduleCacheFromUi,
-            this::syncProbeFromUi,
-            msg -> log(msg, UiTheme.COLOR_WARNING),
-            msg -> log(msg, UiTheme.COLOR_ERROR)
-        );
-    }
-
-    private void loadSettings() {
-        ensureSettingsCoordinator();
-        settingsCoordinator.load();
     }
 
     public static void main(String[] args) {

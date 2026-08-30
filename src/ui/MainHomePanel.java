@@ -1,5 +1,6 @@
 package ui;
 
+import model.SettingsSnapshot;
 import service.LogService;
 
 import javax.swing.*;
@@ -134,7 +135,7 @@ public class MainHomePanel extends JPanel {
             host.saveSettings();
         });
         chkAutoStart.setFont(UiTheme.FONT_CN);
-        chkAutoStart.setToolTipText("以 Windows 注册表 Run 项为准；INI 中 auto.start 仅用于启动时修复注册");
+        chkAutoStart.setToolTipText("以 Windows 注册表 Run 项为准；设置中 auto.start 仅用于启动时修复注册");
         // Host.toggle saves settings; avoid double saveSettings here
         chkAutoStart.addActionListener(e -> host.onAutoStartToggled());
         chkStartMinimized.setFont(UiTheme.FONT_CN);
@@ -301,6 +302,27 @@ public class MainHomePanel extends JPanel {
             }
         });
         return btn;
+    }
+
+    /** Read option controls into the builder (EDT). */
+    public void captureSettings(SettingsSnapshot.Builder builder) {
+        builder.intervalSeconds((Integer) spnInterval.getValue())
+            .autoReconnect(chkAutoReconnect.isSelected())
+            .autoStart(chkAutoStart.isSelected())
+            .startMinimized(chkStartMinimized.isSelected())
+            .disconnectOnNoInternet(chkDisconnectOnNoInternet.isSelected())
+            .updateCheckEnabled(chkUpdateCheck.isSelected());
+    }
+
+    /** Write option controls from the snapshot (EDT). */
+    public void applySettings(SettingsSnapshot s) {
+        if (s == null) return;
+        spnInterval.setValue(Math.max(SettingsSnapshot.MIN_INTERVAL_SECONDS, s.intervalSeconds));
+        chkAutoReconnect.setSelected(s.autoReconnect);
+        chkAutoStart.setSelected(s.autoStart);
+        chkStartMinimized.setSelected(s.startMinimized);
+        chkDisconnectOnNoInternet.setSelected(s.disconnectOnNoInternet);
+        chkUpdateCheck.setSelected(s.updateCheckEnabled);
     }
 
     public void setOnlineStatus(boolean online) {
