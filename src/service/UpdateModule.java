@@ -98,6 +98,31 @@ public final class UpdateModule {
          * Preference: zip (app-image) → msi → exe; prefer names mentioning the product.
          */
         public Optional<Asset> preferredWindowsAsset() {
+            return preferredWindowsAsset(true);
+        }
+
+        /**
+         * Pick best installable asset honoring the install type. A writable install
+         * dir (portable app-image) takes the zip. A non-writable dir (MSI install
+         * under Program Files) must NOT take the zip — its apply script copies into
+         * the install dir and would fail without elevation — so the msi (msiexec
+         * triggers its own UAC prompt) or exe is offered instead.
+         */
+        public Optional<Asset> preferredWindowsAsset(boolean installDirWritable) {
+            Asset[] best = bestPerType();
+            if (installDirWritable) {
+                if (best[0] != null) return Optional.of(best[0]);
+                if (best[1] != null) return Optional.of(best[1]);
+                if (best[2] != null) return Optional.of(best[2]);
+                return Optional.empty();
+            }
+            if (best[1] != null) return Optional.of(best[1]);
+            if (best[2] != null) return Optional.of(best[2]);
+            return Optional.empty();
+        }
+
+        /** Best zip / msi / exe candidate by score, in that index order. */
+        private Asset[] bestPerType() {
             Asset bestZip = null;
             Asset bestMsi = null;
             Asset bestExe = null;
@@ -118,10 +143,7 @@ public final class UpdateModule {
                     bestExe = a;
                 }
             }
-            if (bestZip != null) return Optional.of(bestZip);
-            if (bestMsi != null) return Optional.of(bestMsi);
-            if (bestExe != null) return Optional.of(bestExe);
-            return Optional.empty();
+            return new Asset[]{bestZip, bestMsi, bestExe};
         }
 
         /** The single SHA256SUMS.txt asset, or empty when absent or duplicated. */
@@ -169,8 +191,12 @@ public final class UpdateModule {
         }
 
         public boolean hasInstallableAsset() {
+            return hasInstallableAsset(true);
+        }
+
+        public boolean hasInstallableAsset(boolean installDirWritable) {
             return release != null
-                && release.preferredWindowsAsset().isPresent()
+                && release.preferredWindowsAsset(installDirWritable).isPresent()
                 && release.checksumManifest().isPresent();
         }
     }
@@ -334,6 +360,24 @@ public final class UpdateModule {
         return check(AppVersion.RELEASES_API, currentVersion);
     }
 
+    /**
+     * Best-effort probe: can this install write into its own directory? Portable
+     * app-image installs can (zip updates apply by copy); MSI installs under
+     * Program Files cannot and must take the MSI asset instead.
+     */
+    public static boolean isInstallDirWritable() {
+        File dir = resolveInstallDir();
+        if (dir == null || !dir.isDirectory()) return false;
+        try {
+            File probe = File.createTempFile("ppoe_probe_", ".tmp", dir);
+            //noinspection ResultOfMethodCallIgnored
+            probe.delete();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public CheckResult check(String apiUrl, String currentVersion) {
         String current = currentVersion != null ? currentVersion : AppVersion.NUMERIC;
         try {
@@ -351,11 +395,17 @@ public final class UpdateModule {
             int cmp = AppVersion.compareNumeric(current, tag);
             if (cmp < 0) {
                 String msg = "发现新版本 " + tag + "（当前 " + AppVersion.DISPLAY + "）";
-                if (release.preferredWindowsAsset().isPresent()
+                boolean writable = isInstallDirWritable();
+                if (release.preferredWindowsAsset(writable).isPresent()
                     && release.checksumManifest().isPresent()) {
-                    msg += "\n可下载: " + release.preferredWindowsAsset().get().name;
-                } else if (release.preferredWindowsAsset().isPresent()) {
+                    msg += "\n可下载: " + release.preferredWindowsAsset(writable).get().name;
+                    if (!writable) {
+                        msg += "\n（安装目录不可写，已选择 MSI 安装包）";
+                    }
+                } else if (release.preferredWindowsAsset(writable).isPresent()) {
                     msg += "\n（发布包缺少 SHA256SUMS.txt，已禁用自动安装，请到发布页手动确认）";
+                } else if (release.preferredWindowsAsset(true).isPresent()) {
+                    msg += "\n（当前安装方式无法自动应用更新包，请到发布页手动下载 MSI）";
                 } else {
                     msg += "\n（发布页暂无匹配的 Windows 安装包，可手动打开网页）";
                 }
@@ -661,6 +711,19 @@ public final class UpdateModule {
             w.println("  pause");
             w.println("  exit /b 1");
             w.println(")");
+            w.println("if not exist \"%DST%\\\" (");
+            w.println("  echo Install dir missing: %DST%");
+            w.println("  pause");
+            w.println("  exit /b 1");
+            w.println(")");
+            w.println("rem Writability probe — a Program Files install must use the MSI");
+            w.println("copy /y nul \"%DST%\\ppoe_update_probe.tmp\" >nul 2>nul");
+            w.println("if errorlevel 1 (");
+            w.println("  echo Install dir is not writable. Use the MSI package instead.");
+            w.println("  pause");
+            w.println("  exit /b 1");
+            w.println(")");
+            w.println("del \"%DST%\\ppoe_update_probe.tmp\" >nul 2>nul");
             w.println("xcopy \"%SRC%\\*\" \"%DST%\\\" /E /Y /I /Q");
             w.println("if errorlevel 1 (");
             w.println("  echo Copy failed");

@@ -101,13 +101,14 @@ public final class UpdateCheckUi {
     }
 
     private void offerUpdateActions(CheckResult result, boolean quietBanner) {
-        boolean canDownload = result.hasInstallableAsset();
+        boolean installDirWritable = UpdateModule.isInstallDirWritable();
+        boolean canDownload = result.hasInstallableAsset(installDirWritable);
         String base = result.message != null ? result.message : "发现新版本";
         if (quietBanner) {
             base = "启动检查：" + base;
         }
         if (canDownload) {
-            Asset asset = result.release.preferredWindowsAsset().get();
+            Asset asset = result.release.preferredWindowsAsset(installDirWritable).get();
             Object[] options = {"下载并安装", "打开发布页", "稍后"};
             int opt = JOptionPane.showOptionDialog(host.dialogOwner(),
                 base + "\n\n推荐安装包: " + asset.name

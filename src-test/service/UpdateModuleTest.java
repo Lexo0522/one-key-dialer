@@ -83,6 +83,29 @@ class UpdateModuleTest {
     }
 
     @Test
+    void assetSelectionHonorsInstallDirWritability() {
+        String json = "{\"tag_name\":\"v1.2.0\",\"assets\":["
+            + "{\"name\":\"PPoEDialer-1.2.0-windows.zip\",\"browser_download_url\":\"https://example.test/a.zip\",\"size\":2048},"
+            + "{\"name\":\"PPoEDialer-1.2.0-windows.msi\",\"browser_download_url\":\"https://example.test/a.msi\",\"size\":4096}]}";
+        UpdateModule.Release release = UpdateModule.parseReleaseJson(json);
+
+        // portable (writable) install: zip wins; Program Files install: msi wins
+        assertTrue(release.preferredWindowsAsset(true).get().isZip());
+        assertTrue(release.preferredWindowsAsset(false).get().isMsi());
+    }
+
+    @Test
+    void nonWritableInstallWithZipOnlyOffersNoAutoInstall() {
+        String json = "{\"tag_name\":\"v1.2.0\",\"assets\":["
+            + "{\"name\":\"PPoEDialer-1.2.0-windows.zip\",\"browser_download_url\":\"https://example.test/a.zip\",\"size\":2048}]}";
+        UpdateModule.Release release = UpdateModule.parseReleaseJson(json);
+
+        // zip cannot apply into a non-writable dir — updater must fall back to the release page
+        assertFalse(release.preferredWindowsAsset(false).isPresent());
+        assertTrue(release.preferredWindowsAsset(true).isPresent());
+    }
+
+    @Test
     void noUpdateWhenTagIsNotNewer() {
         FakeFetcher fetcher = new FakeFetcher();
         fetcher.body = "{\"tag_name\":\"v" + AppVersion.NUMERIC + "\"}";
