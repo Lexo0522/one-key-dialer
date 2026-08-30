@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -41,6 +42,8 @@ import java.util.zip.ZipFile;
 public final class UpdateModule {
     private static final Pattern SHA256SUM_LINE = Pattern.compile("(?i)^([0-9a-f]{64}) {2}([^\\r\\n]+)$");
     private static final int MAX_CHECKSUM_MANIFEST_CHARS = 1024 * 1024;
+    /** No bytes for this long during a download ⇒ abort with a clear message. */
+    private static final long DOWNLOAD_STALL_TIMEOUT_MS = 60_000;
 
     // ---------- data ----------
 
@@ -317,8 +320,10 @@ public final class UpdateModule {
                 .header("User-Agent", AppVersion.USER_AGENT)
                 .GET()
                 .build();
-            java.net.http.HttpResponse<String> resp =
-                client.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+            // JDK HttpClient does not timeout DNS resolution; campus networks often
+            // blackhole the GitHub asset CDN. Bound the whole exchange hard.
+            java.net.http.HttpResponse<String> resp = sendBounded(client, req,
+                java.net.http.HttpResponse.BodyHandlers.ofString(), timeout);
             return new ContentFetcher.FetchedText(resp.statusCode(), resp.body());
         };
     }
@@ -336,11 +341,38 @@ public final class UpdateModule {
                 .header("Accept", "application/octet-stream")
                 .GET()
                 .build();
-            java.net.http.HttpResponse<InputStream> resp =
-                client.send(req, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+            java.net.http.HttpResponse<InputStream> resp = sendBounded(client, req,
+                java.net.http.HttpResponse.BodyHandlers.ofInputStream(),
+                Duration.ofSeconds(60));
             long len = resp.headers().firstValueAsLong("Content-Length").orElse(0L);
             return new StreamOpener.DownloadStream(resp.body(), len, resp.statusCode());
         };
+    }
+
+    /**
+     * send() with a hard ceiling over the whole exchange (DNS + connect + TLS +
+     * response headers). The per-request timeout does not cover DNS resolution,
+     * so a blackholed CDN can otherwise hang a worker thread forever.
+     */
+    private static <T> java.net.http.HttpResponse<T> sendBounded(
+        java.net.http.HttpClient client, java.net.http.HttpRequest request,
+        java.net.http.HttpResponse.BodyHandler<T> bodyHandler, Duration requestTimeout)
+        throws IOException {
+        long hardMs = Math.max(30_000L, requestTimeout.toMillis() + 10_000L);
+        try {
+            return client.sendAsync(request, bodyHandler)
+                .orTimeout(hardMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                .join();
+        } catch (java.util.concurrent.CompletionException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            if (cause instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            if (cause instanceof IOException) {
+                throw (IOException) cause;
+            }
+            throw new IOException("请求无响应（网络或 CDN 可能被拦截），已超时中止", cause);
+        }
     }
 
     private static InstallerLauncher defaultInstallerLauncher() {
@@ -486,36 +518,73 @@ public final class UpdateModule {
         p.onStatus("正在下载 " + asset.name + " …");
         URI target = URI.create(asset.downloadUrl);
         long downloaded = 0L;
-        try (StreamOpener.DownloadStream ds = opener.open(target)) {
+        // Campus networks routinely blackhole the GitHub asset CDN mid-transfer;
+        // a blocking read() must not hang forever, so a watchdog closes the stream
+        // after a no-data window and the loop aborts with a clear message.
+        final AtomicLong lastDataNanos = new AtomicLong(System.nanoTime());
+        final AtomicBoolean done = new AtomicBoolean(false);
+        final AtomicBoolean stalled = new AtomicBoolean(false);
+        StreamOpener.DownloadStream ds = null;
+        java.io.OutputStream os = null;
+        Thread watchdog = null;
+        try {
+            ds = opener.open(target);
             if (ds.statusCode / 100 != 2) {
                 throw new IOException("下载失败 HTTP " + ds.statusCode);
             }
+            watchdog = startStallWatchdog(ds.stream, lastDataNanos, done, stalled);
             long total = ds.contentLength > 0 ? ds.contentLength : asset.sizeBytes;
-            try (java.io.OutputStream os = Files.newOutputStream(part.toPath(),
+            os = Files.newOutputStream(part.toPath(),
                 StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
                 StandardOpenOption.WRITE);
-                 InputStream in = new BufferedInputStream(ds.stream)) {
-                byte[] buf = new byte[64 * 1024];
-                int n;
-                long lastReport = 0L;
-                while ((n = in.read(buf)) >= 0) {
-                    if (cancelled.get()) {
-                        throw new IOException("下载已取消");
-                    }
-                    if (n == 0) continue;
-                    os.write(buf, 0, n);
-                    downloaded += n;
-                    if (downloaded - lastReport >= 256 * 1024 || downloaded == total) {
-                        p.onProgress(downloaded, total);
-                        lastReport = downloaded;
-                    }
+            InputStream in = new BufferedInputStream(ds.stream);
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            long lastReport = 0L;
+            while ((n = in.read(buf)) >= 0) {
+                if (cancelled.get()) {
+                    throw new IOException("下载已取消");
                 }
-                os.flush();
+                if (n == 0) continue;
+                os.write(buf, 0, n);
+                downloaded += n;
+                lastDataNanos.set(System.nanoTime());
+                if (downloaded - lastReport >= 256 * 1024 || downloaded == total) {
+                    p.onProgress(downloaded, total);
+                    lastReport = downloaded;
+                }
             }
+            os.flush();
         } catch (Exception e) {
             //noinspection ResultOfMethodCallIgnored
             part.delete();
+            if (stalled.get()) {
+                throw new IOException("下载停滞超过 " + (DOWNLOAD_STALL_TIMEOUT_MS / 1000)
+                    + " 秒，已中止；校园网可能拦截了 GitHub 资源，请到发布页手动下载", e);
+            }
             throw e;
+        } finally {
+            done.set(true);
+            if (watchdog != null) {
+                watchdog.interrupt();
+                try {
+                    watchdog.join(3000);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            if (os != null) {
+                try {
+                    os.close();
+                } catch (IOException ignored) {
+                }
+            }
+            if (ds != null) {
+                try {
+                    ds.stream.close();
+                } catch (IOException ignored) {
+                }
+            }
         }
 
         try {
@@ -606,6 +675,36 @@ public final class UpdateModule {
         if (name == null || name.isEmpty()) return "update.bin";
         String n = name.replaceAll("[\\\\/:*?\"<>|]", "_");
         return n.length() > 180 ? n.substring(0, 180) : n;
+    }
+
+    /**
+     * Daemon thread that closes the download stream when no bytes arrive for
+     * {@link #DOWNLOAD_STALL_TIMEOUT_MS} — closing unblocks the reader loop.
+     */
+    private static Thread startStallWatchdog(InputStream stream, AtomicLong lastDataNanos,
+                                             AtomicBoolean done, AtomicBoolean stalled) {
+        Thread t = new Thread(() -> {
+            while (!done.get()) {
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                if (done.get()) return;
+                long stalledMs = (System.nanoTime() - lastDataNanos.get()) / 1_000_000L;
+                if (stalledMs > DOWNLOAD_STALL_TIMEOUT_MS) {
+                    stalled.set(true);
+                    try {
+                        stream.close();
+                    } catch (IOException ignored) {
+                    }
+                    return;
+                }
+            }
+        }, "UpdateStallWatchdog");
+        t.setDaemon(true);
+        t.start();
+        return t;
     }
 
     // ---------- prepare & install ----------
