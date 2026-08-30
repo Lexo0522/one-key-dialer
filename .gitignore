@@ -31,3 +31,4 @@ Thumbs.db
 *.class
 *.log
 .claude/
+.zcode/
