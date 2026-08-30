@@ -43,10 +43,14 @@ jobs:
           )
           echo Canonical version: %APP_VER%
 
+      - name: Maven JUnit with coverage and Error Prone
+        if: matrix.java == '17'
+        # PowerShell parses an unquoted comma as an argument separator.
+        run: mvn -B -q clean test "-Pcoverage,errorprone"
+
       - name: Maven JUnit
-        # coverage (JaCoCo) + errorprone run on the JDK 17 leg only
-        # (ErrorProne does not yet support the JDK 26 javac internals)
-        run: mvn -B -q clean test ${{ matrix.java == '17' && '-Pcoverage,errorprone' || '' }}
+        if: matrix.java != '17'
+        run: mvn -B -q clean test
 
       - name: Upload coverage report
         if: matrix.java == '17'
