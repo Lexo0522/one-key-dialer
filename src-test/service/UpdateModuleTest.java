@@ -8,12 +8,17 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -41,12 +46,40 @@ class UpdateModuleTest {
         byte[] content = "package-bytes".getBytes(StandardCharsets.UTF_8);
         int statusCode = 200;
         RuntimeException failure;
+        /** Emulate a range-capable CDN: 206 + sliced body for rangeStart > 0. */
+        boolean rangeCapable = false;
+        /** First open serves this many bytes then throws, simulating a broken transfer. */
+        int failFirstAttemptAfterBytes = 0;
+        final List<Long> requestedRanges = new ArrayList<>();
+        int opens = 0;
 
         @Override
-        public UpdateModule.StreamOpener.DownloadStream open(URI uri) {
+        public UpdateModule.StreamOpener.DownloadStream open(URI uri, long rangeStart) {
+            opens++;
+            requestedRanges.add(rangeStart);
             if (failure != null) throw failure;
+            if (opens == 1 && failFirstAttemptAfterBytes > 0) {
+                return new UpdateModule.StreamOpener.DownloadStream(
+                    failingAfter(content, failFirstAttemptAfterBytes), content.length, 200);
+            }
+            if (rangeCapable && rangeStart > 0) {
+                byte[] rest = Arrays.copyOfRange(content, (int) rangeStart, content.length);
+                return new UpdateModule.StreamOpener.DownloadStream(
+                    new ByteArrayInputStream(rest), content.length, 206);
+            }
             return new UpdateModule.StreamOpener.DownloadStream(
                 new ByteArrayInputStream(content), content.length, statusCode);
+        }
+
+        private static InputStream failingAfter(byte[] data, int bytes) {
+            return new InputStream() {
+                int sent = 0;
+
+                @Override public int read() throws IOException {
+                    if (sent >= bytes) throw new IOException("模拟传输中断");
+                    return data[sent++] & 0xff;
+                }
+            };
         }
     }
 
@@ -265,6 +298,114 @@ class UpdateModuleTest {
                 null, new AtomicBoolean(false)));
     }
 
+    @Test
+    void interruptedDownloadResumesFromPart() throws Exception {
+        FakeFetcher fetcher = new FakeFetcher();
+        FakeOpener opener = new FakeOpener();
+        byte[] pkg = new byte[300 * 1024];
+        new Random(42).nextBytes(pkg);
+        opener.content = pkg;
+        opener.rangeCapable = true;
+        opener.failFirstAttemptAfterBytes = 100 * 1024;
+        fetcher.body = UpdateModule.sha256(Files.write(dir.resolve("t3"), pkg))
+            + "  PPoEDialer-9.9.9-windows.zip\n";
+        Files.deleteIfExists(dir.resolve("t3"));
+
+        UpdateModule module = module(fetcher, opener, script -> { });
+        UpdateModule.VerifiedPackage verified =
+            module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
+                null, new AtomicBoolean(false));
+
+        assertEquals(2, opener.opens, "one resume retry after the broken transfer");
+        assertEquals(0L, opener.requestedRanges.get(0));
+        assertTrue(opener.requestedRanges.get(1) > 0, "second attempt must carry a Range start");
+        assertEquals(pkg.length, Files.size(verified.file.toPath()),
+            "resumed download must reconstruct the full payload");
+    }
+
+    @Test
+    void failureWithoutProgressIsNotRetried() throws Exception {
+        FakeFetcher fetcher = new FakeFetcher();
+        FakeOpener opener = new FakeOpener();
+        fetcher.body = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            + "  PPoEDialer-9.9.9-windows.zip\n";
+        opener.failure = new RuntimeException("offline");
+        UpdateModule module = module(fetcher, opener, script -> { });
+
+        assertThrows(Exception.class, () ->
+            module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
+                null, new AtomicBoolean(false)));
+        assertEquals(1, opener.opens, "no bytes on disk ⇒ a retry would just stall again");
+    }
+
+    @Test
+    void completePartShortcutsToVerificationOnRangeNotSatisfiable() throws Exception {
+        FakeFetcher fetcher = new FakeFetcher();
+        FakeOpener opener = new FakeOpener();
+        byte[] pkg = "1234567890123".getBytes(StandardCharsets.UTF_8); // 13 bytes = asset.sizeBytes
+        fetcher.body = UpdateModule.sha256(Files.write(dir.resolve("t4"), pkg))
+            + "  PPoEDialer-9.9.9-windows.zip\n";
+        Files.deleteIfExists(dir.resolve("t4"));
+        Path updates = dir.resolve("updates");
+        Files.createDirectories(updates);
+        Files.write(updates.resolve("PPoEDialer-9.9.9-windows.zip.part"), pkg);
+        opener.statusCode = 416;
+
+        UpdateModule module = module(fetcher, opener, script -> { });
+        UpdateModule.VerifiedPackage verified =
+            module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
+                null, new AtomicBoolean(false));
+
+        assertEquals(1, opener.opens, "a complete .part needs no second request");
+        assertTrue(verified.file.isFile());
+    }
+
+    @Test
+    void rangeNotSatisfiableWithWrongPartSizeResetsDownload() throws Exception {
+        FakeFetcher fetcher = new FakeFetcher();
+        FakeOpener opener = new FakeOpener();
+        fetcher.body = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            + "  PPoEDialer-9.9.9-windows.zip\n";
+        Path updates = dir.resolve("updates");
+        Files.createDirectories(updates);
+        Path stalePart = updates.resolve("PPoEDialer-9.9.9-windows.zip.part");
+        Files.write(stalePart, new byte[999]);
+        opener.statusCode = 416;
+
+        UpdateModule module = module(fetcher, opener, script -> { });
+        Exception e = assertThrows(Exception.class, () ->
+            module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
+                null, new AtomicBoolean(false)));
+
+        assertTrue(e.getMessage().contains("断点"), e.getMessage());
+        assertFalse(Files.exists(stalePart), "an incompatible .part must be reset");
+        assertEquals(3, opener.opens, "resets, retries from zero, then gives up");
+    }
+
+    @Test
+    void pruneRemovesStagedDirsAndAgedPartFiles() throws Exception {
+        Path updates = dir.resolve("updates");
+        Files.createDirectories(updates);
+        Path staged = updates.resolve("staged-123");
+        Files.createDirectories(staged);
+        Files.write(staged.resolve("old.jar"), new byte[]{1});
+        Path freshPart = updates.resolve("pkg.zip.part");
+        Files.write(freshPart, new byte[]{1, 2, 3});
+        Path agedPart = updates.resolve("old.zip.part");
+        Files.write(agedPart, new byte[]{1});
+        Files.setLastModifiedTime(agedPart, FileTime.fromMillis(
+            System.currentTimeMillis() - 8L * 24 * 60 * 60 * 1000));
+        Path keptPkg = updates.resolve("PPoEDialer-9.9.9-windows.zip");
+        Files.write(keptPkg, new byte[]{4});
+
+        module(new FakeFetcher(), new FakeOpener(), script -> { }).pruneStaleUpdateFiles();
+
+        assertFalse(Files.exists(staged), "staged extraction dirs are never reused");
+        assertFalse(Files.exists(agedPart), ".part files past the resume window are garbage");
+        assertTrue(Files.exists(freshPart), "recent .part files feed cross-run resume");
+        assertTrue(Files.exists(keptPkg), "downloaded packages are offered as 仅保留文件 and kept");
+    }
+
     // ---------- prepare & install ----------
 
     private File makeZip(String entryName) throws IOException {
@@ -312,6 +453,8 @@ class UpdateModuleTest {
         String script = new String(Files.readAllBytes(prepared.applyScript.toPath()),
             StandardCharsets.UTF_8);
         assertTrue(script.contains("msiexec"));
+        assertTrue(script.contains("msi_failed"),
+            "MSI script must report a failed install instead of silently relaunching");
     }
 
     @Test

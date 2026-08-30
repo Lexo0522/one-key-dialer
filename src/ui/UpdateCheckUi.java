@@ -229,24 +229,67 @@ public final class UpdateCheckUi {
             openUrl(pkg.release != null ? pkg.release.htmlUrl : null);
             return;
         }
-        try {
-            host.prepareForUpdateApply();
-            PreparedUpdate prepared = host.updateModule().prepare(pkg);
-            host.logInfo("即将应用更新: " + prepared.applyScript.getAbsolutePath());
-            if (!host.updateModule().launchInstall(prepared)) {
-                // Installer never started — keep running and report.
-                host.logError("安装启动失败，程序继续运行；请手动运行安装包");
-                JOptionPane.showMessageDialog(host.dialogOwner(),
-                    "安装启动失败，程序继续运行。\n可手动运行已下载的安装包。",
-                    "更新", JOptionPane.ERROR_MESSAGE);
-                return;
+        applyUpdate(pkg);
+    }
+
+    /**
+     * Prepare the update (unzip for zip packages) on a worker thread — it can
+     * take many seconds and must not freeze the EDT — then confirm the installer
+     * launch on the UI thread and exit; any failure keeps the app running.
+     */
+    private void applyUpdate(VerifiedPackage pkg) {
+        javax.swing.JDialog dlg = prepareProgressDialog();
+        host.prepareForUpdateApply();
+        host.logInfo("正在准备更新…");
+        host.backgroundExecutor().submitLong(() -> {
+            PreparedUpdate prepared = null;
+            Exception error = null;
+            try {
+                prepared = host.updateModule().prepare(pkg);
+            } catch (Exception ex) {
+                error = ex;
             }
-            host.exitForUpdate();
-        } catch (Exception ex) {
-            host.logError("准备安装失败: " + ex.getMessage());
-            JOptionPane.showMessageDialog(host.dialogOwner(),
-                "准备安装失败: " + ex.getMessage(), "更新", JOptionPane.ERROR_MESSAGE);
-        }
+            final PreparedUpdate finalPrepared = prepared;
+            final Exception finalError = error;
+            host.invokeIfUiActive(() -> {
+                dlg.dispose();
+                if (finalError != null) {
+                    String msg = finalError.getMessage() != null
+                        ? finalError.getMessage() : finalError.getClass().getSimpleName();
+                    host.logError("准备安装失败: " + msg);
+                    JOptionPane.showMessageDialog(host.dialogOwner(),
+                        "准备安装失败: " + msg, "更新", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+                host.logInfo("即将应用更新: " + finalPrepared.applyScript.getAbsolutePath());
+                if (!host.updateModule().launchInstall(finalPrepared)) {
+                    // Installer never started — keep running and report.
+                    host.logError("安装启动失败，程序继续运行；请手动运行安装包");
+                    JOptionPane.showMessageDialog(host.dialogOwner(),
+                        "安装启动失败，程序继续运行。\n可手动运行已下载的安装包。",
+                        "更新", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+                host.exitForUpdate();
+            });
+        });
+    }
+
+    private javax.swing.JDialog prepareProgressDialog() {
+        JProgressBar bar = new JProgressBar();
+        bar.setIndeterminate(true);
+        bar.setStringPainted(true);
+        bar.setString("正在解压更新包，请稍候…");
+        javax.swing.JDialog dlg = new javax.swing.JDialog(
+            parentWindow(host.dialogOwner()), "准备更新");
+        dlg.setModal(false);
+        dlg.setLayout(new BorderLayout(8, 8));
+        dlg.add(bar, BorderLayout.CENTER);
+        dlg.setSize(360, 90);
+        dlg.setLocationRelativeTo(host.dialogOwner());
+        dlg.setDefaultCloseOperation(javax.swing.WindowConstants.DO_NOTHING_ON_CLOSE);
+        dlg.setVisible(true);
+        return dlg;
     }
 
     public void scheduleQuietCheck(long delayMs) {

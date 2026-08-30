@@ -37,13 +37,20 @@ import java.util.zip.ZipFile;
  * SHA-256 verification, install preparation, and installer launch.
  * Only a hash-verified download yields a {@link VerifiedPackage}; the installer
  * process must be confirmed started before the app exits, and a launch failure
- * keeps the app running with an error report. Release JSON is parsed with Gson.
+ * keeps the app running with an error report. Downloads resume from an
+ * interrupted {@code .part} file (within one call and across app runs) and the
+ * updates dir is pruned of never-reusable leftovers. Release JSON is parsed
+ * with Gson.
  */
 public final class UpdateModule {
     private static final Pattern SHA256SUM_LINE = Pattern.compile("(?i)^([0-9a-f]{64}) {2}([^\\r\\n]+)$");
     private static final int MAX_CHECKSUM_MANIFEST_CHARS = 1024 * 1024;
     /** No bytes for this long during a download ⇒ abort with a clear message. */
     private static final long DOWNLOAD_STALL_TIMEOUT_MS = 60_000;
+    /** Transfer attempts per download() call: the first try plus resume retries. */
+    private static final int MAX_DOWNLOAD_ATTEMPTS = 3;
+    /** .part files older than this are garbage; younger ones feed cross-run resume. */
+    private static final long PART_FILE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000L;
 
     // ---------- data ----------
 
@@ -271,7 +278,12 @@ public final class UpdateModule {
             }
         }
 
-        DownloadStream open(URI uri) throws Exception;
+        /**
+         * Open the asset stream. {@code rangeStart > 0} asks the opener to send a
+         * Range request: a 206 response resumes the {@code .part}, any other 2xx
+         * means the caller restarts from zero.
+         */
+        DownloadStream open(URI uri, long rangeStart) throws Exception;
     }
 
     /** Installer launch seam. Production starts the apply script via cmd. */
@@ -334,14 +346,16 @@ public final class UpdateModule {
             // NORMAL: never follow an HTTPS -> HTTP redirect downgrade
             .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
             .build();
-        return uri -> {
-            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder(uri)
+        return (uri, rangeStart) -> {
+            java.net.http.HttpRequest.Builder builder = java.net.http.HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofMinutes(10))
                 .header("User-Agent", AppVersion.USER_AGENT)
                 .header("Accept", "application/octet-stream")
-                .GET()
-                .build();
-            java.net.http.HttpResponse<InputStream> resp = sendBounded(client, req,
+                .GET();
+            if (rangeStart > 0) {
+                builder.header("Range", "bytes=" + rangeStart + "-");
+            }
+            java.net.http.HttpResponse<InputStream> resp = sendBounded(client, builder.build(),
                 java.net.http.HttpResponse.BodyHandlers.ofInputStream(),
                 Duration.ofSeconds(60));
             long len = resp.headers().firstValueAsLong("Content-Length").orElse(0L);
@@ -349,22 +363,37 @@ public final class UpdateModule {
         };
     }
 
+    /** Cancels exchanges whose hard ceiling expired — cancellation aborts the socket; a mere future timeout would leave them hanging. */
+    private static final java.util.concurrent.ScheduledExecutorService SEND_TIMEOUT_SCHEDULER =
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "UpdateHttpTimeout");
+            t.setDaemon(true);
+            return t;
+        });
+
     /**
      * send() with a hard ceiling over the whole exchange (DNS + connect + TLS +
      * response headers). The per-request timeout does not cover DNS resolution,
-     * so a blackholed CDN can otherwise hang a worker thread forever.
+     * so a blackholed CDN can otherwise hang a worker thread forever. When the
+     * ceiling fires, the future is cancelled, which aborts the underlying
+     * exchange instead of leaving it running in the background.
      */
     private static <T> java.net.http.HttpResponse<T> sendBounded(
         java.net.http.HttpClient client, java.net.http.HttpRequest request,
         java.net.http.HttpResponse.BodyHandler<T> bodyHandler, Duration requestTimeout)
         throws IOException {
         long hardMs = Math.max(30_000L, requestTimeout.toMillis() + 10_000L);
+        java.util.concurrent.CompletableFuture<java.net.http.HttpResponse<T>> future =
+            client.sendAsync(request, bodyHandler);
+        java.util.concurrent.ScheduledFuture<?> ceiling = SEND_TIMEOUT_SCHEDULER.schedule(
+            () -> future.cancel(true), hardMs, java.util.concurrent.TimeUnit.MILLISECONDS);
         try {
-            return client.sendAsync(request, bodyHandler)
-                .orTimeout(hardMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                .join();
+            return future.join();
         } catch (java.util.concurrent.CompletionException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
+            if (cause instanceof java.util.concurrent.CancellationException) {
+                throw new IOException("请求无响应（网络或 CDN 可能被拦截），已超时中止", cause);
+            }
             if (cause instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
@@ -372,6 +401,10 @@ public final class UpdateModule {
                 throw (IOException) cause;
             }
             throw new IOException("请求无响应（网络或 CDN 可能被拦截），已超时中止", cause);
+        } catch (java.util.concurrent.CancellationException e) {
+            throw new IOException("请求无响应（网络或 CDN 可能被拦截），已超时中止", e);
+        } finally {
+            ceiling.cancel(false);
         }
     }
 
@@ -415,8 +448,10 @@ public final class UpdateModule {
         try {
             ContentFetcher.FetchedText resp = fetcher.get(URI.create(apiUrl), Duration.ofSeconds(12));
             if (resp.statusCode != 200) {
+                String hint = resp.statusCode == 403
+                    ? "（GitHub API 限流，稍后再试或到发布页查看）" : "";
                 return new CheckResult(false, current, null, null,
-                    "检查更新失败 HTTP " + resp.statusCode, null);
+                    "检查更新失败 HTTP " + resp.statusCode + hint, null);
             }
             Release release = parseReleaseJson(resp.body);
             String tag = release.tagName;
@@ -452,8 +487,10 @@ public final class UpdateModule {
             Thread.currentThread().interrupt();
             return new CheckResult(false, current, null, null, "检查更新已中断", null);
         } catch (Exception e) {
+            String detail = e.getMessage() != null && !e.getMessage().isEmpty()
+                ? e.getMessage() : e.getClass().getSimpleName();
             return new CheckResult(false, current, null, null,
-                "检查更新失败: " + e.getClass().getSimpleName(), null);
+                "检查更新失败: " + detail, null);
         }
     }
 
@@ -495,19 +532,21 @@ public final class UpdateModule {
     // ---------- download ----------
 
     /**
-     * Download the asset and verify SHA-256. Only a verified file becomes a
-     * {@link VerifiedPackage}; temp files are cleaned up on any failure.
+     * Download the asset and verify SHA-256, resuming from an interrupted
+     * {@code .part} (same call or a previous run) when the server honors Range.
+     * Only a verified file becomes a {@link VerifiedPackage}; the temp file is
+     * removed on verification failure or cancellation, and kept otherwise so a
+     * later attempt can resume.
      */
     public VerifiedPackage download(Release release, Asset asset,
                                     Progress progress, AtomicBoolean cancel) throws Exception {
         if (release == null || asset == null) {
             throw new IOException("缺少发布信息或资产");
         }
-        Progress p = progress != null ? progress : new Progress() {
-            @Override public void onProgress(long d, long t) { }
-            @Override public void onStatus(String m) { }
-        };
+        Progress p = progress != null ? progress : NO_OP_PROGRESS;
         AtomicBoolean cancelled = cancel != null ? cancel : new AtomicBoolean(false);
+
+        pruneStaleUpdateFiles();
 
         String safeName = sanitizeFileName(asset.name);
         File out = new File(updatesDir, safeName);
@@ -518,73 +557,127 @@ public final class UpdateModule {
         p.onStatus("正在下载 " + asset.name + " …");
         URI target = URI.create(asset.downloadUrl);
         long downloaded = 0L;
-        // Campus networks routinely blackhole the GitHub asset CDN mid-transfer;
-        // a blocking read() must not hang forever, so a watchdog closes the stream
-        // after a no-data window and the loop aborts with a clear message.
-        final AtomicLong lastDataNanos = new AtomicLong(System.nanoTime());
-        final AtomicBoolean done = new AtomicBoolean(false);
-        final AtomicBoolean stalled = new AtomicBoolean(false);
-        StreamOpener.DownloadStream ds = null;
-        java.io.OutputStream os = null;
-        Thread watchdog = null;
-        try {
-            ds = opener.open(target);
-            if (ds.statusCode / 100 != 2) {
-                throw new IOException("下载失败 HTTP " + ds.statusCode);
-            }
-            watchdog = startStallWatchdog(ds.stream, lastDataNanos, done, stalled);
-            long total = ds.contentLength > 0 ? ds.contentLength : asset.sizeBytes;
-            os = Files.newOutputStream(part.toPath(),
-                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
-                StandardOpenOption.WRITE);
-            InputStream in = new BufferedInputStream(ds.stream);
-            byte[] buf = new byte[64 * 1024];
-            int n;
-            long lastReport = 0L;
-            while ((n = in.read(buf)) >= 0) {
+        Exception lastFailure = null;
+        boolean lastStalled = false;
+        for (int attempt = 1; attempt <= MAX_DOWNLOAD_ATTEMPTS; attempt++) {
+            long onDisk = part.isFile() ? part.length() : 0L;
+            // Campus networks routinely blackhole the GitHub asset CDN mid-transfer;
+            // a blocking read() must not hang forever, so a watchdog closes the
+            // stream after a no-data window or when the user cancels, and the
+            // transfer either resumes from the .part or aborts with a clear message.
+            final AtomicLong lastDataNanos = new AtomicLong(System.nanoTime());
+            final AtomicBoolean stalled = new AtomicBoolean(false);
+            final AtomicBoolean done = new AtomicBoolean(false);
+            StreamOpener.DownloadStream ds = null;
+            java.io.OutputStream os = null;
+            Thread watchdog = null;
+            try {
+                ds = opener.open(target, onDisk);
+                if (ds.statusCode == 416 && asset.sizeBytes > 0 && onDisk == asset.sizeBytes) {
+                    // .part already reaches the end of the remote file: go verify it.
+                    downloaded = onDisk;
+                    break;
+                }
+                if (ds.statusCode == 416) {
+                    // Stale or incompatible .part: drop it and restart from zero.
+                    //noinspection ResultOfMethodCallIgnored
+                    part.delete();
+                    if (attempt < MAX_DOWNLOAD_ATTEMPTS) {
+                        continue;
+                    }
+                    throw new IOException("本地断点与服务器不匹配，已重置下载");
+                }
+                if (ds.statusCode / 100 != 2) {
+                    throw new IOException("下载失败 HTTP " + ds.statusCode);
+                }
+                boolean resumed = onDisk > 0 && ds.statusCode == 206;
+                downloaded = resumed ? onDisk : 0L;
+                os = resumed
+                    ? Files.newOutputStream(part.toPath(),
+                        StandardOpenOption.WRITE, StandardOpenOption.APPEND)
+                    : Files.newOutputStream(part.toPath(),
+                        StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
+                        StandardOpenOption.WRITE);
+                watchdog = startStallWatchdog(ds.stream, lastDataNanos, done, stalled, cancelled);
+                long total = asset.sizeBytes > 0 ? asset.sizeBytes
+                    : (resumed ? ds.contentLength + downloaded : ds.contentLength);
+                InputStream in = new BufferedInputStream(ds.stream);
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                long lastReport = downloaded;
+                while ((n = in.read(buf)) >= 0) {
+                    if (cancelled.get()) {
+                        throw new IOException("下载已取消");
+                    }
+                    if (n == 0) continue;
+                    os.write(buf, 0, n);
+                    downloaded += n;
+                    lastDataNanos.set(System.nanoTime());
+                    if (downloaded - lastReport >= 256 * 1024 || (total > 0 && downloaded == total)) {
+                        p.onProgress(downloaded, total);
+                        lastReport = downloaded;
+                    }
+                }
+                os.flush();
+                lastFailure = null;
+                break;
+            } catch (Exception e) {
+                lastFailure = e;
                 if (cancelled.get()) {
-                    throw new IOException("下载已取消");
+                    //noinspection ResultOfMethodCallIgnored
+                    part.delete();
+                    throw new IOException("下载已取消", e);
                 }
-                if (n == 0) continue;
-                os.write(buf, 0, n);
-                downloaded += n;
-                lastDataNanos.set(System.nanoTime());
-                if (downloaded - lastReport >= 256 * 1024 || downloaded == total) {
-                    p.onProgress(downloaded, total);
-                    lastReport = downloaded;
+                // Retrying only pays off once bytes are on disk; a blackholed CDN
+                // that never sent anything would just burn the stall timeout again.
+                boolean resumable = part.isFile() && part.length() > 0L;
+                if (attempt < MAX_DOWNLOAD_ATTEMPTS && resumable) {
+                    p.onStatus("下载中断，正在从断点续传（重试 " + attempt
+                        + "/" + (MAX_DOWNLOAD_ATTEMPTS - 1) + "）…");
+                    if (!sleepBeforeRetry(attempt, cancelled)) {
+                        //noinspection ResultOfMethodCallIgnored
+                        part.delete();
+                        throw new IOException("下载已取消", e);
+                    }
+                    continue;
+                }
+                if (stalled.get()) {
+                    lastStalled = true;
+                }
+                // give up: nothing resumable on disk (or attempts exhausted); keep
+                // the .part (within its age window) so the next manual attempt can resume
+                break;
+            } finally {
+                done.set(true);
+                if (watchdog != null) {
+                    watchdog.interrupt();
+                    try {
+                        watchdog.join(3000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                if (os != null) {
+                    try {
+                        os.close();
+                    } catch (IOException ignored) {
+                    }
+                }
+                if (ds != null) {
+                    try {
+                        ds.stream.close();
+                    } catch (IOException ignored) {
+                    }
                 }
             }
-            os.flush();
-        } catch (Exception e) {
-            //noinspection ResultOfMethodCallIgnored
-            part.delete();
-            if (stalled.get()) {
+        }
+        if (lastFailure != null) {
+            if (lastStalled) {
                 throw new IOException("下载停滞超过 " + (DOWNLOAD_STALL_TIMEOUT_MS / 1000)
-                    + " 秒，已中止；校园网可能拦截了 GitHub 资源，请到发布页手动下载", e);
+                    + " 秒，已中止（断点已保留，可重试续传）；校园网可能拦截了 GitHub 资源，请到发布页手动下载",
+                    lastFailure);
             }
-            throw e;
-        } finally {
-            done.set(true);
-            if (watchdog != null) {
-                watchdog.interrupt();
-                try {
-                    watchdog.join(3000);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-            if (os != null) {
-                try {
-                    os.close();
-                } catch (IOException ignored) {
-                }
-            }
-            if (ds != null) {
-                try {
-                    ds.stream.close();
-                } catch (IOException ignored) {
-                }
-            }
+            throw lastFailure;
         }
 
         try {
@@ -602,6 +695,22 @@ public final class UpdateModule {
         p.onProgress(downloaded, downloaded);
         p.onStatus("下载完成: " + out.getAbsolutePath());
         return new VerifiedPackage(out, asset, release);
+    }
+
+    private static final Progress NO_OP_PROGRESS = new Progress() {
+        @Override public void onProgress(long downloaded, long total) { }
+        @Override public void onStatus(String message) { }
+    };
+
+    /** Back off between resume attempts; false when cancelled during the wait. */
+    private static boolean sleepBeforeRetry(int attempt, AtomicBoolean cancelled) {
+        try {
+            Thread.sleep(1000L * attempt);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        return !cancelled.get();
     }
 
     private String fetchExpectedSha256(Release release, Asset asset, Progress progress,
@@ -679,25 +788,28 @@ public final class UpdateModule {
 
     /**
      * Daemon thread that closes the download stream when no bytes arrive for
-     * {@link #DOWNLOAD_STALL_TIMEOUT_MS} — closing unblocks the reader loop.
+     * {@link #DOWNLOAD_STALL_TIMEOUT_MS} — or as soon as the user cancels —
+     * closing unblocks the reader loop in both cases.
      */
     private static Thread startStallWatchdog(InputStream stream, AtomicLong lastDataNanos,
-                                             AtomicBoolean done, AtomicBoolean stalled) {
+                                             AtomicBoolean done, AtomicBoolean stalled,
+                                             AtomicBoolean cancelled) {
         Thread t = new Thread(() -> {
             while (!done.get()) {
                 try {
-                    Thread.sleep(2000);
+                    Thread.sleep(500);
                 } catch (InterruptedException e) {
                     return;
                 }
                 if (done.get()) return;
+                if (cancelled.get()) {
+                    closeQuietly(stream);
+                    return;
+                }
                 long stalledMs = (System.nanoTime() - lastDataNanos.get()) / 1_000_000L;
                 if (stalledMs > DOWNLOAD_STALL_TIMEOUT_MS) {
                     stalled.set(true);
-                    try {
-                        stream.close();
-                    } catch (IOException ignored) {
-                    }
+                    closeQuietly(stream);
                     return;
                 }
             }
@@ -705,6 +817,53 @@ public final class UpdateModule {
         t.setDaemon(true);
         t.start();
         return t;
+    }
+
+    private static void closeQuietly(InputStream stream) {
+        try {
+            stream.close();
+        } catch (IOException ignored) {
+        }
+    }
+
+    // ---------- updates-dir hygiene ----------
+
+    /**
+     * Remove updates-dir leftovers that can never be reused: extracted staged-*
+     * dirs from an earlier apply and .part files past the cross-run resume
+     * window. Downloaded packages are kept — the UI explicitly offers
+     * "仅保留文件" for manual installation. Best effort; a leftover never
+     * blocks a new download.
+     */
+    public void pruneStaleUpdateFiles() {
+        File[] kids = updatesDir.listFiles();
+        if (kids == null) return;
+        long now = System.currentTimeMillis();
+        for (File kid : kids) {
+            String name = kid.getName().toLowerCase(Locale.ROOT);
+            try {
+                if (kid.isDirectory() && name.startsWith("staged-")) {
+                    deleteRecursively(kid.toPath());
+                } else if (kid.isFile() && name.endsWith(".part")
+                    && now - kid.lastModified() > PART_FILE_MAX_AGE_MS) {
+                    //noinspection ResultOfMethodCallIgnored
+                    kid.delete();
+                }
+            } catch (Exception ignored) {
+                // keep going; leftovers are harmless
+            }
+        }
+    }
+
+    private static void deleteRecursively(Path dir) throws IOException {
+        try (java.util.stream.Stream<Path> walk = Files.walk(dir)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                }
+            });
+        }
     }
 
     // ---------- prepare & install ----------
@@ -727,7 +886,7 @@ public final class UpdateModule {
             unzip(pkg.file, staged);
             File payloadRoot = findPayloadRoot(staged);
             return new PreparedUpdate(
-                writeZipApplyScript(installDir, payloadRoot, findRelaunchExe(installDir, payloadRoot)),
+                writeZipApplyScript(installDir, payloadRoot, findRelaunchExe(installDir)),
                 "zip");
         }
         if (lower.endsWith(".msi")) {
@@ -835,15 +994,26 @@ public final class UpdateModule {
     }
 
     private File writeMsiApplyScript(File msi, File installDir) throws IOException {
+        String exe = new File(installDir, "PPoEDialer.exe").getAbsolutePath();
         return writeApplyScript(w -> {
             w.println("echo Installing MSI update...");
             w.println("timeout /t 2 /nobreak >nul");
             // start /wait: msiexec is a GUI-subsystem process — without /wait the
             // script would check for the exe (and relaunch) before install finishes
             w.println("start \"PPoEDialerUpdate\" /wait msiexec /i \"" + msi.getAbsolutePath() + "\"");
-            w.println("if exist \"" + new File(installDir, "PPoEDialer.exe").getAbsolutePath() + "\" (");
-            w.println("  start \"\" \"" + new File(installDir, "PPoEDialer.exe").getAbsolutePath() + "\"");
+            // 1602 = UAC cancelled; any nonzero exit means nothing was installed.
+            // Surface it instead of silently relaunching the unchanged old version.
+            w.println("if errorlevel 1 goto msi_failed");
+            w.println("if exist \"" + exe + "\" (");
+            w.println("  start \"\" \"" + exe + "\"");
             w.println(")");
+            w.println("exit /b 0");
+            w.println(":msi_failed");
+            w.println("echo MSI install failed (exit code %errorlevel%). The previous version is unchanged.");
+            w.println("start \"\" \"" + exe + "\"");
+            w.println("echo.");
+            w.println("pause");
+            w.println("exit /b 1");
         });
     }
 
@@ -899,9 +1069,7 @@ public final class UpdateModule {
         return onlyDir != null ? onlyDir : staged;
     }
 
-    static File findRelaunchExe(File installDir, File payloadRoot) {
-        File b = new File(installDir, "PPoEDialer.exe");
-        if (b.isFile()) return b;
+    static File findRelaunchExe(File installDir) {
         return new File(installDir, "PPoEDialer.exe");
     }
 }
