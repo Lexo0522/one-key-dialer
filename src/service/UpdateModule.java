@@ -300,7 +300,8 @@ public final class UpdateModule {
     private static StreamOpener defaultStreamOpener() {
         java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
-            .followRedirects(java.net.http.HttpClient.Redirect.ALWAYS)
+            // NORMAL: never follow an HTTPS -> HTTP redirect downgrade
+            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
             .build();
         return uri -> {
             java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder(uri)
@@ -642,6 +643,7 @@ public final class UpdateModule {
             body.accept(w);
             w.println("exit /b 0");
         }
+        util.FilePermissions.restrictToOwner(bat);
         return bat;
     }
 
@@ -674,7 +676,9 @@ public final class UpdateModule {
         return writeApplyScript(w -> {
             w.println("echo Installing MSI update...");
             w.println("timeout /t 2 /nobreak >nul");
-            w.println("msiexec /i \"" + msi.getAbsolutePath() + "\"");
+            // start /wait: msiexec is a GUI-subsystem process — without /wait the
+            // script would check for the exe (and relaunch) before install finishes
+            w.println("start \"PPoEDialerUpdate\" /wait msiexec /i \"" + msi.getAbsolutePath() + "\"");
             w.println("if exist \"" + new File(installDir, "PPoEDialer.exe").getAbsolutePath() + "\" (");
             w.println("  start \"\" \"" + new File(installDir, "PPoEDialer.exe").getAbsolutePath() + "\"");
             w.println(")");

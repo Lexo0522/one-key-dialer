@@ -92,6 +92,8 @@ public final class WindowsRasModule implements DialPort {
     private final ProcessRunner runner;
     private final File phonebookFile;
     private final AtomicRef activeConnection = new AtomicRef();
+    /** True when the native RasDialW path may be tried before rasdial.exe. */
+    private final boolean nativeDialPreferred;
     /** Optional preferred PPPoE device (port + device name); null = auto-detect / default. */
     private volatile DeviceHint preferredDevice;
 
@@ -99,10 +101,21 @@ public final class WindowsRasModule implements DialPort {
         this(connectionName, ProcessIO::run, defaultPbkFile());
     }
 
+    /** Production entry: prefers the native RasDialW path (password never in argv). */
+    public WindowsRasModule(String connectionName, boolean nativeDialPreferred) {
+        this(connectionName, ProcessIO::run, defaultPbkFile(), nativeDialPreferred);
+    }
+
     public WindowsRasModule(String connectionName, ProcessRunner runner, File phonebookFile) {
+        this(connectionName, runner, phonebookFile, false);
+    }
+
+    private WindowsRasModule(String connectionName, ProcessRunner runner, File phonebookFile,
+                             boolean nativeDialPreferred) {
         this.connectionName = connectionName;
         this.runner = runner;
         this.phonebookFile = phonebookFile;
+        this.nativeDialPreferred = nativeDialPreferred;
     }
 
     public static File defaultPbkFile() {
@@ -126,8 +139,6 @@ public final class WindowsRasModule implements DialPort {
         if (credentials == null) {
             return new DialResult(-1, "empty credentials");
         }
-        String username = credentials.username();
-        String password = credentials.passwordAsString();
         try {
             if (!isValidConnectionName(connectionName)) {
                 return new DialResult(-1, "invalid connection name");
@@ -137,7 +148,18 @@ public final class WindowsRasModule implements DialPort {
             }
             activeConnection.set(connectionName);
 
+            if (nativeDialPreferred) {
+                Integer nativeCode = NativeRasDial.dial(connectionName, phonebookFile, credentials);
+                if (nativeCode != null) {
+                    // error text is derived from the code; describeFailure maps it
+                    return new DialResult(nativeCode, nativeCode == 0 ? "RasDial API" : "");
+                }
+                // native binding unavailable — fall back to rasdial.exe below
+            }
+
             // argv form — never embed the password in a cmd string
+            String username = credentials.username();
+            String password = credentials.passwordAsString();
             ProcessIO.Result result = runner.run(
                 Arrays.asList("rasdial", connectionName, username, password),
                 DIAL_TIMEOUT_SECONDS, TimeUnit.SECONDS, ProcessIO.childCharset(),
