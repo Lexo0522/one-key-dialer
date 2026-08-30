@@ -88,10 +88,7 @@ public final class AccountUiController {
                 refreshAccountComboBox();
             },
             () -> {
-                session.setDirty(true);
-                if (session.save()) {
-                    session.setDirty(false);
-                }
+                session.saveInBackground();
             }
         );
         onAccountChanged();

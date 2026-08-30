@@ -30,7 +30,7 @@ public final class AppLauncher {
     }
 
     static void launchOnEdt(boolean fromAutostart) {
-        PPoEDialer dialer = new PPoEDialer();
+        PPoEDialer dialer = PPoEDialer.create();
         if (!dialer.isStartMinimizedSelected()) {
             dialer.setVisible(true);
         }

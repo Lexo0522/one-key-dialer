@@ -71,6 +71,10 @@ public final class AppServices {
         settingsStore = new SettingsStore(new File(dataDir, AppFiles.SETTINGS));
         logService = new LogService(new File(dataDir, AppFiles.LOG));
 
+        backgroundExecutor = new BackgroundExecutor();
+        backgroundExecutor.setErrorReporter(t ->
+            logService.logThrowable("后台任务异常", t, UiTheme.COLOR_ERROR));
+
         settingsManager = new SettingsManager(settingsStore,
             msg -> bridge.log(msg, UiTheme.COLOR_WARNING));
         historyService = new HistoryService(historyStore,
@@ -82,9 +86,8 @@ public final class AppServices {
             @Override public void error(String message) {
                 bridge.log(message, UiTheme.COLOR_ERROR);
             }
-        });
+        }, backgroundExecutor);
 
-        backgroundExecutor = new BackgroundExecutor();
         trafficSampler = new TrafficSampler(
             msg -> bridge.log(msg, UiTheme.COLOR_WARNING));
 
@@ -110,7 +113,7 @@ public final class AppServices {
         autoReconnectService = new AutoReconnectService(
             dialLifecycle::isBusy,
             () -> ConnectivityConfirm.quickCheck(settingsManager.current().toProbeConfig()),
-            dialOrchestrator::dialSyncAuto,
+            dialOrchestrator::dialAuto,
             () -> {
                 bridge.log("网络已恢复", UiTheme.COLOR_SUCCESS);
                 TrayController tray = bridge.trayController();
@@ -174,8 +177,8 @@ public final class AppServices {
             () -> settingsManager.current().scheduledDisconnectMinute,
             isOnline::get,
             dialLifecycle::isBusy,
-            dialOrchestrator::dialSyncAuto,
-            dialOrchestrator::disconnectSyncScheduled,
+            dialOrchestrator::dialAuto,
+            dialOrchestrator::disconnectScheduled,
             () -> bridge.log("定时拨号触发", UiTheme.COLOR_INFO),
             () -> bridge.log("定时断开触发", UiTheme.COLOR_INFO),
             msg -> bridge.log(msg, UiTheme.COLOR_WARNING),

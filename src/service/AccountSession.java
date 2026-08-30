@@ -10,6 +10,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Consumer;
 
 /**
@@ -28,15 +30,22 @@ public final class AccountSession {
     private final List<AccountInfo> accounts = new ArrayList<>();
     private final AccountStore store;
     private final Logger logger;
+    /** Nullable — interactive EDT saves run here; shutdown paths stay synchronous. */
+    private final Executor asyncSaver;
     private volatile int currentIndex;
     private volatile boolean dirty;
 
     public AccountSession(AccountStore store, Logger logger) {
+        this(store, logger, null);
+    }
+
+    public AccountSession(AccountStore store, Logger logger, Executor asyncSaver) {
         this.store = Objects.requireNonNull(store, "store");
         this.logger = logger != null ? logger : new Logger() {
             @Override public void info(String message) { }
             @Override public void error(String message) { }
         };
+        this.asyncSaver = asyncSaver;
     }
 
     public List<AccountInfo> accounts() {
@@ -114,6 +123,26 @@ public final class AccountSession {
         } catch (IOException e) {
             logger.error("保存账号失败: " + e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Persist off the calling (typically EDT) thread; {@link #isDirty()} stays true
+     * until the write lands, so a shutdown-path {@link #save()} still persists.
+     */
+    public boolean saveInBackground() {
+        Executor saver = asyncSaver;
+        if (saver == null) return save();
+        dirty = true;
+        try {
+            saver.execute(() -> {
+                if (save()) {
+                    dirty = false;
+                }
+            });
+            return true;
+        } catch (RejectedExecutionException e) {
+            return save();
         }
     }
 

@@ -31,6 +31,7 @@ import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Main window shell. Business logic lives in {@code service/*}; wiring lives in
@@ -38,6 +39,10 @@ import java.awt.event.WindowEvent;
  * {@link AccountUiController}, dial gates in {@link DialUiActions},
  * exit in {@link ShellShutdown}, updates in {@link UpdateCheckUi},
  * process entry in {@link AppLauncher}.
+ * <p>
+ * Construct via {@link #create()}: the constructor only sets up the bare frame,
+ * and {@code this} is published to services/controllers only after construction
+ * completes (no this-escape).
  */
 @SuppressWarnings("serial")
 public class PPoEDialer extends JFrame implements ShellBridge, DialView {
@@ -46,6 +51,8 @@ public class PPoEDialer extends JFrame implements ShellBridge, DialView {
     public static final String APP_VERSION = model.AppVersion.DISPLAY;
     private static final int WINDOW_WIDTH = 580;
     private static final int WINDOW_HEIGHT = 700;
+    /** Debounce window for background settings persistence. */
+    private static final int SETTINGS_SAVE_DELAY_MS = 300;
 
     private MainHomePanel homePanel;
     private TrayController trayController;
@@ -55,8 +62,8 @@ public class PPoEDialer extends JFrame implements ShellBridge, DialView {
     private UpdateCheckUi updateCheckUi;
     private DialUiActions dialUi;
     private ShellShutdown shutdown;
+    private final AtomicBoolean pendingSettingsSave = new AtomicBoolean(false);
 
-    @SuppressWarnings("this-escape")
     public PPoEDialer() {
         super(APP_TITLE + " " + APP_VERSION);
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
@@ -64,7 +71,16 @@ public class PPoEDialer extends JFrame implements ShellBridge, DialView {
         setLocationRelativeTo(null);
         setResizable(true);
         setMinimumSize(new Dimension(520, 560));
+    }
 
+    /** Build the fully wired shell. */
+    public static PPoEDialer create() {
+        PPoEDialer shell = new PPoEDialer();
+        shell.wire();
+        return shell;
+    }
+
+    private void wire() {
         services = new AppServices(this, this);
 
         homePanel = createHomePanel();
@@ -148,6 +164,7 @@ public class PPoEDialer extends JFrame implements ShellBridge, DialView {
 
         shutdown = new ShellShutdown(new ShellShutdown.Host() {
             @Override public void saveSettings() { PPoEDialer.this.saveSettings(); }
+            @Override public void flushPendingSettingsSave() { PPoEDialer.this.flushPendingSettingsSave(); }
             @Override public void saveCurrentAccount() { accountsUi.saveCurrentAccount(); }
             @Override public service.HistoryService historyService() { return services.historyService; }
             @Override public service.LogService logService() { return services.logService; }
@@ -285,11 +302,29 @@ public class PPoEDialer extends JFrame implements ShellBridge, DialView {
         applySettingsToUi(s);
     }
 
+    /**
+     * Capture UI state and swap the runtime snapshot (cheap, on the calling thread);
+     * the disk write is debounced onto the background executor so toggles never
+     * block the EDT on file I/O.
+     */
     @Override
     public void saveSettings() {
         SettingsSnapshot snapshot = captureSettingsFromUi();
         services.settingsManager.update(snapshot);
-        services.settingsManager.saveToDisk(snapshot);
+        if (pendingSettingsSave.compareAndSet(false, true)) {
+            services.backgroundExecutor.schedule(this::flushPendingSettingsSave,
+                SETTINGS_SAVE_DELAY_MS);
+        }
+    }
+
+    /** Synchronous write of a pending save; called before service teardown at exit. */
+    void flushPendingSettingsSave() {
+        if (!pendingSettingsSave.compareAndSet(true, false)) return;
+        try {
+            services.settingsManager.saveToDisk(services.settingsManager.current());
+        } catch (Exception e) {
+            log("保存设置失败: " + e, UiTheme.COLOR_ERROR);
+        }
     }
 
     // ---------- ShellBridge ----------

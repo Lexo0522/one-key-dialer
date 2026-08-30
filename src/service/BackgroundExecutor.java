@@ -1,5 +1,6 @@
 package service;
 
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -8,6 +9,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * Shared background scheduler for reconnect / schedule / network-monitor ticks,
@@ -18,11 +20,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link #shutdown()} never blocks the EDT for long: await runs on a daemon helper.
  * The longJobs pool is created on first {@link #submitLong} (diag tab).
  */
-public final class BackgroundExecutor {
+public final class BackgroundExecutor implements Executor {
     private final ScheduledExecutorService scheduler;
     private final Object longJobsLock = new Object();
     private volatile ExecutorService longJobs;
     private volatile boolean shutdown;
+    /** Set once during wiring; unexpected task failures must not vanish silently. */
+    private volatile Consumer<Throwable> errorReporter;
 
     public BackgroundExecutor() {
         AtomicInteger n = new AtomicInteger();
@@ -37,6 +41,11 @@ public final class BackgroundExecutor {
 
     public boolean isShutdown() {
         return shutdown || scheduler.isShutdown();
+    }
+
+    /** Install the sink used to report unexpected task failures (never rethrown). */
+    public void setErrorReporter(Consumer<Throwable> reporter) {
+        this.errorReporter = reporter;
     }
 
     public ScheduledFuture<?> scheduleAtFixedRate(Runnable command, long initialDelayMs, long periodMs) {
@@ -54,6 +63,12 @@ public final class BackgroundExecutor {
     /** Short one-shot work (probe test, reconnect scheduling glue). */
     public Future<?> submit(Runnable command) {
         return scheduler.submit(wrap(command));
+    }
+
+    /** {@link Executor} view so services can take a plain executor dependency. */
+    @Override
+    public void execute(Runnable command) {
+        submit(command);
     }
 
     /**
@@ -151,9 +166,16 @@ public final class BackgroundExecutor {
             try {
                 command.run();
             } catch (Throwable t) {
-                // keep scheduler alive; callers should catch their own errors
+                // keep the scheduler alive; report instead of vanishing silently
                 if (t instanceof InterruptedException || Thread.currentThread().isInterrupted()) {
                     Thread.currentThread().interrupt();
+                }
+                Consumer<Throwable> reporter = errorReporter;
+                if (reporter != null) {
+                    try {
+                        reporter.accept(t);
+                    } catch (Throwable ignored) {
+                    }
                 }
             }
         };

@@ -9,6 +9,7 @@ import util.ProbeOutcome;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -106,9 +107,14 @@ public final class DialOrchestrator {
 
     // ---------- automated entries ----------
 
-    /** Auto / schedule dial — serialized on the RasDial executor. */
-    public void dialSyncAuto() {
-        enqueueAndWait(() -> {
+    /**
+     * Auto / schedule dial — queued on the RasDial executor. Fire-and-forget:
+     * callers run on the shared scheduler (monitor/schedule ticks) and must never
+     * block on a dial that can take up to two minutes. Reconnect/schedule loops
+     * gate their next attempt on {@link DialLifecycle#isBusy()}.
+     */
+    public void dialAuto() {
+        enqueueDialWork(() -> {
             if (shuttingDown.get()) return;
             if (env.isOnline()) {
                 view.log(DialView.Level.INFO, "当前已连接，无需重复拨号");
@@ -123,7 +129,8 @@ public final class DialOrchestrator {
                 DialPort.DialResult result = port.connect(credentials);
                 handleDialResult(result, OP_AUTO_DIAL, false);
             } catch (Exception e) {
-                view.log(DialView.Level.ERROR, "自动拨号异常: " + e.getMessage());
+                view.log(DialView.Level.ERROR, "自动拨号异常: " + e.getMessage()
+                    + "\n" + util.Throwables.stackTrace(e));
             } finally {
                 if (credentials != null) credentials.clear();
                 lifecycle.end();
@@ -131,8 +138,8 @@ public final class DialOrchestrator {
         });
     }
 
-    public void disconnectSyncScheduled() {
-        enqueueAndWait(this::runDisconnectScheduled);
+    public void disconnectScheduled() {
+        enqueueDialWork(this::runDisconnectScheduled);
     }
 
     /**
@@ -157,7 +164,8 @@ public final class DialOrchestrator {
             try {
                 code = port.disconnect();
             } catch (Exception e) {
-                view.log(DialView.Level.ERROR, "断开异常: " + e.getMessage());
+                view.log(DialView.Level.ERROR, "断开异常: " + e.getMessage()
+                    + "\n" + util.Throwables.stackTrace(e));
                 code = -1;
             } finally {
                 lifecycle.end();
@@ -210,16 +218,21 @@ public final class DialOrchestrator {
 
     // ---------- internals ----------
 
-    private void enqueueAndWait(Runnable work) {
+    /**
+     * Queue dial/disconnect work on the RasDial executor without waiting. Blocking
+     * on completion would pin a shared scheduler thread for the whole dial timeout;
+     * nothing here needs the result synchronously.
+     */
+    private void enqueueDialWork(Runnable work) {
         if (Thread.currentThread().getName().startsWith("RasDial")) {
             work.run();
             return;
         }
+        if (shuttingDown.get()) return;
         try {
-            dialExecutor().submit(work).get(120, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            view.log(DialView.Level.ERROR, "拨号队列执行失败: " + e.getClass().getSimpleName()
-                + ": " + e.getMessage());
+            dialExecutor().execute(work);
+        } catch (RejectedExecutionException e) {
+            view.log(DialView.Level.WARNING, "拨号队列已关闭，忽略本次自动操作");
         }
     }
 
@@ -266,7 +279,8 @@ public final class DialOrchestrator {
             DialPort.DialResult result = port.connect(credentials);
             handleDialResult(result, operation, saveAfterSuccess);
         } catch (Exception e) {
-            view.log(DialView.Level.ERROR, "拨号异常: " + e.getMessage());
+            view.log(DialView.Level.ERROR, "拨号异常: " + e.getMessage()
+                + "\n" + util.Throwables.stackTrace(e));
         } finally {
             credentials.clear();
             lifecycle.end();
@@ -300,7 +314,8 @@ public final class DialOrchestrator {
             }
             view.notifyUser("已断开", "网络连接已断开");
         } catch (Exception e) {
-            view.log(DialView.Level.ERROR, "断开异常: " + e.getMessage());
+            view.log(DialView.Level.ERROR, "断开异常: " + e.getMessage()
+                + "\n" + util.Throwables.stackTrace(e));
         } finally {
             lifecycle.end();
             view.onDialPhase(null);
@@ -325,7 +340,7 @@ public final class DialOrchestrator {
             }
         } catch (Exception e) {
             view.log(DialView.Level.WARNING, "定时断开失败: " + e.getClass().getSimpleName()
-                + ": " + e.getMessage());
+                + ": " + e.getMessage() + "\n" + util.Throwables.stackTrace(e));
         } finally {
             lifecycle.end();
         }

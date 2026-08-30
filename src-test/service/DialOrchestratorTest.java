@@ -121,19 +121,20 @@ class DialOrchestratorTest {
     }
 
     @Test
-    void autoDialSkipsWhenAlreadyOnline() {
+    void autoDialSkipsWhenAlreadyOnline() throws Exception {
         env.online = true;
-        orch.dialSyncAuto();
+        orch.dialAuto();
+        waitFor(() -> view.logs.stream().anyMatch(s -> s.contains("无需重复拨号")));
         assertEquals(0, port.connectCalls.get());
         assertEquals(0, stats.totalDialCount().get());
         assertTrue(env.history.isEmpty());
     }
 
     @Test
-    void autoDialMarshalsCaptureThroughView() {
+    void autoDialMarshalsCaptureThroughView() throws Exception {
         view.pretendOnEdt = false; // background caller
-        orch.dialSyncAuto();
-        assertEquals(1, port.connectCalls.get());
+        orch.dialAuto();
+        waitFor(() -> port.connectCalls.get() == 1);
         assertEquals(1, view.credentialCaptures.get());
     }
 
@@ -152,8 +153,8 @@ class DialOrchestratorTest {
     @Test
     void scheduledDisconnectRecordsFailureCode() throws Exception {
         port.disconnectResult = 825;
-        orch.disconnectSyncScheduled();
-        waitFor(() -> !lifecycle.isBusy());
+        orch.disconnectScheduled();
+        waitFor(() -> env.history.size() == 1);
 
         assertEquals(1, env.history.size());
         assertEquals("定时断开", env.history.get(0)[0]);
@@ -163,7 +164,7 @@ class DialOrchestratorTest {
     @Test
     void shutdownPreventsNewDials() {
         orch.shutdown();
-        orch.dialSyncAuto();
+        orch.dialAuto();
         assertEquals(0, port.connectCalls.get());
     }
 
@@ -183,7 +184,7 @@ class DialOrchestratorTest {
         waitFor(() -> env.history.size() == 1);
         assertEquals(1, env.persistCalls.get());
 
-        orch.dialSyncAuto();
+        orch.dialAuto();
         waitFor(() -> port.connectCalls.get() == 2 && env.history.size() == 2);
         assertEquals(1, env.persistCalls.get(), "auto dial must not persist settings");
     }
@@ -192,6 +193,9 @@ class DialOrchestratorTest {
     void busyViewPhaseTransitionsEndAtNull() throws Exception {
         orch.dialAsyncUser();
         waitFor(() -> !lifecycle.isBusy());
+        // phase clear runs in the same finally block right after lifecycle.end();
+        // poll for it explicitly instead of racing the two statements
+        waitFor(() -> view.phaseChanges.get() >= 2);
         assertNull(view.lastPhase.get(), "phase must be cleared after the op");
         assertTrue(view.phaseChanges.get() >= 2, "dialing + clear");
     }
@@ -201,7 +205,7 @@ class DialOrchestratorTest {
         final AtomicBoolean dialReturned = new AtomicBoolean(false);
         port.slowConnect = true;
         Thread t = new Thread(() -> {
-            orch.dialSyncAuto();
+            orch.dialAuto();
             dialReturned.set(true);
         });
         t.start();

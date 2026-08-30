@@ -17,16 +17,23 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
- * Colored UI log + append-only file buffer.
+ * Colored UI log + append-only file buffer. File writes never run on the EDT:
+ * the buffer is filled on the calling thread and flushed by a dedicated writer
+ * thread (threshold) or synchronously via {@link #flush()} at exit.
  */
 public class LogService {
     private static final int MAX_LOG_LINES = 500;
     private static final int LOG_FLUSH_THRESHOLD = 4096;
     private static final String FONT_NAME_EN = "Consolas";
+    private static final Color DEFAULT_ERROR_COLOR = new Color(0xC62828);
 
     private final File logFile;
+    private final ExecutorService fileWriter;
     private JTextPane logPane;
     private StyledDocument logDocument;
 
@@ -35,10 +42,14 @@ public class LogService {
     private final Object logFileLock = new Object();
     private final Deque<Integer> logLineLengths = new ArrayDeque<>();
     private final Map<Color, AttributeSet> logAttrCache = new HashMap<>();
-    private final StringBuilder logTimeSb = new StringBuilder(12);
 
     public LogService(File logFile) {
         this.logFile = logFile;
+        this.fileWriter = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "LogFileWriter");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     public void attach(JTextPane pane, StyledDocument document) {
@@ -48,29 +59,55 @@ public class LogService {
 
     public void log(String message, Color color) {
         final String safeMessage = util.RedactUtil.scrubLogLine(message);
-        SwingUtilities.invokeLater(() -> {
-            if (logDocument == null || logPane == null) return;
+        final String full = "[" + fastTimestamp() + "] " + safeMessage + "\n";
+        appendToFileBuffer(full);
+        SwingUtilities.invokeLater(() -> appendToUiDocument(full, color));
+    }
+
+    /** Message + full (scrubbed, truncated) stack trace into UI and file log. */
+    public void logThrowable(String message, Throwable t, Color color) {
+        if (t == null) {
+            log(message, color);
+            return;
+        }
+        log(message + "\n" + util.Throwables.stackTrace(t),
+            color != null ? color : DEFAULT_ERROR_COLOR);
+    }
+
+    private void appendToFileBuffer(String full) {
+        boolean shouldFlush = false;
+        synchronized (logFileLock) {
+            logFileBuffer.append(full);
+            shouldFlush = logFileBuffer.length() >= LOG_FLUSH_THRESHOLD;
+        }
+        if (shouldFlush) {
             try {
-                String ts = fastTimestamp();
-                String full = "[" + ts + "] " + safeMessage + "\n";
-                AttributeSet a = getLogAttributeSet(color);
-                logDocument.insertString(logDocument.getLength(), full, a);
-                logLineCount++;
-                logLineLengths.addLast(full.length());
-                if (logLineCount > MAX_LOG_LINES) {
-                    int cutLen = 0;
-                    int linesToCut = logLineCount - MAX_LOG_LINES;
-                    for (int i = 0; i < linesToCut && !logLineLengths.isEmpty(); i++) {
-                        cutLen += logLineLengths.removeFirst();
-                    }
-                    if (cutLen > 0) logDocument.remove(0, cutLen);
-                    logLineCount = MAX_LOG_LINES;
-                }
-                logPane.setCaretPosition(logDocument.getLength());
-                writeLogFile(full);
-            } catch (BadLocationException ignored) {
+                fileWriter.execute(this::flush);
+            } catch (RejectedExecutionException e) {
+                flush();
             }
-        });
+        }
+    }
+
+    private void appendToUiDocument(String full, Color color) {
+        if (logDocument == null || logPane == null) return;
+        try {
+            AttributeSet a = getLogAttributeSet(color);
+            logDocument.insertString(logDocument.getLength(), full, a);
+            logLineCount++;
+            logLineLengths.addLast(full.length());
+            if (logLineCount > MAX_LOG_LINES) {
+                int cutLen = 0;
+                int linesToCut = logLineCount - MAX_LOG_LINES;
+                for (int i = 0; i < linesToCut && !logLineLengths.isEmpty(); i++) {
+                    cutLen += logLineLengths.removeFirst();
+                }
+                if (cutLen > 0) logDocument.remove(0, cutLen);
+                logLineCount = MAX_LOG_LINES;
+            }
+            logPane.setCaretPosition(logDocument.getLength());
+        } catch (BadLocationException ignored) {
+        }
     }
 
     public void flush() {
@@ -99,26 +136,18 @@ public class LogService {
     }
 
     private String fastTimestamp() {
+        // Called from arbitrary threads — must not touch the shared builder.
         LocalTime now = LocalTime.now();
-        logTimeSb.setLength(0);
+        StringBuilder sb = new StringBuilder(12);
         int h = now.getHour();
-        if (h < 10) logTimeSb.append('0');
-        logTimeSb.append(h).append(':');
+        if (h < 10) sb.append('0');
+        sb.append(h).append(':');
         int m = now.getMinute();
-        if (m < 10) logTimeSb.append('0');
-        logTimeSb.append(m).append(':');
+        if (m < 10) sb.append('0');
+        sb.append(m).append(':');
         int s = now.getSecond();
-        if (s < 10) logTimeSb.append('0');
-        logTimeSb.append(s);
-        return logTimeSb.toString();
-    }
-
-    private void writeLogFile(String msg) {
-        boolean shouldFlush = false;
-        synchronized (logFileLock) {
-            logFileBuffer.append(msg);
-            shouldFlush = logFileBuffer.length() >= LOG_FLUSH_THRESHOLD;
-        }
-        if (shouldFlush) flush();
+        if (s < 10) sb.append('0');
+        sb.append(s);
+        return sb.toString();
     }
 }
