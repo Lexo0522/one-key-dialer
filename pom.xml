@@ -181,10 +181,11 @@
             <artifactId>maven-compiler-plugin</artifactId>
             <configuration>
               <compilerArgs>
-                <arg>-Xplugin:ErrorProne</arg>
+                <!-- Error Prone options belong to the -Xplugin argument itself;
+                     javac rejects a standalone -Xep* flag before the plugin sees it. -->
+                <arg>-Xplugin:ErrorProne -XepAllErrorsAsWarnings</arg>
                 <arg>-XDcompilePolicy=simple</arg>
                 <arg>--should-stop=ifError=FLOW</arg>
-                <arg>-XepAllErrorsAsWarnings</arg>
                 <arg>-Xmaxerrs</arg>
                 <arg>10000</arg>
               </compilerArgs>

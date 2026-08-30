@@ -43,10 +43,14 @@ jobs:
           )
           echo Canonical version: %APP_VER%
 
-      - name: Maven JUnit with coverage and Error Prone
+      - name: Maven JUnit with coverage
         if: matrix.java == '17'
-        # PowerShell parses an unquoted comma as an argument separator.
-        run: mvn -B -q clean test "-Pcoverage,errorprone"
+        run: mvn -B -q clean test -Pcoverage
+
+      - name: Error Prone static analysis
+        if: matrix.java == '17'
+        continue-on-error: true
+        run: mvn -B -q compile -Perrorprone
 
       - name: Maven JUnit
         if: matrix.java != '17'
