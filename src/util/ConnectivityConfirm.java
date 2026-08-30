@@ -1,5 +1,7 @@
 package util;
 
+import model.DialOutcome;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -25,8 +27,9 @@ public final class ConnectivityConfirm {
     public static final String MODE_HTTP = "http";
     public static final String MODE_AUTO = "auto";
 
-    public static final String HISTORY_STATUS_RAS_NO_INTERNET = "RAS成功无外网";
-    public static final String HISTORY_STATUS_SUCCESS = "成功";
+    /** Locale-aware history words; single source is {@link DialOutcome}. */
+    public static final String HISTORY_STATUS_RAS_NO_INTERNET = DialOutcome.RAS_NO_INTERNET.text();
+    public static final String HISTORY_STATUS_SUCCESS = DialOutcome.SUCCESS.text();
 
     @FunctionalInterface
     public interface Reachability {
@@ -228,11 +231,11 @@ public final class ConnectivityConfirm {
 
     public static String historyStatus(boolean rasSuccess, boolean netOk, int rasCode) {
         if (!rasSuccess) {
-            return "失败:" + rasCode;
+            return DialOutcome.FAILURE.text() + ":" + rasCode;
         }
         if (!netOk) {
-            return HISTORY_STATUS_RAS_NO_INTERNET;
+            return DialOutcome.RAS_NO_INTERNET.text();
         }
-        return HISTORY_STATUS_SUCCESS;
+        return DialOutcome.SUCCESS.text();
     }
 }

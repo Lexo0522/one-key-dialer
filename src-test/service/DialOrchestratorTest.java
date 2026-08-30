@@ -93,7 +93,7 @@ class DialOrchestratorTest {
 
         assertEquals(1, port.disconnectCalls.get(), "policy must disconnect the PPP session");
         assertEquals(1, env.history.size());
-        assertEquals("RAS成功无外网/已断开", env.history.get(0)[2]);
+        assertEquals(model.DialOutcome.RAS_NO_INTERNET.text() + "/已断开", env.history.get(0)[2]);
     }
 
     @Test
@@ -105,7 +105,7 @@ class DialOrchestratorTest {
         waitFor(() -> env.history.size() == 1);
 
         assertEquals(0, port.disconnectCalls.get());
-        assertEquals("RAS成功无外网", env.history.get(0)[2]);
+        assertEquals(model.DialOutcome.RAS_NO_INTERNET.text(), env.history.get(0)[2]);
     }
 
     @Test
@@ -117,7 +117,7 @@ class DialOrchestratorTest {
         assertEquals(1, stats.totalDialCount().get());
         assertEquals(0, stats.successDialCount().get());
         assertEquals(1, env.history.size());
-        assertEquals("失败:691", env.history.get(0)[2]);
+        assertEquals(model.DialOutcome.FAILURE.text() + ":691", env.history.get(0)[2]);
     }
 
     @Test

@@ -72,10 +72,12 @@ class ConnectivityConfirmTest {
 
     @Test
     void historyStatusMapping() {
-        assertEquals("成功", ConnectivityConfirm.historyStatus(true, true, 0));
-        assertEquals(ConnectivityConfirm.HISTORY_STATUS_RAS_NO_INTERNET,
+        assertEquals(model.DialOutcome.SUCCESS.text(),
+            ConnectivityConfirm.historyStatus(true, true, 0));
+        assertEquals(model.DialOutcome.RAS_NO_INTERNET.text(),
             ConnectivityConfirm.historyStatus(true, false, 0));
-        assertEquals("失败:691", ConnectivityConfirm.historyStatus(false, false, 691));
+        assertEquals(model.DialOutcome.FAILURE.text() + ":691",
+            ConnectivityConfirm.historyStatus(false, false, 691));
     }
 
     @Test

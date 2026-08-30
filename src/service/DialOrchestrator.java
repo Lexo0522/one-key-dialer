@@ -392,12 +392,12 @@ public final class DialOrchestrator {
                 view.log(DialView.Level.SUCCESS, "拨号成功！");
                 view.notifyUser("连接成功", "已连接到校园网");
                 env.addHistory(operation, env.currentAccountName(),
-                    ConnectivityConfirm.HISTORY_STATUS_SUCCESS, "--", "--");
+                    model.DialOutcome.SUCCESS.text(), "--", "--");
                 if (saveAfterSuccess) env.persistAfterSuccess();
             } else {
                 view.onConnectionState(false);
                 view.log(DialView.Level.WARNING, "RAS 已连接但外网不可达（"
-                    + ConnectivityConfirm.HISTORY_STATUS_RAS_NO_INTERNET
+                    + model.DialOutcome.RAS_NO_INTERNET.text()
                     + "; " + outcome.shortLine() + "）");
                 boolean disconnected = false;
                 if (env.disconnectOnNoInternet()) {
@@ -422,7 +422,7 @@ public final class DialOrchestrator {
                     view.notifyUser("已拨通但无外网", "宽带已连接，暂无法访问外网，将按自动重连策略重试");
                 }
                 env.addHistory(operation, env.currentAccountName(),
-                    ConnectivityConfirm.HISTORY_STATUS_RAS_NO_INTERNET + (disconnected ? "/已断开" : ""),
+                    model.DialOutcome.RAS_NO_INTERNET.text() + (disconnected ? "/已断开" : ""),
                     "--", "--");
             }
         } else {
@@ -433,7 +433,7 @@ public final class DialOrchestrator {
             view.log(DialView.Level.WARNING, "  " + detail);
             view.notifyUser("连接失败", detail);
             env.addHistory(operation, env.currentAccountName(),
-                ConnectivityConfirm.historyStatus(false, false, result.code), "--", "--");
+                model.DialOutcome.FAILURE.text() + ":" + result.code, "--", "--");
         }
     }
 }
