@@ -1,0 +1,127 @@
+name: Release
+
+# Pushing tag v<revision> builds and publishes the GitHub Release with the
+# three artifacts the in-app updater expects (ZIP + MSI + SHA256SUMS.txt).
+# workflow_dispatch builds and verifies the assets without publishing.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Verify tag matches canonical revision
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $rev = (Get-Content .mvn/maven.config |
+            Where-Object { $_ -like '-Drevision=*' }) -replace '-Drevision=', ''
+          if (-not $rev) {
+            Write-Error "revision missing from .mvn/maven.config"
+            exit 1
+          }
+          $tag = "${{ github.ref_name }}"
+          if ("v$rev" -ne $tag) {
+            Write-Error "tag '$tag' does not match revision '$rev' (.mvn/maven.config requires tag v$rev)"
+            exit 1
+          }
+          Add-Content $env:GITHUB_ENV "TAG=$tag"
+
+      - name: Set up JDK 26
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '26'
+          cache: maven
+
+      - name: Ensure WiX toolset (required by jpackage --type msi)
+        shell: pwsh
+        run: |
+          $wixBin = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path (Join-Path $wixBin 'candle.exe'))) {
+              Write-Host "candle.exe not found - installing WiX via chocolatey"
+              choco install wixtoolset -y --no-progress
+            }
+            if (Test-Path (Join-Path $wixBin 'candle.exe')) {
+              Add-Content $env:GITHUB_PATH $wixBin
+            } else {
+              Write-Error "WiX toolset binary directory not found after install"
+              exit 1
+            }
+          }
+
+      - name: Run unit tests
+        run: mvn -B test
+
+      - name: Build release assets (ZIP + MSI + SHA256SUMS)
+        shell: cmd
+        env:
+          CI: "true"
+          GITHUB_ACTIONS: "true"
+        run: |
+          call prepare_release.bat
+          if errorlevel 1 (
+            echo prepare_release.bat failed
+            exit /b 1
+          )
+
+      - name: Verify release assets
+        shell: pwsh
+        run: |
+          $rev = (Get-Content .mvn/maven.config |
+            Where-Object { $_ -like '-Drevision=*' }) -replace '-Drevision=', ''
+          foreach ($f in @(
+              "release/PPoEDialer-$rev-windows.zip",
+              "release/PPoEDialer-$rev-windows.msi",
+              "release/SHA256SUMS.txt")) {
+            if (-not (Test-Path $f)) {
+              Write-Error "release asset missing: $f"
+              exit 1
+            }
+          }
+          $sums = @(Get-Content release/SHA256SUMS.txt | Where-Object { $_.Trim() })
+          if ($sums.Count -lt 2) {
+            Write-Error "SHA256SUMS.txt does not cover both assets"
+            exit 1
+          }
+          Write-Host "Release assets verified:"
+          Get-ChildItem release/*.zip, release/*.msi, release/SHA256SUMS.txt |
+            ForEach-Object { Write-Host ("  " + $_.Name) }
+
+      - name: Upload build artifact (backup)
+        uses: actions/upload-artifact@v5
+        with:
+          name: PPoEDialer-release-assets
+          path: |
+            release/*.zip
+            release/*.msi
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:TAG
+          $rev = $tag.Substring(1)
+          gh release create $tag `
+            "release/PPoEDialer-$rev-windows.zip" `
+            "release/PPoEDialer-$rev-windows.msi" `
+            "release/SHA256SUMS.txt" `
+            --verify-tag --title "PPoEDialer $tag" --generate-notes
+          Write-Host "Release $tag published"
