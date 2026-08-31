@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -165,5 +166,27 @@ class AccountSessionTest {
         assertTrue(matchedInside[0]);
         // The copy handed to the UI is cleared after the consumer returns.
         assertTrue(model.PasswordChars.isBlank(holder[0]));
+    }
+
+    @Test
+    void backgroundSavesUseNewestSnapshotEvenWhenJobsFinishOutOfOrder() throws Exception {
+        List<Runnable> jobs = new ArrayList<>();
+        Executor saver = jobs::add;
+        FakeProtector protector = new FakeProtector();
+        AccountSession session = new AccountSession(new AccountStore(file(), protector), null, saver);
+        session.load();
+
+        session.currentOrNull().setPassword("first");
+        assertTrue(session.saveInBackground());
+        session.currentOrNull().setPassword("second");
+        assertTrue(session.saveInBackground());
+
+        assertEquals(2, jobs.size());
+        jobs.get(1).run();
+        jobs.get(0).run();
+
+        AccountSession reloaded = new AccountSession(new AccountStore(file(), protector), null);
+        reloaded.load();
+        assertTrue(reloaded.currentOrNull().passwordEquals("second"));
     }
 }

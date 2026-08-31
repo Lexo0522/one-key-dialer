@@ -8,6 +8,7 @@ import util.FilePermissions;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executor;
@@ -27,11 +28,18 @@ public final class AccountSession {
         void error(String message);
     }
 
-    private final List<AccountInfo> accounts = new ArrayList<>();
+    /**
+     * The list is exposed to the Swing account manager for in-place edits. Keep
+     * its monitor as the boundary for persistence snapshots so a background save
+     * cannot observe a partial edit or fail with ConcurrentModificationException.
+     */
+    private final List<AccountInfo> accounts = Collections.synchronizedList(new ArrayList<>());
     private final AccountStore store;
     private final Logger logger;
     /** Nullable — interactive EDT saves run here; shutdown paths stay synchronous. */
     private final Executor asyncSaver;
+    private final Object saveLock = new Object();
+    private long saveGeneration;
     private volatile int currentIndex;
     private volatile boolean dirty;
 
@@ -116,13 +124,12 @@ public final class AccountSession {
     }
 
     public boolean save() {
-        try {
-            store.save(accounts);
-            FilePermissions.restrictToOwner(store.getFile());
-            return true;
-        } catch (IOException e) {
-            logger.error("保存账号失败: " + e.getMessage());
-            return false;
+        List<AccountInfo> snapshot = copyForPersistence();
+        synchronized (saveLock) {
+            // A synchronous save (shutdown / account switch) supersedes queued
+            // background snapshots that may otherwise finish later and overwrite it.
+            saveGeneration++;
+            return saveSnapshot(snapshot);
         }
     }
 
@@ -133,16 +140,70 @@ public final class AccountSession {
     public boolean saveInBackground() {
         Executor saver = asyncSaver;
         if (saver == null) return save();
+        List<AccountInfo> snapshot = copyForPersistence();
+        final long generation;
+        synchronized (saveLock) {
+            generation = ++saveGeneration;
+        }
         dirty = true;
         try {
             saver.execute(() -> {
-                if (save()) {
-                    dirty = false;
+                try {
+                    synchronized (saveLock) {
+                        // Only the newest queued snapshot may write. This also
+                        // makes an out-of-order executor harmless.
+                        if (generation != saveGeneration) return;
+                        if (saveSnapshot(snapshot)) {
+                            dirty = false;
+                        }
+                    }
+                } finally {
+                    clearPasswords(snapshot);
                 }
             });
             return true;
         } catch (RejectedExecutionException e) {
+            clearPasswords(snapshot);
             return save();
+        }
+    }
+
+    /** Copy live account rows while holding the synchronized-list monitor. */
+    private List<AccountInfo> copyForPersistence() {
+        List<AccountInfo> snapshot = new ArrayList<>();
+        synchronized (accounts) {
+            for (AccountInfo account : accounts) {
+                if (account == null) continue;
+                AccountInfo copy = new AccountInfo(account.name, account.username, "", account.remark);
+                char[] password = account.copyPasswordChars();
+                try {
+                    copy.setPasswordChars(password);
+                } finally {
+                    PasswordChars.clear(password);
+                }
+                snapshot.add(copy);
+            }
+        }
+        return snapshot;
+    }
+
+    private boolean saveSnapshot(List<AccountInfo> snapshot) {
+        try {
+            store.save(snapshot);
+            FilePermissions.restrictToOwner(store.getFile());
+            return true;
+        } catch (IOException e) {
+            logger.error("保存账号失败: " + e.getMessage());
+            return false;
+        } finally {
+            clearPasswords(snapshot);
+        }
+    }
+
+    private static void clearPasswords(List<AccountInfo> snapshot) {
+        if (snapshot == null) return;
+        for (AccountInfo account : snapshot) {
+            if (account != null) account.clearPassword();
         }
     }
 
