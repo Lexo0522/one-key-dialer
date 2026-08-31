@@ -139,6 +139,24 @@ class UpdateModuleTest {
     }
 
     @Test
+    void automaticUpdatesRejectPlainHttpUrls() {
+        String json = "{\"tag_name\":\"v1.2.0\",\"assets\":["
+            + "{\"name\":\"PPoEDialer-1.2.0-windows.zip\",\"browser_download_url\":\"http://example.test/a.zip\"},"
+            + "{\"name\":\"SHA256SUMS.txt\",\"browser_download_url\":\"http://example.test/sums\"}]}";
+        UpdateModule.Release release = UpdateModule.parseReleaseJson(json);
+
+        assertFalse(release.preferredWindowsAsset(true).isPresent());
+        assertFalse(release.checksumManifest().isPresent());
+
+        FakeFetcher fetcher = new FakeFetcher();
+        fetcher.body = "{\"tag_name\":\"v9.9.9\"}";
+        UpdateModule module = module(fetcher, new FakeOpener(), script -> { });
+        UpdateModule.CheckResult result = module.check("http://example.test/api", "1.0.0");
+        assertFalse(result.updateAvailable);
+        assertTrue(result.message.contains("HTTPS"), result.message);
+    }
+
+    @Test
     void noUpdateWhenTagIsNotNewer() {
         FakeFetcher fetcher = new FakeFetcher();
         fetcher.body = "{\"tag_name\":\"v" + AppVersion.NUMERIC + "\"}";

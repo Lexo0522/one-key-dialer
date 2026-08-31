@@ -150,6 +150,16 @@
             <groupId>org.jacoco</groupId>
             <artifactId>jacoco-maven-plugin</artifactId>
             <version>0.8.13</version>
+            <configuration>
+              <!-- JaCoCo 0.8.13 cannot parse JDK 26 (class major 70) platform
+                   classes. They are outside the application coverage boundary. -->
+              <excludes>
+                <exclude>java/**</exclude>
+                <exclude>jdk/**</exclude>
+                <exclude>sun/**</exclude>
+                <exclude>com/sun/**</exclude>
+              </excludes>
+            </configuration>
             <executions>
               <execution>
                 <goals>

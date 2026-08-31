@@ -140,7 +140,8 @@ public final class UpdateModule {
             int bestMsiScore = Integer.MIN_VALUE;
             int bestExeScore = Integer.MIN_VALUE;
             for (Asset a : assets) {
-                if (a == null || a.downloadUrl.isEmpty() || a.name.isEmpty()) continue;
+                if (a == null || a.downloadUrl.isEmpty() || a.name.isEmpty()
+                    || !isHttpsUrl(a.downloadUrl)) continue;
                 int score = scoreAsset(a);
                 if (a.isZip() && score > bestZipScore) {
                     bestZipScore = score;
@@ -160,12 +161,23 @@ public final class UpdateModule {
         public Optional<Asset> checksumManifest() {
             Asset manifest = null;
             for (Asset asset : assets) {
-                if (asset != null && !asset.downloadUrl.isEmpty() && asset.isChecksumManifest()) {
+                if (asset != null && !asset.downloadUrl.isEmpty()
+                    && isHttpsUrl(asset.downloadUrl) && asset.isChecksumManifest()) {
                     if (manifest != null) return Optional.empty();
                     manifest = asset;
                 }
             }
             return Optional.ofNullable(manifest);
+        }
+
+        private static boolean isHttpsUrl(String value) {
+            try {
+                URI uri = URI.create(value != null ? value.trim() : "");
+                return "https".equalsIgnoreCase(uri.getScheme())
+                    && uri.getHost() != null && !uri.getHost().isEmpty();
+            } catch (IllegalArgumentException e) {
+                return false;
+            }
         }
 
         private static int scoreAsset(Asset a) {
@@ -446,7 +458,8 @@ public final class UpdateModule {
     public CheckResult check(String apiUrl, String currentVersion) {
         String current = currentVersion != null ? currentVersion : AppVersion.NUMERIC;
         try {
-            ContentFetcher.FetchedText resp = fetcher.get(URI.create(apiUrl), Duration.ofSeconds(12));
+            ContentFetcher.FetchedText resp = fetcher.get(
+                requireHttpsUri(apiUrl, "更新接口"), Duration.ofSeconds(12));
             if (resp.statusCode != 200) {
                 String hint = resp.statusCode == 403
                     ? "（GitHub API 限流，稍后再试或到发布页查看）" : "";
@@ -552,10 +565,10 @@ public final class UpdateModule {
         File out = new File(updatesDir, safeName);
         File part = new File(updatesDir, safeName + ".part");
 
+        URI target = requireHttpsUri(asset.downloadUrl, "更新包");
         String expectedSha256 = fetchExpectedSha256(release, asset, p, cancelled);
 
         p.onStatus("正在下载 " + asset.name + " …");
-        URI target = URI.create(asset.downloadUrl);
         long downloaded = 0L;
         Exception lastFailure = null;
         boolean lastStalled = false;
@@ -722,7 +735,8 @@ public final class UpdateModule {
         }
         progress.onStatus("正在下载 SHA-256 校验清单…");
         ContentFetcher.FetchedText resp = fetcher.get(
-            URI.create(manifest.get().downloadUrl), Duration.ofSeconds(20));
+            requireHttpsUri(manifest.get().downloadUrl, "SHA-256 校验清单"),
+            Duration.ofSeconds(20));
         if (resp.statusCode / 100 != 2) {
             throw new IOException("无法下载 SHA-256 校验清单 HTTP " + resp.statusCode);
         }
@@ -784,6 +798,24 @@ public final class UpdateModule {
         if (name == null || name.isEmpty()) return "update.bin";
         String n = name.replaceAll("[\\\\/:*?\"<>|]", "_");
         return n.length() > 180 ? n.substring(0, 180) : n;
+    }
+
+    /**
+     * Automatic update traffic must never start on plaintext HTTP. Checking the
+     * scheme and host here protects both the built-in clients and injected seams.
+     */
+    static URI requireHttpsUri(String value, String label) throws IOException {
+        final URI uri;
+        try {
+            uri = URI.create(value != null ? value.trim() : "");
+        } catch (IllegalArgumentException e) {
+            throw new IOException(label + "地址无效", e);
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme())
+            || uri.getHost() == null || uri.getHost().isEmpty()) {
+            throw new IOException(label + "必须使用 HTTPS");
+        }
+        return uri;
     }
 
     /**
