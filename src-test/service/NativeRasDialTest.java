@@ -3,6 +3,7 @@ package service;
 import model.DialCredentials;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -38,6 +39,24 @@ class NativeRasDialTest {
         NativeRasDial.RASDIALPARAMSW p = NativeRasDial.buildParams(null, null, null);
         assertEquals("", text(p.szEntryName));
         assertEquals("", text(p.szPassword));
+    }
+
+    @Test
+    void structCarriesRoomForThe24H2Tail() {
+        NativeRasDial.RASDIALPARAMSW p = NativeRasDial.buildParams("e", null, null);
+        // 64-bit SDK layout is 1952 bytes; the 24H2 variant accepted by the OS is
+        // exactly 144 bytes larger. The buffer must fit both.
+        int classic = NativeRasDial.candidateSizes(p.size(), 8)[1];
+        assertEquals(1952, classic);
+        assertEquals(2096, p.size());
+    }
+
+    @Test
+    void sizeLadderCoversNewToOldLayouts() {
+        assertArrayEquals(new int[] {2096, 1952, 1936},
+            NativeRasDial.candidateSizes(2096, 8));
+        assertArrayEquals(new int[] {2088, 1944, 1936},
+            NativeRasDial.candidateSizes(2088, 4));
     }
 
     private static String text(char[] buf) {

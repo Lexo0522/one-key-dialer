@@ -150,11 +150,13 @@ public final class WindowsRasModule implements DialPort {
 
             if (nativeDialPreferred) {
                 Integer nativeCode = NativeRasDial.dial(connectionName, phonebookFile, credentials);
-                if (nativeCode != null) {
+                if (nativeCode != null && nativeCode != NativeRasDial.ERROR_INVALID_STRUCT_SIZE) {
                     // error text is derived from the code; describeFailure maps it
                     return new DialResult(nativeCode, nativeCode == 0 ? "RasDial API" : "");
                 }
-                // native binding unavailable — fall back to rasdial.exe below
+                // 632 = the native struct was rejected by this Windows build
+                // (e.g. an OS update changed the RAS layout) — fall back to
+                // rasdial.exe below so dialing still works.
             }
 
             // argv form — never embed the password in a cmd string
@@ -212,6 +214,9 @@ public final class WindowsRasModule implements DialPort {
         }
         if (code == 623 || outStr.contains("623")) {
             return "找不到宽带连接（623）。程序会尝试写入电话簿；可到「网络诊断 → 电话簿/探测」查看。";
+        }
+        if (code == 632 || outStr.contains("632")) {
+            return "拨号接口与当前 Windows 版本不兼容（632）。请更新本程序到最新版，或暂时使用系统自带「宽带连接」拨号。";
         }
         if (code == 633 || outStr.contains("633")) {
             return "设备正忙或配置异常（633）。请关闭其他拨号程序后重试。";
