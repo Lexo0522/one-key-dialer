@@ -1,42 +1,67 @@
 package service;
 
-import util.ProcessIO;
+import com.sun.jna.Library;
+import com.sun.jna.Native;
+import com.sun.jna.Pointer;
+import com.sun.jna.WString;
+import com.sun.jna.ptr.IntByReference;
+import com.sun.jna.ptr.PointerByReference;
+import com.sun.jna.win32.StdCallLibrary;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
-import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
 /**
- * Windows logon auto-start via HKCU\...\Run → direct EXE or javaw -jar.
+ * Windows logon auto-start via HKCU\\...\\Run → direct EXE or javaw -jar.
  * Optional {@link #AUTOSTART_FLAG} lets the app delay tray init after logon.
  */
 public class StartupService {
     public static final String RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    private static final String RUN_SUBKEY = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    private static final int ERROR_SUCCESS = 0;
+    private static final int ERROR_FILE_NOT_FOUND = 2;
+    private static final int ERROR_MORE_DATA = 234;
+    private static final int REG_SZ = 1;
+    private static final int KEY_SET_VALUE = 0x0002;
+    private static final int KEY_WRITE = 0x20006;
+    private static final int KEY_READ = 0x20019;
+    private static final int REG_OPTION_NON_VOLATILE = 0;
+    private static final Pointer HKEY_CURRENT_USER = Pointer.createConstant((int) 0x80000001);
+
     /** Flag appended to the Run command so the app can distinguish logon launches. */
     public static final String AUTOSTART_FLAG = "--autostart";
-    /**
-     * Brief pause before UI when launched with {@link #AUTOSTART_FLAG}
-     * so Explorer/tray are more likely to be ready.
-     */
+    /** Brief pause before UI when launched with {@link #AUTOSTART_FLAG}. */
     public static final int AUTOSTART_DELAY_MS = 3_000;
 
     private final String appExeName;
     private final Runnable onRegistered;
     private final Runnable onUnregistered;
     private final BiConsumer<String, Boolean> logger;
+    private final RegistryStore registry;
+    private final TargetResolver targetResolver;
 
     public StartupService(String appExeName,
                           Runnable onRegistered,
                           Runnable onUnregistered,
                           BiConsumer<String, Boolean> logger) {
+        this(appExeName, onRegistered, onUnregistered, logger,
+            new Win32RegistryStore(), null);
+    }
+
+    StartupService(String appExeName,
+                   Runnable onRegistered,
+                   Runnable onUnregistered,
+                   BiConsumer<String, Boolean> logger,
+                   RegistryStore registry,
+                   TargetResolver targetResolver) {
         this.appExeName = appExeName;
-        this.onRegistered = onRegistered;
-        this.onUnregistered = onUnregistered;
+        this.onRegistered = onRegistered != null ? onRegistered : () -> { };
+        this.onUnregistered = onUnregistered != null ? onUnregistered : () -> { };
         this.logger = logger != null ? logger : (m, ok) -> { };
+        this.registry = registry != null ? registry : new Win32RegistryStore();
+        this.targetResolver = targetResolver != null ? targetResolver : this::resolveTarget;
     }
 
     // ==================== Pure helpers (unit-testable) ====================
@@ -51,12 +76,12 @@ public class StartupService {
         return "\"" + p + "\"";
     }
 
-    /** {@code "C:\path\PPoEDialer.exe" --autostart} */
+    /** {@code "C:\\path\\PPoEDialer.exe" --autostart} */
     public static String buildExeRunCommand(String exeAbsolutePath) {
         return quoteWinArg(exeAbsolutePath) + " " + AUTOSTART_FLAG;
     }
 
-    /** {@code "C:\...\javaw.exe" -jar "C:\...\app.jar" --autostart} */
+    /** {@code "C:\\...\\javaw.exe" -jar "C:\\...\\app.jar" --autostart} */
     public static String buildJarRunCommand(String javawAbsolutePath, String jarAbsolutePath) {
         return quoteWinArg(javawAbsolutePath) + " -jar " + quoteWinArg(jarAbsolutePath)
             + " " + AUTOSTART_FLAG;
@@ -67,40 +92,9 @@ public class StartupService {
         String c = cmd.trim();
         if (c.isEmpty()) return false;
         String lower = c.toLowerCase(Locale.ROOT);
-        // Script interpreters are not direct app launches.
         if (lower.contains("wscript") || lower.contains("cscript")) return false;
         if (lower.contains("javaw") && lower.contains("-jar")) return true;
         return lower.contains(".exe");
-    }
-
-    /**
-     * Parse {@code reg query ... /v name} stdout for the REG_SZ data of {@code valueName}.
-     * Returns null if not found.
-     */
-    public static String parseRegQueryValue(String regOutput, String valueName) {
-        if (regOutput == null || valueName == null) return null;
-        for (String line : regOutput.split("\\r?\\n")) {
-            String t = line.trim();
-            if (t.isEmpty()) continue;
-            // Typical: "    PPoEDialer    REG_SZ    \"C:\\...\\PPoEDialer.exe\" --autostart"
-            if (!t.startsWith(valueName)) continue;
-            // Split on 2+ spaces / tabs
-            String[] parts = t.split("\\s{2,}|\\t+");
-            if (parts.length >= 3 && parts[0].equals(valueName)) {
-                StringBuilder data = new StringBuilder(parts[2]);
-                for (int i = 3; i < parts.length; i++) {
-                    data.append("  ").append(parts[i]);
-                }
-                return data.toString().trim();
-            }
-            // Fallback: after REG_SZ
-            int idx = t.toUpperCase(Locale.ROOT).indexOf("REG_SZ");
-            if (idx >= 0) {
-                String data = t.substring(idx + "REG_SZ".length()).trim();
-                if (!data.isEmpty()) return data;
-            }
-        }
-        return null;
     }
 
     public static boolean isJavaLauncherExe(String processCmd) {
@@ -121,7 +115,7 @@ public class StartupService {
 
     public void enableAutoStart(Class<?> appClass) {
         try {
-            LaunchTarget target = resolveTarget(appClass);
+            LaunchTarget target = targetResolver.resolve(appClass);
             if (target == null) {
                 logger.accept("注册失败: 无法确定启动路径（请使用打包后的 PPoEDialer.exe 或 JAR 运行后再勾选）", false);
                 onUnregistered.run();
@@ -132,19 +126,14 @@ public class StartupService {
                 ? buildExeRunCommand(target.primaryPath)
                 : buildJarRunCommand(target.javawPath, target.primaryPath);
 
-            deleteAllKnownRunValues();
+            registry.write(appExeName, startCmd);
 
-            int code = runReg(new String[]{
-                "reg", "add", RUN_KEY,
-                "/v", appExeName, "/t", "REG_SZ", "/d", startCmd, "/f"
-            }, true);
-
-            if (code == 0 && isRegistrationHealthy(appClass)) {
+            if (isRegistrationHealthy(appClass)) {
                 logger.accept("已注册开机自启动 (直接启动, 无 VBS)", true);
                 logger.accept("启动命令: " + startCmd, true);
                 onRegistered.run();
             } else {
-                logger.accept("注册失败: 写入后校验未通过 (exit=" + code + ")", false);
+                logger.accept("注册失败: 写入后校验未通过", false);
                 onUnregistered.run();
             }
         } catch (Exception e) {
@@ -155,7 +144,7 @@ public class StartupService {
 
     public void disableAutoStart() {
         try {
-            deleteAllKnownRunValues();
+            registry.delete(appExeName);
             logger.accept("已取消开机自启动", true);
             onUnregistered.run();
         } catch (Exception e) {
@@ -165,38 +154,27 @@ public class StartupService {
         }
     }
 
-    /**
-     * True if any known Run value is present with a plausible command.
-     * Legacy Chinese name or old VBS registration still counts as enabled (heal will migrate).
-     */
+    /** True when the app's Run value contains a direct launch command. */
     public boolean isAutoStartEnabled() {
         try {
-            for (String name : allValueNames()) {
-                String data = queryRunValue(name);
-                if (data == null) continue;
-                if (!isDirectLaunchCommand(data)) continue;
-                if (commandTargetLooksPresent(data)) return true;
-                // Key present with plausible cmd but missing file — still "enabled" for UI truth of intent
-                return true;
-            }
+            String data = registry.read(appExeName);
+            return data != null && isDirectLaunchCommand(data);
         } catch (Exception e) {
             logger.accept("查询开机自启动状态失败: " + e.getClass().getSimpleName(), false);
+            return false;
         }
-        return false;
     }
 
     /**
-     * Healthy = ASCII value name present, points at direct EXE/javaw (not VBS),
-     * and launch target file still exists.
+     * Healthy = the Run value points at the current direct EXE/javaw target and the files exist.
+     * @return true if healthy after this call (or already healthy)
      */
     public boolean isRegistrationHealthy(Class<?> appClass) {
         try {
-            String data = queryRunValue(appExeName);
+            String data = registry.read(appExeName);
             if (data == null || !isDirectLaunchCommand(data)) return false;
-            LaunchTarget target = resolveTarget(appClass);
-            if (target == null) {
-                return commandTargetLooksPresent(data);
-            }
+            LaunchTarget target = targetResolver.resolve(appClass);
+            if (target == null) return commandTargetLooksPresent(data);
             if (!new File(target.primaryPath).isFile()) return false;
             if (target.kind == LaunchTarget.Kind.JAR) {
                 return target.javawPath != null && new File(target.javawPath).isFile();
@@ -207,10 +185,7 @@ public class StartupService {
         }
     }
 
-    /**
-     * If user wants auto-start (settings) but registration is missing/unhealthy, re-register once.
-     * @return true if healthy after this call (or already healthy)
-     */
+    /** Re-register once when settings require auto-start but the Run value is unhealthy. */
     public boolean ensureAutoStartHealthy(Class<?> appClass, boolean settingsWantAutoStart) {
         if (!settingsWantAutoStart) {
             return isRegistrationHealthy(appClass);
@@ -231,26 +206,6 @@ public class StartupService {
 
     // ==================== Internals ====================
 
-    private List<String> allValueNames() {
-        List<String> names = new ArrayList<>();
-        names.add(appExeName);
-        return names;
-    }
-
-    private void deleteAllKnownRunValues() throws Exception {
-        for (String name : allValueNames()) {
-            runReg(new String[]{"reg", "delete", RUN_KEY, "/v", name, "/f"}, false);
-        }
-    }
-
-    private String queryRunValue(String valueName) throws Exception {
-        ProcessIO.Result result = ProcessIO.run(
-            Arrays.asList("reg", "query", RUN_KEY, "/v", valueName),
-            10, TimeUnit.SECONDS, ProcessIO.childCharset(), null);
-        if (result.exitCode != 0) return null;
-        return parseRegQueryValue(result.output, valueName);
-    }
-
     private boolean commandTargetLooksPresent(String cmd) {
         if (cmd == null) return false;
         String lower = cmd.toLowerCase(Locale.ROOT);
@@ -262,28 +217,18 @@ public class StartupService {
             if (q2 < 0) break;
             String path = cmd.substring(q1 + 1, q2);
             String pl = path.toLowerCase(Locale.ROOT);
-            if (pl.endsWith(".exe") || pl.endsWith(".jar")) {
-                if (new File(path).isFile()) return true;
+            if ((pl.endsWith(".exe") || pl.endsWith(".jar")) && new File(path).isFile()) {
+                return true;
             }
             from = q2 + 1;
         }
         if (lower.endsWith(".exe") || lower.contains(".exe ")) {
-            // Unquoted trailing / simple path
             String path = cmd.trim().replace("\"", "");
             int space = path.indexOf(' ');
             if (space > 0) path = path.substring(0, space);
             if (path.toLowerCase(Locale.ROOT).endsWith(".exe") && new File(path).isFile()) return true;
         }
         return false;
-    }
-
-    private int runReg(String[] cmd, boolean logOutput) throws Exception {
-        ProcessIO.Result result = ProcessIO.run(
-            Arrays.asList(cmd), 15, TimeUnit.SECONDS, ProcessIO.childCharset(), null);
-        if (logOutput && result.exitCode != 0 && !result.output.trim().isEmpty()) {
-            logger.accept(result.output.trim(), false);
-        }
-        return result.exitCode;
     }
 
     private LaunchTarget resolveTarget(Class<?> appClass) {
@@ -294,9 +239,7 @@ public class StartupService {
                 && !isJavaLauncherExe(processCmd)) {
                 File exe = new File(processCmd).getAbsoluteFile();
                 if (exe.isFile()) {
-                    File parent = exe.getParentFile();
-                    String workDir = parent != null ? parent.getAbsolutePath() : exe.getParent();
-                    return new LaunchTarget(LaunchTarget.Kind.EXE, exe.getAbsolutePath(), workDir, null);
+                    return new LaunchTarget(LaunchTarget.Kind.EXE, exe.getAbsolutePath(), null);
                 }
             }
         } catch (Exception ignored) {
@@ -306,18 +249,13 @@ public class StartupService {
             File codeSource = new File(appClass.getProtectionDomain().getCodeSource().getLocation().toURI())
                 .getAbsoluteFile();
             if (codeSource.isFile() && codeSource.getName().toLowerCase(Locale.ROOT).endsWith(".jar")) {
-                File jar = codeSource;
-                File baseDir = jar.getParentFile();
-                String workDir = baseDir != null ? baseDir.getAbsolutePath() : jar.getParent();
                 File javaw = new File(System.getProperty("java.home"), "bin\\javaw.exe");
-                if (!javaw.isFile()) {
-                    javaw = new File(System.getProperty("java.home"), "bin/javaw.exe");
-                }
+                if (!javaw.isFile()) javaw = new File(System.getProperty("java.home"), "bin/javaw.exe");
                 if (!javaw.isFile()) {
                     logger.accept("注册失败: 找不到 javaw.exe", false);
                     return null;
                 }
-                return new LaunchTarget(LaunchTarget.Kind.JAR, jar.getAbsolutePath(), workDir, javaw.getAbsolutePath());
+                return new LaunchTarget(LaunchTarget.Kind.JAR, codeSource.getAbsolutePath(), javaw.getAbsolutePath());
             }
         } catch (Exception e) {
             logger.accept("解析启动路径失败: " + e.getMessage(), false);
@@ -325,19 +263,136 @@ public class StartupService {
         return null;
     }
 
-    private static final class LaunchTarget {
+    interface RegistryStore {
+        String read(String valueName) throws Exception;
+
+        void write(String valueName, String value) throws Exception;
+
+        void delete(String valueName) throws Exception;
+    }
+
+    interface TargetResolver {
+        LaunchTarget resolve(Class<?> appClass);
+    }
+
+    static final class LaunchTarget {
         enum Kind { EXE, JAR }
 
         final Kind kind;
         final String primaryPath;
-        final String workDir;
         final String javawPath;
 
-        LaunchTarget(Kind kind, String primaryPath, String workDir, String javawPath) {
+        LaunchTarget(Kind kind, String primaryPath, String javawPath) {
             this.kind = kind;
             this.primaryPath = primaryPath;
-            this.workDir = workDir;
             this.javawPath = javawPath;
+        }
+    }
+
+    private interface Advapi32 extends StdCallLibrary {
+        Advapi32 INSTANCE = Native.load("Advapi32", Advapi32.class);
+
+        int RegCreateKeyExW(Pointer hKey, WString subKey, int reserved, Pointer clazz,
+                            int options, int samDesired, Pointer security,
+                            PointerByReference result, IntByReference disposition);
+
+        int RegOpenKeyExW(Pointer hKey, WString subKey, int options, int samDesired,
+                          PointerByReference result);
+
+        int RegSetValueExW(Pointer key, WString valueName, int reserved, int type,
+                           byte[] data, int dataSize);
+
+        int RegQueryValueExW(Pointer key, WString valueName, int reserved,
+                             IntByReference type, byte[] data, IntByReference dataSize);
+
+        int RegDeleteValueW(Pointer key, WString valueName);
+
+        int RegCloseKey(Pointer key);
+    }
+
+    private static final class Win32RegistryStore implements RegistryStore {
+        @Override
+        public String read(String valueName) {
+            PointerByReference keyRef = new PointerByReference();
+            int code = Advapi32.INSTANCE.RegOpenKeyExW(
+                HKEY_CURRENT_USER, new WString(RUN_SUBKEY), 0, KEY_READ, keyRef);
+            if (code == ERROR_FILE_NOT_FOUND) return null;
+            check(code, "RegOpenKeyExW");
+            Pointer key = keyRef.getValue();
+            try {
+                IntByReference type = new IntByReference();
+                IntByReference size = new IntByReference();
+                code = Advapi32.INSTANCE.RegQueryValueExW(
+                    key, new WString(valueName), 0, type, null, size);
+                if (code == ERROR_FILE_NOT_FOUND) return null;
+                check(code, "RegQueryValueExW");
+                if (type.getValue() != REG_SZ || size.getValue() <= 0) return null;
+                byte[] data = new byte[size.getValue()];
+                while (true) {
+                    code = Advapi32.INSTANCE.RegQueryValueExW(
+                        key, new WString(valueName), 0, type, data, size);
+                    if (code == ERROR_FILE_NOT_FOUND) return null;
+                    if (code != ERROR_MORE_DATA) break;
+                    data = new byte[size.getValue()];
+                }
+                check(code, "RegQueryValueExW");
+                if (type.getValue() != REG_SZ) return null;
+                return decodeString(data, size.getValue());
+            } finally {
+                Advapi32.INSTANCE.RegCloseKey(key);
+            }
+        }
+
+        @Override
+        public void write(String valueName, String value) {
+            PointerByReference keyRef = new PointerByReference();
+            int code = Advapi32.INSTANCE.RegCreateKeyExW(
+                HKEY_CURRENT_USER, new WString(RUN_SUBKEY), 0, null,
+                REG_OPTION_NON_VOLATILE, KEY_WRITE, null, keyRef, new IntByReference());
+            check(code, "RegCreateKeyExW");
+            Pointer key = keyRef.getValue();
+            try {
+                byte[] data = encodeString(value);
+                code = Advapi32.INSTANCE.RegSetValueExW(
+                    key, new WString(valueName), 0, REG_SZ, data, data.length);
+                check(code, "RegSetValueExW");
+            } finally {
+                Advapi32.INSTANCE.RegCloseKey(key);
+            }
+        }
+
+        @Override
+        public void delete(String valueName) {
+            PointerByReference keyRef = new PointerByReference();
+            int code = Advapi32.INSTANCE.RegOpenKeyExW(
+                HKEY_CURRENT_USER, new WString(RUN_SUBKEY), 0, KEY_SET_VALUE, keyRef);
+            if (code == ERROR_FILE_NOT_FOUND) return;
+            check(code, "RegOpenKeyExW");
+            Pointer key = keyRef.getValue();
+            try {
+                code = Advapi32.INSTANCE.RegDeleteValueW(key, new WString(valueName));
+                if (code != ERROR_FILE_NOT_FOUND) check(code, "RegDeleteValueW");
+            } finally {
+                Advapi32.INSTANCE.RegCloseKey(key);
+            }
+        }
+
+        private static void check(int code, String operation) {
+            if (code != ERROR_SUCCESS) {
+                throw new IllegalStateException(operation + " failed (error=" + code + ")");
+            }
+        }
+
+        private static byte[] encodeString(String value) {
+            byte[] text = (value + "\0").getBytes(StandardCharsets.UTF_16LE);
+            return text;
+        }
+
+        private static String decodeString(byte[] data, int size) {
+            int length = Math.min(size, data.length);
+            String value = new String(data, 0, length, StandardCharsets.UTF_16LE);
+            int nul = value.indexOf('\0');
+            return nul >= 0 ? value.substring(0, nul) : value;
         }
     }
 }

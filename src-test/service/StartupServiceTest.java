@@ -1,6 +1,13 @@
 package service;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.File;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -38,18 +45,8 @@ class StartupServiceTest {
     }
 
     @Test
-    void parseRegQueryValueReadsRegSzData() {
-        String out = "\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\n"
-            + "    PPoEDialer    REG_SZ    \"C:\\x\\PPoEDialer.exe\" --autostart\n";
-        assertEquals(
-            "\"C:\\x\\PPoEDialer.exe\" --autostart",
-            StartupService.parseRegQueryValue(out, "PPoEDialer"));
-        assertNull(StartupService.parseRegQueryValue(out, "Other"));
-    }
-
-    @Test
     void directLaunchCommands() {
-        String vbs = "wscript.exe //B \"C:\\a\\pppoe_startup.vbs\"";
+        String vbs = "wscript.exe //B \"C:\\a\\ppoe_startup.vbs\"";
         String exe = "\"C:\\path\\PPoEDialer.exe\" --autostart";
         assertFalse(StartupService.isDirectLaunchCommand(vbs));
         assertTrue(StartupService.isDirectLaunchCommand(exe));
@@ -71,5 +68,71 @@ class StartupServiceTest {
         assertFalse(StartupService.argsContainAutostart(new String[]{}));
         assertFalse(StartupService.argsContainAutostart(null));
         assertFalse(StartupService.argsContainAutostart(new String[]{"--other"}));
+    }
+
+    @Test
+    void enableAndDisablePreserveMsiPathWithSpaces(@TempDir Path tempDir) throws Exception {
+        File exe = tempDir.resolve("Program Files").resolve("PPoEDialer.exe").toFile();
+        assertTrue(exe.getParentFile().mkdirs());
+        assertTrue(exe.createNewFile());
+
+        MemoryRegistry registry = new MemoryRegistry();
+        AtomicInteger registered = new AtomicInteger();
+        AtomicInteger unregistered = new AtomicInteger();
+        StartupService service = new StartupService(
+            "PPoEDialer", registered::incrementAndGet, unregistered::incrementAndGet,
+            null, registry, appClass -> new StartupService.LaunchTarget(
+                StartupService.LaunchTarget.Kind.EXE, exe.getAbsolutePath(), null));
+
+        service.enableAutoStart(StartupService.class);
+
+        String expected = StartupService.buildExeRunCommand(exe.getAbsolutePath());
+        assertEquals(expected, registry.read("PPoEDialer"));
+        assertTrue(service.isAutoStartEnabled());
+        assertTrue(service.isRegistrationHealthy(StartupService.class));
+        assertEquals(1, registered.get());
+        assertEquals(0, unregistered.get());
+
+        service.disableAutoStart();
+
+        assertNull(registry.read("PPoEDialer"));
+        assertFalse(service.isAutoStartEnabled());
+        assertEquals(1, unregistered.get());
+    }
+
+    @Test
+    void enableFailureInvokesUnregistered() {
+        AtomicInteger unregistered = new AtomicInteger();
+        StartupService service = new StartupService(
+            "PPoEDialer", () -> { }, unregistered::incrementAndGet, null,
+            new MemoryRegistry() {
+                @Override public void write(String valueName, String value) {
+                    throw new IllegalStateException("write failed");
+                }
+            }, appClass -> new StartupService.LaunchTarget(
+                StartupService.LaunchTarget.Kind.EXE, "C:\\missing\\PPoEDialer.exe", null));
+
+        service.enableAutoStart(StartupService.class);
+
+        assertEquals(1, unregistered.get());
+    }
+
+    private static class MemoryRegistry implements StartupService.RegistryStore {
+        private final Map<String, String> values = new HashMap<>();
+
+        @Override
+        public String read(String valueName) {
+            return values.get(valueName);
+        }
+
+        @Override
+        public void write(String valueName, String value) {
+            values.put(valueName, value);
+        }
+
+        @Override
+        public void delete(String valueName) {
+            values.remove(valueName);
+        }
     }
 }
