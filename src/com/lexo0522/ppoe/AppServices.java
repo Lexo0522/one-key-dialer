@@ -105,7 +105,7 @@ public final class AppServices {
                 success ? UiTheme.COLOR_SUCCESS : UiTheme.COLOR_ERROR)
         );
 
-        rasModule = new WindowsRasModule(AppFiles.RAS_CONNECTION, true);
+        rasModule = new WindowsRasModule(AppFiles.RAS_CONNECTION);
 
         dialOrchestrator = new DialOrchestrator(
             rasModule, dialView, dialEnvironment(bridge), dialLifecycle, sessionTraffic);

@@ -44,32 +44,45 @@ class WindowsRasModuleTest {
     }
 
     @Test
-    void dialSuccessRunsRasdialArgvWithoutCmdString() throws Exception {
+    void dialSuccessGoesThroughNativePathWithoutArgv() throws Exception {
         RecordingRunner runner = new RecordingRunner();
         WindowsRasModule module = module(runner, dir.resolve("pbk").toFile());
+        int[] nativeCalls = {0};
+        module.setNativeDial((entry, pbk, creds) -> {
+            nativeCalls[0]++;
+            assertEquals("pppoe_native_java", entry);
+            assertEquals("2023001", creds.username());
+            return 0;
+        });
 
         DialPort.DialResult result = module.connect(
             new DialCredentials("2023001", "secret".toCharArray()));
 
         assertTrue(result.isSuccess());
-        assertEquals(1, runner.commands.size());
-        List<String> cmd = runner.commands.get(0);
-        assertEquals("rasdial", cmd.get(0));
-        assertEquals("pppoe_native_java", cmd.get(1));
-        assertEquals("2023001", cmd.get(2));
-        assertEquals("secret", cmd.get(3));
-        assertFalse(cmd.get(0).equals("cmd"), "must never build a cmd /c string with secrets");
+        assertEquals(1, nativeCalls[0]);
+        assertEquals(0, runner.commands.size(), "password must never reach a command line");
     }
 
     @Test
     void dialErrorCodesPassThrough() throws Exception {
         RecordingRunner runner = new RecordingRunner();
         WindowsRasModule module = module(runner, dir.resolve("pbk").toFile());
-        runner.nextResult = new ProcessIO.Result(691, "ERROR 691", false);
+        module.setNativeDial((entry, pbk, creds) -> 691);
         assertEquals(691, module.connect(new DialCredentials("u", "p".toCharArray())).code);
 
-        runner.nextResult = new ProcessIO.Result(678, "ERROR 678", false);
+        module.setNativeDial((entry, pbk, creds) -> 678);
         assertEquals(678, module.connect(new DialCredentials("u", "p".toCharArray())).code);
+    }
+
+    @Test
+    void missingNativeBindingReportsClearFailure() throws Exception {
+        RecordingRunner runner = new RecordingRunner();
+        WindowsRasModule module = module(runner, dir.resolve("pbk").toFile());
+        module.setNativeDial((entry, pbk, creds) -> null);
+        DialPort.DialResult result = module.connect(new DialCredentials("u", "p".toCharArray()));
+        assertFalse(result.isSuccess());
+        assertEquals(-1, result.code);
+        assertEquals(0, runner.commands.size(), "no silent argv fallback anymore");
     }
 
     @Test
@@ -80,6 +93,8 @@ class WindowsRasModuleTest {
         assertTrue(WindowsRasModule.describeFailure(
             new DialPort.DialResult(691, "")).contains("691"));
         assertTrue(WindowsRasModule.describeFailure(
+            new DialPort.DialResult(619, "")).contains("619"));
+        assertTrue(WindowsRasModule.describeFailure(
             new DialPort.DialResult(678, "")).contains("678"));
         assertTrue(WindowsRasModule.describeFailure(
             new DialPort.DialResult(999, "")).contains("999"));
@@ -89,6 +104,9 @@ class WindowsRasModuleTest {
     void connectFailsWithoutEnsureEntry() throws Exception {
         RecordingRunner runner = new RecordingRunner();
         WindowsRasModule module = module(runner, null); // APPDATA unavailable equivalent
+        module.setNativeDial((entry, pbk, creds) -> {
+            throw new AssertionError("native dial must not run without a phonebook");
+        });
         DialPort.DialResult result = module.connect(new DialCredentials("u", "p".toCharArray()));
         assertFalse(result.isSuccess());
         assertEquals(-1, result.code);
@@ -96,34 +114,31 @@ class WindowsRasModuleTest {
     }
 
     @Test
-    void disconnectTargetsActiveConnectionAndClearsIt() throws Exception {
+    void disconnectRunsAfterSuccessfulConnect() throws Exception {
         RecordingRunner runner = new RecordingRunner();
         File pbk = dir.resolve("pbk").toFile();
         WindowsRasModule module = module(runner, pbk);
+        module.setNativeDial((entry, pbk2, creds) -> 0);
 
         runner.nextResult = new ProcessIO.Result(0, "ok", false);
         module.connect(new DialCredentials("u", "p".toCharArray()));
-        assertEquals("pppoe_native_java", module.activeConnectionName());
 
         module.disconnect();
-        assertEquals("rasdial pppoe_native_java /disconnect",
-            runner.commands.get(1).get(0) + " " + runner.commands.get(1).get(1)
-                + " " + runner.commands.get(1).get(2));
-        // Active connection cleared after a successful disconnect.
-        assertEquals("pppoe_native_java", module.activeConnectionName());
+        List<String> cmd = runner.commands.get(0);
+        assertEquals("rasdial", cmd.get(0));
+        assertEquals("pppoe_native_java", cmd.get(1));
+        assertEquals("/disconnect", cmd.get(2));
     }
 
     @Test
-    void disconnectFailureKeepsActiveConnection() throws Exception {
+    void disconnectFailureReportsExitCode() throws Exception {
         RecordingRunner runner = new RecordingRunner();
         WindowsRasModule module = module(runner, dir.resolve("pbk").toFile());
-        runner.nextResult = new ProcessIO.Result(0, "ok", false);
+        module.setNativeDial((entry, pbk, creds) -> 0);
         module.connect(new DialCredentials("u", "p".toCharArray()));
 
         runner.nextResult = new ProcessIO.Result(-1, "error", false);
         assertEquals(-1, module.disconnect());
-        // Still active after a failed disconnect.
-        assertEquals("pppoe_native_java", module.activeConnectionName());
     }
 
     @Test

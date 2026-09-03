@@ -20,23 +20,30 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The single Windows RAS module. Phonebook preparation, device selection, encoding,
- * rasdial execution, active-connection tracking, timeouts, and error mapping are all
- * internal; the outside sees {@link DialPort} plus a small diagnostics surface.
+ * The single Windows RAS module. Phonebook preparation, device selection,
+ * native RasDialW dialing, rasdial.exe disconnect, active-connection tracking,
+ * timeouts, and error mapping are all internal; the outside sees {@link DialPort}
+ * plus a small diagnostics surface.
  * <p>
- * Internal test seams: {@link ProcessRunner} (child processes) and the phonebook
- * file location — automated tests use fakes and temp files, never a real network.
+ * Internal test seams: {@link ProcessRunner} (child processes), {@link NativeDial}
+ * (the RasDialW call), and the phonebook file location — automated tests use
+ * fakes and temp files, never a real network.
  */
 public final class WindowsRasModule implements DialPort {
     private static final Pattern CONN_NAME_OK = Pattern.compile("^[A-Za-z0-9_\\-]{1,64}$");
     private static final Pattern SECTION = Pattern.compile("^\\[([^\\]]+)]\\s*$");
-    private static final long DIAL_TIMEOUT_SECONDS = 60;
     private static final long DISCONNECT_TIMEOUT_SECONDS = 30;
 
     /** Executed-process seam. Production delegates to {@link ProcessIO}. */
     public interface ProcessRunner {
         ProcessIO.Result run(List<String> command, long timeout, TimeUnit unit,
                              Charset charset, Consumer<String> lineConsumer) throws Exception;
+    }
+
+    /** Native RasDialW seam. Tests inject a fake; production uses {@link NativeRasDial}. */
+    @FunctionalInterface
+    interface NativeDial {
+        Integer dial(String entryName, File phonebook, DialCredentials credentials);
     }
 
     public static final class DeviceHint {
@@ -92,30 +99,23 @@ public final class WindowsRasModule implements DialPort {
     private final ProcessRunner runner;
     private final File phonebookFile;
     private final AtomicRef activeConnection = new AtomicRef();
-    /** True when the native RasDialW path may be tried before rasdial.exe. */
-    private final boolean nativeDialPreferred;
     /** Optional preferred PPPoE device (port + device name); null = auto-detect / default. */
     private volatile DeviceHint preferredDevice;
+    private NativeDial nativeDial = NativeRasDial::dial;
 
     public WindowsRasModule(String connectionName) {
         this(connectionName, ProcessIO::run, defaultPbkFile());
     }
 
-    /** Production entry: prefers the native RasDialW path (password never in argv). */
-    public WindowsRasModule(String connectionName, boolean nativeDialPreferred) {
-        this(connectionName, ProcessIO::run, defaultPbkFile(), nativeDialPreferred);
-    }
-
     public WindowsRasModule(String connectionName, ProcessRunner runner, File phonebookFile) {
-        this(connectionName, runner, phonebookFile, false);
-    }
-
-    private WindowsRasModule(String connectionName, ProcessRunner runner, File phonebookFile,
-                             boolean nativeDialPreferred) {
         this.connectionName = connectionName;
         this.runner = runner;
         this.phonebookFile = phonebookFile;
-        this.nativeDialPreferred = nativeDialPreferred;
+    }
+
+    /** Test seam: replaces the native RasDialW call. */
+    void setNativeDial(NativeDial nativeDial) {
+        this.nativeDial = nativeDial;
     }
 
     public static File defaultPbkFile() {
@@ -139,38 +139,21 @@ public final class WindowsRasModule implements DialPort {
         if (credentials == null) {
             return new DialResult(-1, "empty credentials");
         }
-        try {
-            if (!isValidConnectionName(connectionName)) {
-                return new DialResult(-1, "invalid connection name");
-            }
-            if (!ensureEntry()) {
-                return new DialResult(-1, "ensure connection failed");
-            }
-            activeConnection.set(connectionName);
-
-            if (nativeDialPreferred) {
-                Integer nativeCode = NativeRasDial.dial(connectionName, phonebookFile, credentials);
-                if (nativeCode != null && nativeCode != NativeRasDial.ERROR_INVALID_STRUCT_SIZE) {
-                    // error text is derived from the code; describeFailure maps it
-                    return new DialResult(nativeCode, nativeCode == 0 ? "RasDial API" : "");
-                }
-                // 632 = the native struct was rejected by this Windows build
-                // (e.g. an OS update changed the RAS layout) — fall back to
-                // rasdial.exe below so dialing still works.
-            }
-
-            // argv form — never embed the password in a cmd string
-            String username = credentials.username();
-            String password = credentials.passwordAsString();
-            ProcessIO.Result result = runner.run(
-                Arrays.asList("rasdial", connectionName, username, password),
-                DIAL_TIMEOUT_SECONDS, TimeUnit.SECONDS, ProcessIO.childCharset(),
-                null);
-            return new DialResult(result.exitCode, result.output);
-        } finally {
-            // the credential instance is cleared by the orchestrator; this String
-            // reference dies with the frame
+        if (!isValidConnectionName(connectionName)) {
+            return new DialResult(-1, "invalid connection name");
         }
+        if (!ensureEntry()) {
+            return new DialResult(-1, "ensure connection failed");
+        }
+        activeConnection.set(connectionName);
+
+        // Single dial path: the password stays inside the process (RASDIALPARAMSW),
+        // never on a command line. rasdial.exe is used for disconnect only.
+        Integer code = nativeDial.dial(connectionName, phonebookFile, credentials);
+        if (code == null) {
+            return new DialResult(-1, "RasDial API unavailable");
+        }
+        return new DialResult(code, code == 0 ? "RasDial API" : NativeRasDial.errorText(code));
     }
 
     @Override
@@ -188,12 +171,6 @@ public final class WindowsRasModule implements DialPort {
         return result.exitCode;
     }
 
-    /** The connection name a disconnect would currently target. */
-    public String activeConnectionName() {
-        String active = activeConnection.get();
-        return active != null ? active : connectionName;
-    }
-
     // ==================== failure mapping ====================
 
     /** Prefer exit code; fall back to output substrings for localized rasdial text. */
@@ -203,8 +180,15 @@ public final class WindowsRasModule implements DialPort {
         }
         String outStr = result.output == null ? "" : result.output;
         int code = result.code;
+        if (code == 0) {
+            return "连接成功";
+        }
         if (code == 691 || outStr.contains("691")) {
             return "账号或密码错误（691）。请核对学号/账号与密码后重试。";
+        }
+        if (code == 619 || outStr.contains("619")) {
+            return "连接被中断，端口已断开（619）。上一会话可能未完全释放或认证服务暂时不可用："
+                + "等半分钟再拨；反复出现请重启电脑，或确认没有其他拨号客户端占用宽带。";
         }
         if (code == 678 || outStr.contains("678")) {
             return "服务器无响应（678）。请确认已插网线/连上校园网，稍后再试。";
@@ -256,10 +240,6 @@ public final class WindowsRasModule implements DialPort {
      */
     public void setPreferredDevice(DeviceHint hint) {
         this.preferredDevice = hint;
-    }
-
-    public DeviceHint getPreferredDevice() {
-        return preferredDevice;
     }
 
     /**

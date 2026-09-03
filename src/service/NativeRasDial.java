@@ -18,65 +18,170 @@ import java.util.Arrays;
  * is readable in the local process list for as long as the child process runs.
  * <p>
  * The binding loads lazily; any load or call failure returns {@code null} so the
- * caller can fall back to the argv path. The returned {@link com.sun.jna.Pointer}
- * HRASCONN is intentionally never hung up: doing so would terminate the PPP
- * session, while a dangling handle after {@code rasdial /disconnect} is harmless.
+ * caller can surface a clear error. The returned HRASCONN is intentionally never
+ * hung up: doing so would terminate the PPP session, while a dangling handle
+ * after {@code rasdial /disconnect} is harmless.
  * <p>
- * Windows 11 24H2 extended {@code RASDIALPARAMSW} by 144 bytes past the public
- * SDK layout and began rejecting the legacy sizes with error 632
- * (ERROR_INVALID_STRUCT_SIZE), so the struct carries a zeroed tail large enough
- * for the newest variant and the dial walks a size ladder until one is accepted.
+ * Layout contract, pinned by {@code NativeRasDialTest} against native memory:
+ * <ul>
+ *   <li>Pre-24H2 builds take the documented x64 SDK layout (1968): szUserName@888,
+ *       szPassword@1402, dwIfIndex and guidId trailing.</li>
+ *   <li>Windows 11 24H2 (build 26100+) rejects every pre-24H2 size with 632 and
+ *       accepts 2096 only — and its 2096 layout is <em>not</em> the SDK layout
+ *       with a tail: rasapi32 inserts 146 opaque bytes between dwCallbackId and
+ *       szUserName (szUserName@1034, szPassword@1548, szDomain@2062; dwIfIndex
+ *       and guidId are gone). Writing the SDK offsets against dwSize=2096 makes
+ *       the OS read a truncated username suffixed with password bytes and every
+ *       dial fails with 691.</li>
+ * </ul>
+ * Both layouts live in one dial implementation; the OS build number only picks
+ * the struct class. There is deliberately no probe ladder.
  */
 public final class NativeRasDial {
     private NativeRasDial() {
     }
 
-    /** Extra bytes Windows 11 24H2 appended to RASDIALPARAMSW (rejected if missing). */
-    static final int TAIL_BYTES_24H2 = 144;
-    /** RAS error 632 — the passed dwSize was not accepted. */
-    static final int ERROR_INVALID_STRUCT_SIZE = 632;
+    /** SDK sizeof(RASDIALPARAMSW), x64, WINVER &ge; 0x600 (dwIfIndex + guidId). */
+    static final int SDK_STRUCT_SIZE = 1968;
+    /** First Windows 11 24H2 build; restructured RASDIALPARAMSW. */
+    static final int BUILD_24H2 = 26100;
+    /** dwSize required by 24H2+ (SDK fields + 146-byte inserted extension). */
+    static final int STRUCT_SIZE_24H2 = 2096;
+    /** Opaque bytes 24H2 inserted between dwCallbackId and szUserName; sent zeroed. */
+    static final int EXT_BYTES_24H2 = 1034 - 888; // 24H2 szUserName minus SDK szUserName
 
-    /** dwSize accepted by the last successful dial, so later dials skip the ladder. */
-    private static volatile int acceptedSize;
+    /** Common write/wipe surface over the two layout generations. */
+    interface DialParams {
+        Structure self();
+
+        /** Sets dwSize to this struct's JNA-computed size; call before write/dial. */
+        void initSize();
+
+        void entry(String name);
+
+        void credentials(char[] username, char[] password);
+
+        void wipe();
+    }
 
     private interface RasApi32 extends Library {
         RasApi32 INSTANCE = Native.load("rasapi32", RasApi32.class);
 
-        int RasDialW(WString reserved, WString phonebook, RASDIALPARAMSW params,
+        int RasDialW(WString reserved, WString phonebook, Structure params,
                      int notifierType, Pointer notifier, PointerByReference rasConn);
+
+        int RasGetErrorStringW(int resourceId, char[] buffer, int bufferSize);
+    }
+
+    private interface Ntdll extends Library {
+        Ntdll INSTANCE = Native.load("ntdll", Ntdll.class);
+
+        int RtlGetVersion(OSVERSIONINFOW info);
     }
 
     /**
-     * Mirrors the SDK RASDIALPARAMSW layout (RAS_Max* + 1 for the terminator)
-     * plus the fields guarded by WINVER >= 0x401 and the 24H2 tail. Must be
-     * public with public fields — JNA reads them reflectively, and strict
-     * encapsulation (JDK 17+) denies access to package-private members.
+     * SDK RASDIALPARAMSW (RAS_Max* + 1 terminators, WINVER &ge; 0x401/0x600
+     * fields). Must be public with public fields — JNA reads them reflectively.
      */
     @Structure.FieldOrder({"dwSize", "szEntryName", "szPhoneNumber", "szCallbackNumber",
-        "szUserName", "szPassword", "szDomain", "dwSubEntry", "dwCallbackId", "osTail"})
-    public static final class RASDIALPARAMSW extends Structure {
+        "dwSubEntry", "dwCallbackId", "szUserName", "szPassword", "szDomain",
+        "dwIfIndex", "guidId"})
+    public static final class ParamsSdk extends Structure implements DialParams {
         public int dwSize;
         public char[] szEntryName = new char[257];
         public char[] szPhoneNumber = new char[129];
         public char[] szCallbackNumber = new char[49];
+        public int dwSubEntry;
+        public Pointer dwCallbackId; // ULONG_PTR
         public char[] szUserName = new char[257];
         public char[] szPassword = new char[257];
         public char[] szDomain = new char[16];
+        public int dwIfIndex;
+        public byte[] guidId = new byte[16];
+
+        @Override public Structure self() { return this; }
+
+        @Override public void initSize() { dwSize = size(); }
+
+        @Override public void entry(String name) { copyInto(szEntryName, name); }
+
+        @Override public void credentials(char[] username, char[] password) {
+            copyInto(szUserName, username);
+            copyInto(szPassword, password);
+        }
+
+        @Override public void wipe() {
+            Arrays.fill(szUserName, '\0');
+            Arrays.fill(szPassword, '\0');
+            try {
+                write();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /**
+     * The Windows 11 24H2 RASDIALPARAMSW: the SDK header fields, then 146 opaque
+     * bytes inserted before the credentials, and dwIfIndex/guidId removed.
+     * Struct size 2096, szUserName@1034, szPassword@1548, szDomain@2062.
+     */
+    @Structure.FieldOrder({"dwSize", "szEntryName", "szPhoneNumber", "szCallbackNumber",
+        "dwSubEntry", "dwCallbackId", "ext", "szUserName", "szPassword", "szDomain"})
+    public static final class Params24H2 extends Structure implements DialParams {
+        public int dwSize;
+        public char[] szEntryName = new char[257];
+        public char[] szPhoneNumber = new char[129];
+        public char[] szCallbackNumber = new char[49];
         public int dwSubEntry;
         public Pointer dwCallbackId; // ULONG_PTR
-        /** Zeroed reserve covering the undocumented 24H2 extension; never sent as data. */
-        public byte[] osTail = new byte[TAIL_BYTES_24H2];
+        /** Opaque OS extension; never written as data. */
+        public byte[] ext = new byte[EXT_BYTES_24H2];
+        public char[] szUserName = new char[257];
+        public char[] szPassword = new char[257];
+        public char[] szDomain = new char[16];
+
+        @Override public Structure self() { return this; }
+
+        @Override public void initSize() { dwSize = size(); }
+
+        @Override public void entry(String name) { copyInto(szEntryName, name); }
+
+        @Override public void credentials(char[] username, char[] password) {
+            copyInto(szUserName, username);
+            copyInto(szPassword, password);
+        }
+
+        @Override public void wipe() {
+            Arrays.fill(szUserName, '\0');
+            Arrays.fill(szPassword, '\0');
+            try {
+                write();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /** OSVERSIONINFOW for {@code ntdll!RtlGetVersion} (the only non-deprecated version probe). */
+    @Structure.FieldOrder({"dwOSVersionInfoSize", "dwMajorVersion", "dwMinorVersion",
+        "dwBuildNumber", "dwPlatformId", "szCSDVersion"})
+    public static final class OSVERSIONINFOW extends Structure {
+        public int dwOSVersionInfoSize;
+        public int dwMajorVersion;
+        public int dwMinorVersion;
+        public int dwBuildNumber;
+        public int dwPlatformId;
+        public char[] szCSDVersion = new char[128];
     }
 
     /**
      * Dial synchronously. @return the RAS result code (0 = success), or {@code null}
-     * when the native binding is unavailable / failed — the caller then falls back
-     * to {@code rasdial.exe}. Never throws.
+     * when the native binding is unavailable — the caller reports a clear error.
+     * Never throws.
      */
     static Integer dial(String entryName, File phonebookFile, DialCredentials credentials) {
         char[] username = null;
         char[] password = null;
-        RASDIALPARAMSW params = null;
+        DialParams params = null;
         try {
             final RasApi32 api;
             try {
@@ -86,68 +191,60 @@ public final class NativeRasDial {
             }
             username = credentials.username().toCharArray();
             password = credentials.copyPassword();
-            params = buildParams(entryName, username, password);
+            params = newParams(entryName, username, password);
             PointerByReference conn = new PointerByReference();
             WString phonebook = phonebookFile != null
                 ? new WString(phonebookFile.getAbsolutePath()) : null;
-            int code = dialWithLadder(api, params, phonebook, conn);
-            return code;
+            return api.RasDialW(null, phonebook, params.self(), 0, null, conn);
         } catch (Throwable unexpected) {
             return null;
         } finally {
-            if (params != null) {
-                Arrays.fill(params.szPassword, '\0');
-                Arrays.fill(params.szUserName, '\0');
-                try {
-                    params.write(); // push the zeros into native memory
-                } catch (Throwable ignored) {
-                }
-            }
+            if (params != null) params.wipe();
             if (username != null) PasswordChars.clear(username);
             if (password != null) PasswordChars.clear(password);
         }
     }
 
-    /**
-     * Calls RasDialW with the dwSize the OS last accepted, or walks the size
-     * ladder until one passes validation. Every rejected size returns 632 without
-     * touching the network, so retrying is safe; the first non-632 result wins.
-     */
-    private static int dialWithLadder(RasApi32 api, RASDIALPARAMSW params,
-                                      WString phonebook, PointerByReference conn) {
-        int preferred = acceptedSize;
-        if (preferred > 0 && preferred <= params.size()) {
-            params.dwSize = preferred;
-            int code = api.RasDialW(null, phonebook, params, 0, null, conn);
-            if (code != ERROR_INVALID_STRUCT_SIZE) return code;
-            acceptedSize = 0; // OS update changed the layout — re-probe below
-        }
-        for (int size : candidateSizes(params.size(), Native.POINTER_SIZE)) {
-            params.dwSize = size;
-            int code = api.RasDialW(null, phonebook, params, 0, null, conn);
-            if (code != ERROR_INVALID_STRUCT_SIZE) {
-                acceptedSize = size;
-                return code;
+    /** OS-provided text for a RAS error code, or "" when the code has no RAS message. */
+    static String errorText(int code) {
+        if (code <= 0) return "";
+        try {
+            char[] buf = new char[512];
+            if (RasApi32.INSTANCE.RasGetErrorStringW(code, buf, buf.length) == 0) {
+                int end = 0;
+                while (end < buf.length && buf[end] != '\0') end++;
+                return new String(buf, 0, end).trim();
             }
+        } catch (Throwable ignored) {
         }
-        return ERROR_INVALID_STRUCT_SIZE;
+        return "";
     }
 
-    /** Visible for tests: dwSize candidates from newest OS layout to oldest. */
-    static int[] candidateSizes(int structSize, int pointerSize) {
-        int classic = structSize - TAIL_BYTES_24H2; // SDK layout incl. WINVER 0x401 fields
-        int legacyGap = pointerSize >= 8 ? 16 : 8;  // dwSubEntry + padding + dwCallbackId
-        return new int[] {structSize, classic, classic - legacyGap};
+    /** Visible for tests: which struct generation each Windows build accepts. */
+    static boolean uses24H2Layout(int buildNumber) {
+        return buildNumber >= BUILD_24H2;
     }
 
-    /** Visible for tests: asserts the struct layout fields without calling the API. */
-    static RASDIALPARAMSW buildParams(String entryName, char[] username, char[] password) {
-        RASDIALPARAMSW p = new RASDIALPARAMSW();
-        p.dwSize = p.size();
-        copyInto(p.szEntryName, entryName);
-        copyInto(p.szUserName, username);
-        copyInto(p.szPassword, password);
+    /** Visible for tests: builds and fills the struct for the running OS. */
+    static DialParams newParams(String entryName, char[] username, char[] password) {
+        DialParams p = uses24H2Layout(osBuildNumber()) ? new Params24H2() : new ParamsSdk();
+        p.initSize();
+        p.entry(entryName);
+        p.credentials(username, password);
         return p;
+    }
+
+    /** 0 when the version probe fails — the documented SDK layout is then used. */
+    private static int osBuildNumber() {
+        try {
+            OSVERSIONINFOW info = new OSVERSIONINFOW();
+            info.dwOSVersionInfoSize = info.size();
+            if (Ntdll.INSTANCE.RtlGetVersion(info) == 0) {
+                return info.dwBuildNumber;
+            }
+        } catch (Throwable ignored) {
+        }
+        return 0;
     }
 
     private static void copyInto(char[] target, String source) {
