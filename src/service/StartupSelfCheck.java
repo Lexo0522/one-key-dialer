@@ -24,9 +24,9 @@ public final class StartupSelfCheck {
 
     /**
      * @param logger      message sink
-     * @param settingsFile settings.ini path
-     * @param accountsFile accounts.ini path
-     * @param historyFile  history.csv path
+     * @param settingsFile settings.json path
+     * @param accountsFile accounts.json path
+     * @param historyFile  history.json path
      * @param probeSummary one-line probe config for the log (may be null)
      */
     public static void run(Logger logger, File settingsFile, File accountsFile, File historyFile,
