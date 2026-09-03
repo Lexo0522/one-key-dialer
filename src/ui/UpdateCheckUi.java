@@ -22,8 +22,11 @@ import java.util.function.BooleanSupplier;
 
 /**
  * UI for update check / download / apply, backed by {@link UpdateModule}.
- * Network and file IO stay off the EDT; the app exits only after the installer
- * process was confirmed started.
+ * Network and file IO stay off the EDT. Every worker callback is marshaled with
+ * {@code SwingUtilities.invokeLater} and always runs — even when the main window
+ * is hidden in the tray, so the busy gate can never wedge shut. Dialogs are
+ * independent windows; a quiet check with the window hidden degrades to a tray
+ * balloon instead of a dialog nobody can see.
  */
 public final class UpdateCheckUi {
     public interface Host {
@@ -33,8 +36,6 @@ public final class UpdateCheckUi {
 
         UpdateModule updateModule();
 
-        void invokeIfUiActive(Runnable action);
-
         void logInfo(String message);
 
         void logSuccess(String message);
@@ -42,6 +43,9 @@ public final class UpdateCheckUi {
         void logWarning(String message);
 
         void logError(String message);
+
+        /** Tray balloon that works while the main window is hidden. */
+        void notifyTray(String title, String message);
 
         /** Persist settings / accounts before replace-on-exit. */
         void prepareForUpdateApply();
@@ -65,11 +69,15 @@ public final class UpdateCheckUi {
         host.logInfo("正在检查更新…");
         host.backgroundExecutor().submit(() -> {
             CheckResult result = host.updateModule().check(AppVersion.NUMERIC);
-            host.invokeIfUiActive(() -> {
+            SwingUtilities.invokeLater(() -> {
+                // Release the gate before the (modal) presentation — the download
+                // started from those options re-acquires it. Releasing afterwards
+                // deadlocked: startDownload's CAS always saw the gate still held.
+                busy.set(false);
                 try {
                     present(result, interactive);
-                } finally {
-                    busy.set(false);
+                } catch (Exception ex) {
+                    host.logError("更新结果处理失败: " + ex.getMessage());
                 }
             });
         });
@@ -85,9 +93,15 @@ public final class UpdateCheckUi {
             host.logSuccess(result.message != null ? result.message : "检查完成");
         }
         if (!interactive) {
-            // Quiet mode: only prompt when update exists
+            // Quiet mode: only surface an available update, and only where the
+            // user can actually see it.
             if (result.updateAvailable) {
-                offerUpdateActions(result, true);
+                if (isMainWindowShowing()) {
+                    offerUpdateActions(result, true);
+                } else {
+                    host.notifyTray("发现新版本", (result.message != null ? result.message : "")
+                        + "\n打开托盘菜单选择「检查更新」即可下载安装。");
+                }
             }
             return;
         }
@@ -164,23 +178,23 @@ public final class UpdateCheckUi {
         Progress progress = new Progress() {
             @Override
             public void onProgress(long downloaded, long total) {
-                host.invokeIfUiActive(() -> {
+                SwingUtilities.invokeLater(() -> {
                     if (total > 0) {
                         int pct = (int) Math.min(100, (downloaded * 100) / total);
                         bar.setIndeterminate(false);
                         bar.setValue(pct);
-                        bar.setString(formatSize(downloaded) + " / " + formatSize(total)
+                        bar.setString("下载中 " + formatSize(downloaded) + " / " + formatSize(total)
                             + " (" + pct + "%)");
                     } else {
                         bar.setIndeterminate(true);
-                        bar.setString(formatSize(downloaded));
+                        bar.setString("下载中 " + formatSize(downloaded));
                     }
                 });
             }
 
             @Override
             public void onStatus(String message) {
-                host.invokeIfUiActive(() -> {
+                SwingUtilities.invokeLater(() -> {
                     host.logInfo(message);
                     if (message != null && message.startsWith("正在下载")) {
                         bar.setString(message);
@@ -199,7 +213,7 @@ public final class UpdateCheckUi {
             }
             final VerifiedPackage finalPkg = pkg;
             final Exception finalError = error;
-            host.invokeIfUiActive(() -> {
+            SwingUtilities.invokeLater(() -> {
                 busy.set(false);
                 dlg.dispose();
                 if (finalError != null) {
@@ -238,20 +252,53 @@ public final class UpdateCheckUi {
      * launch on the UI thread and exit; any failure keeps the app running.
      */
     private void applyUpdate(VerifiedPackage pkg) {
-        javax.swing.JDialog dlg = prepareProgressDialog();
+        JProgressBar bar = new JProgressBar(0, 100);
+        bar.setIndeterminate(true);
+        bar.setStringPainted(true);
+        bar.setString("正在准备更新，请稍候…");
+        javax.swing.JDialog dlg = new javax.swing.JDialog(
+            parentWindow(host.dialogOwner()), "准备更新");
+        dlg.setModal(false);
+        dlg.setLayout(new BorderLayout(8, 8));
+        dlg.add(bar, BorderLayout.CENTER);
+        dlg.setSize(360, 90);
+        dlg.setLocationRelativeTo(host.dialogOwner());
+        dlg.setDefaultCloseOperation(javax.swing.WindowConstants.DO_NOTHING_ON_CLOSE);
+        dlg.setVisible(true);
         host.prepareForUpdateApply();
         host.logInfo("正在准备更新…");
+        Progress prepareProgress = new Progress() {
+            @Override
+            public void onProgress(long done, long total) {
+                SwingUtilities.invokeLater(() -> {
+                    if (total > 0) {
+                        int pct = (int) Math.min(100, (done * 100) / total);
+                        bar.setIndeterminate(false);
+                        bar.setValue(pct);
+                        bar.setString("正在解压更新包… " + pct + "%");
+                    }
+                });
+            }
+
+            @Override
+            public void onStatus(String message) {
+                SwingUtilities.invokeLater(() -> {
+                    host.logInfo(message);
+                    bar.setString(message);
+                });
+            }
+        };
         host.backgroundExecutor().submitLong(() -> {
             PreparedUpdate prepared = null;
             Exception error = null;
             try {
-                prepared = host.updateModule().prepare(pkg);
+                prepared = host.updateModule().prepare(pkg, prepareProgress);
             } catch (Exception ex) {
                 error = ex;
             }
             final PreparedUpdate finalPrepared = prepared;
             final Exception finalError = error;
-            host.invokeIfUiActive(() -> {
+            SwingUtilities.invokeLater(() -> {
                 dlg.dispose();
                 if (finalError != null) {
                     String msg = finalError.getMessage() != null
@@ -275,25 +322,14 @@ public final class UpdateCheckUi {
         });
     }
 
-    private javax.swing.JDialog prepareProgressDialog() {
-        JProgressBar bar = new JProgressBar();
-        bar.setIndeterminate(true);
-        bar.setStringPainted(true);
-        bar.setString("正在解压更新包，请稍候…");
-        javax.swing.JDialog dlg = new javax.swing.JDialog(
-            parentWindow(host.dialogOwner()), "准备更新");
-        dlg.setModal(false);
-        dlg.setLayout(new BorderLayout(8, 8));
-        dlg.add(bar, BorderLayout.CENTER);
-        dlg.setSize(360, 90);
-        dlg.setLocationRelativeTo(host.dialogOwner());
-        dlg.setDefaultCloseOperation(javax.swing.WindowConstants.DO_NOTHING_ON_CLOSE);
-        dlg.setVisible(true);
-        return dlg;
-    }
-
     public void scheduleQuietCheck(long delayMs) {
         host.backgroundExecutor().schedule(() -> check(false), delayMs);
+    }
+
+    /** Whether the update flow may show a dialog attached to the main window. */
+    private boolean isMainWindowShowing() {
+        Component owner = host.dialogOwner();
+        return owner != null && owner.isShowing();
     }
 
     private void openUrl(String url) {

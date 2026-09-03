@@ -136,8 +136,8 @@ public class PPoEDialer extends JFrame implements ShellBridge, DialView {
                 return services.backgroundExecutor;
             }
             @Override public service.UpdateModule updateModule() { return services.updateModule; }
-            @Override public void invokeIfUiActive(Runnable action) {
-                PPoEDialer.this.invokeIfUiActive(action);
+            @Override public void notifyTray(String title, String message) {
+                if (trayController != null) trayController.displayMessage(title, message);
             }
             @Override public void logInfo(String message) { log(message, UiTheme.COLOR_INFO); }
             @Override public void logSuccess(String message) { log(message, UiTheme.COLOR_SUCCESS); }

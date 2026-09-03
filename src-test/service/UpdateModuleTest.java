@@ -88,6 +88,24 @@ class UpdateModuleTest {
         return new UpdateModule(dir.resolve("updates").toFile(), fetcher, opener, launcher);
     }
 
+    /** Records progress events; download/prepare require a non-null progress sink. */
+    private static final class RecordingProgress implements UpdateModule.Progress {
+        final List<String> statuses = new ArrayList<>();
+        long lastDone = -1;
+        long lastTotal = -1;
+        int progressEvents;
+
+        @Override public void onProgress(long downloaded, long total) {
+            progressEvents++;
+            lastDone = downloaded;
+            lastTotal = total;
+        }
+
+        @Override public void onStatus(String message) {
+            statuses.add(message);
+        }
+    }
+
     // ---------- check / parse ----------
 
     @Test
@@ -102,7 +120,7 @@ class UpdateModuleTest {
         assertEquals("https://example.test/r", release.htmlUrl);
         assertTrue(release.body.contains("\n"));
         assertEquals(2, release.assets.size());
-        assertTrue(release.preferredWindowsAsset().isPresent());
+        assertTrue(release.preferredWindowsAsset(true).isPresent());
         assertTrue(release.checksumManifest().isPresent());
     }
 
@@ -177,7 +195,7 @@ class UpdateModuleTest {
 
         UpdateModule.CheckResult result = module.check("1.0.0");
         assertTrue(result.updateAvailable);
-        assertTrue(result.hasInstallableAsset());
+        assertTrue(result.hasInstallableAsset(true));
     }
 
     @Test
@@ -188,7 +206,7 @@ class UpdateModuleTest {
 
         UpdateModule.CheckResult result = module.check("1.0.0");
         assertFalse(result.updateAvailable);
-        assertFalse(result.hasInstallableAsset());
+        assertFalse(result.hasInstallableAsset(true));
     }
 
     @Test
@@ -235,7 +253,7 @@ class UpdateModuleTest {
         UpdateModule module = module(fetcher, opener, script -> { });
         UpdateModule.VerifiedPackage verified =
             module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
-                null, new AtomicBoolean(false));
+                new RecordingProgress(), new AtomicBoolean(false));
 
         assertTrue(verified.file.isFile());
         assertFalse(new File(verified.file.getParentFile(), verified.file.getName() + ".part").exists(),
@@ -251,7 +269,7 @@ class UpdateModuleTest {
         UpdateModule module = module(fetcher, new FakeOpener(), script -> { });
 
         Exception e = assertThrows(Exception.class, () ->
-            module.download(release, release.assets.get(0), null, new AtomicBoolean(false)));
+            module.download(release, release.assets.get(0), new RecordingProgress(), new AtomicBoolean(false)));
         assertTrue(e.getMessage().contains("SHA256SUMS"), e.getMessage());
     }
 
@@ -266,7 +284,7 @@ class UpdateModuleTest {
         UpdateModule module = module(fetcher, new FakeOpener(), script -> { });
 
         Exception e = assertThrows(Exception.class, () ->
-            module.download(release, release.assets.get(0), null, new AtomicBoolean(false)));
+            module.download(release, release.assets.get(0), new RecordingProgress(), new AtomicBoolean(false)));
         assertTrue(e.getMessage().contains("重复"), e.getMessage());
     }
 
@@ -278,7 +296,7 @@ class UpdateModuleTest {
 
         assertThrows(Exception.class, () ->
             module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
-                null, new AtomicBoolean(false)));
+                new RecordingProgress(), new AtomicBoolean(false)));
 
         try (var files = Files.list(dir.resolve("updates"))) {
             assertEquals(0, files.count(), "no .part or package file may survive a hash failure");
@@ -299,7 +317,7 @@ class UpdateModuleTest {
         UpdateModule module = module(fetcher, opener, script -> { });
         assertThrows(Exception.class, () ->
             module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
-                null, cancel));
+                new RecordingProgress(), cancel));
 
         try (var files = Files.list(dir.resolve("updates"))) {
             assertEquals(0, files.count(), "cancelled download must leave nothing behind");
@@ -313,7 +331,7 @@ class UpdateModuleTest {
         UpdateModule module = module(fetcher, new FakeOpener(), script -> { });
         assertThrows(Exception.class, () ->
             module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
-                null, new AtomicBoolean(false)));
+                new RecordingProgress(), new AtomicBoolean(false)));
     }
 
     @Test
@@ -332,7 +350,7 @@ class UpdateModuleTest {
         UpdateModule module = module(fetcher, opener, script -> { });
         UpdateModule.VerifiedPackage verified =
             module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
-                null, new AtomicBoolean(false));
+                new RecordingProgress(), new AtomicBoolean(false));
 
         assertEquals(2, opener.opens, "one resume retry after the broken transfer");
         assertEquals(0L, opener.requestedRanges.get(0));
@@ -352,7 +370,7 @@ class UpdateModuleTest {
 
         assertThrows(Exception.class, () ->
             module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
-                null, new AtomicBoolean(false)));
+                new RecordingProgress(), new AtomicBoolean(false)));
         assertEquals(1, opener.opens, "no bytes on disk ⇒ a retry would just stall again");
     }
 
@@ -372,7 +390,7 @@ class UpdateModuleTest {
         UpdateModule module = module(fetcher, opener, script -> { });
         UpdateModule.VerifiedPackage verified =
             module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
-                null, new AtomicBoolean(false));
+                new RecordingProgress(), new AtomicBoolean(false));
 
         assertEquals(1, opener.opens, "a complete .part needs no second request");
         assertTrue(verified.file.isFile());
@@ -393,7 +411,7 @@ class UpdateModuleTest {
         UpdateModule module = module(fetcher, opener, script -> { });
         Exception e = assertThrows(Exception.class, () ->
             module.download(releaseWithManifest(), releaseWithManifest().assets.get(0),
-                null, new AtomicBoolean(false)));
+                new RecordingProgress(), new AtomicBoolean(false)));
 
         assertTrue(e.getMessage().contains("断点"), e.getMessage());
         assertFalse(Files.exists(stalePart), "an incompatible .part must be reset");
@@ -450,13 +468,59 @@ class UpdateModuleTest {
         UpdateModule.VerifiedPackage pkg = new UpdateModule.VerifiedPackage(
             zip, releaseWithManifest().assets.get(0), releaseWithManifest());
 
-        UpdateModule.PreparedUpdate prepared = module.prepare(pkg);
+        UpdateModule.PreparedUpdate prepared = module.prepare(pkg, new RecordingProgress());
         assertTrue(prepared.applyScript.isFile());
         assertEquals("zip", prepared.kind);
         String script = new String(Files.readAllBytes(prepared.applyScript.toPath()),
             StandardCharsets.UTF_8);
         assertTrue(script.contains("xcopy"));
         assertTrue(script.contains("PPoEDialer.exe"));
+        assertTrue(script.contains("tasklist"),
+            "apply script must wait for the running process instead of a fixed sleep");
+    }
+
+    @Test
+    void unzipReportsDeterminateProgress() throws Exception {
+        File zip = makeZip("PPoEDialer-9.9.9-windows.zip");
+        RecordingProgress progress = new RecordingProgress();
+        File dest = dir.resolve("unzipped").toFile();
+
+        UpdateModule.unzip(zip, dest, progress);
+
+        assertTrue(new File(dest, "PPoEDialer/app.jar").isFile(), "payload extracted");
+        assertTrue(progress.progressEvents > 0, "progress events were reported");
+        assertEquals(progress.lastTotal, progress.lastDone, "final event reports completion");
+        assertTrue(progress.lastTotal > 0, "total is the uncompressed size");
+        assertFalse(progress.statuses.isEmpty(), "stage statuses were reported");
+    }
+
+    /**
+     * Windows CI zippers store '\' separators, so ZipEntry.isDirectory() is false
+     * even for directory entries and every entry below them used to fail after a
+     * zero-byte "file" clobbered the directory. Must unzip cleanly anyway.
+     */
+    @Test
+    void unzipHandlesBackslashSeparatorEntries() throws Exception {
+        File zip = dir.resolve("backslash.zip").toFile();
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zip))) {
+            zos.putNextEntry(new ZipEntry("PPoEDialer\\runtime\\legal\\"));
+            zos.closeEntry();
+            zos.putNextEntry(new ZipEntry("PPoEDialer\\runtime\\legal\\java.base\\LICENSE"));
+            zos.write("legal text".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+            zos.putNextEntry(new ZipEntry("PPoEDialer\\app\\app.jar"));
+            zos.write("jar".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+        File dest = dir.resolve("backslash-out").toFile();
+
+        UpdateModule.unzip(zip, dest, new RecordingProgress());
+
+        assertTrue(new File(dest, "PPoEDialer/runtime/legal/java.base/LICENSE").isFile(),
+            "nested backslash paths must land as a directory tree");
+        assertTrue(new File(dest, "PPoEDialer/app/app.jar").isFile());
+        assertFalse(new File(dest, "PPoEDialer/runtime/legal").isFile(),
+            "the directory entry must not be written as a file");
     }
 
     @Test
@@ -466,7 +530,7 @@ class UpdateModuleTest {
         UpdateModule module = module(new FakeFetcher(), new FakeOpener(), script -> { });
 
         UpdateModule.PreparedUpdate prepared = module.prepare(
-            new UpdateModule.VerifiedPackage(pkg, null, null));
+            new UpdateModule.VerifiedPackage(pkg, null, null), new RecordingProgress());
         assertEquals("msi", prepared.kind);
         String script = new String(Files.readAllBytes(prepared.applyScript.toPath()),
             StandardCharsets.UTF_8);
@@ -481,7 +545,7 @@ class UpdateModuleTest {
         Files.write(pkg.toPath(), new byte[]{1});
         UpdateModule module = module(new FakeFetcher(), new FakeOpener(), script -> { });
         assertThrows(IOException.class, () ->
-            module.prepare(new UpdateModule.VerifiedPackage(pkg, null, null)));
+            module.prepare(new UpdateModule.VerifiedPackage(pkg, null, null), new RecordingProgress()));
     }
 
     @Test
@@ -493,7 +557,7 @@ class UpdateModuleTest {
         });
 
         UpdateModule.PreparedUpdate prepared = module.prepare(
-            new UpdateModule.VerifiedPackage(pkg, null, null));
+            new UpdateModule.VerifiedPackage(pkg, null, null), new RecordingProgress());
         assertFalse(module.launchInstall(prepared),
             "failed launch must be reported so the app does not exit");
     }
@@ -506,7 +570,7 @@ class UpdateModuleTest {
         UpdateModule module = module(new FakeFetcher(), new FakeOpener(), launched::add);
 
         UpdateModule.PreparedUpdate prepared = module.prepare(
-            new UpdateModule.VerifiedPackage(pkg, null, null));
+            new UpdateModule.VerifiedPackage(pkg, null, null), new RecordingProgress());
         assertTrue(module.launchInstall(prepared));
         assertEquals(1, launched.size());
     }

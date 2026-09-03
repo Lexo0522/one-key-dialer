@@ -58,13 +58,11 @@ public final class UpdateModule {
         public final String name;
         public final String downloadUrl;
         public final long sizeBytes;
-        public final String contentType;
 
-        public Asset(String name, String downloadUrl, long sizeBytes, String contentType) {
+        public Asset(String name, String downloadUrl, long sizeBytes) {
             this.name = name != null ? name : "";
             this.downloadUrl = downloadUrl != null ? downloadUrl : "";
             this.sizeBytes = Math.max(0L, sizeBytes);
-            this.contentType = contentType != null ? contentType : "";
         }
 
         public String lowerName() {
@@ -101,14 +99,6 @@ public final class UpdateModule {
             this.assets = assets != null
                 ? java.util.Collections.unmodifiableList(new ArrayList<>(assets))
                 : java.util.Collections.emptyList();
-        }
-
-        /**
-         * Pick best installable asset for Windows packages.
-         * Preference: zip (app-image) → msi → exe; prefer names mentioning the product.
-         */
-        public Optional<Asset> preferredWindowsAsset() {
-            return preferredWindowsAsset(true);
         }
 
         /**
@@ -210,10 +200,6 @@ public final class UpdateModule {
             this.releaseUrl = releaseUrl;
             this.message = message;
             this.release = release;
-        }
-
-        public boolean hasInstallableAsset() {
-            return hasInstallableAsset(true);
         }
 
         public boolean hasInstallableAsset(boolean installDirWritable) {
@@ -520,12 +506,11 @@ public final class UpdateModule {
         if (parsed.assets != null) {
             for (AssetJson a : parsed.assets) {
                 if (a == null || a.name == null || a.browser_download_url == null) continue;
-                assets.add(new Asset(a.name, a.browser_download_url, a.size, a.content_type));
+                assets.add(new Asset(a.name, a.browser_download_url, a.size));
             }
         }
-        String body = parsed.body;
         return new Release(parsed.tag_name, parsed.html_url,
-            body != null ? body.replace("\\r\\n", "\n") : "", assets);
+            parsed.body != null ? parsed.body : "", assets);
     }
 
     private static final class ReleaseJson {
@@ -539,7 +524,6 @@ public final class UpdateModule {
         String name;
         String browser_download_url;
         long size;
-        String content_type;
     }
 
     // ---------- download ----------
@@ -556,7 +540,7 @@ public final class UpdateModule {
         if (release == null || asset == null) {
             throw new IOException("缺少发布信息或资产");
         }
-        Progress p = progress != null ? progress : NO_OP_PROGRESS;
+        Progress p = java.util.Objects.requireNonNull(progress, "progress");
         AtomicBoolean cancelled = cancel != null ? cancel : new AtomicBoolean(false);
 
         pruneStaleUpdateFiles();
@@ -709,11 +693,6 @@ public final class UpdateModule {
         p.onStatus("下载完成: " + out.getAbsolutePath());
         return new VerifiedPackage(out, asset, release);
     }
-
-    private static final Progress NO_OP_PROGRESS = new Progress() {
-        @Override public void onProgress(long downloaded, long total) { }
-        @Override public void onStatus(String message) { }
-    };
 
     /** Back off between resume attempts; false when cancelled during the wait. */
     private static boolean sleepBeforeRetry(int attempt, AtomicBoolean cancelled) {
@@ -903,29 +882,32 @@ public final class UpdateModule {
     /**
      * Stage the verified package and write the apply script.
      * ZIP: extract → copy over install dir → relaunch. MSI/EXE: launch installer.
+     * {@code progress} receives the unzip percentage for zip packages.
      */
-    public PreparedUpdate prepare(VerifiedPackage pkg) throws Exception {
+    public PreparedUpdate prepare(VerifiedPackage pkg, Progress progress) throws Exception {
         if (pkg == null || pkg.file == null || !pkg.file.isFile()) {
             throw new IOException("安装包不存在");
         }
+        Progress p = java.util.Objects.requireNonNull(progress, "progress");
         File installDir = resolveInstallDir();
         File staged = new File(updatesDir, "staged-" + System.currentTimeMillis());
         //noinspection ResultOfMethodCallIgnored
         staged.mkdirs();
 
+        long pid = ProcessHandle.current().pid();
         String lower = pkg.file.getName().toLowerCase(Locale.ROOT);
         if (lower.endsWith(".zip")) {
-            unzip(pkg.file, staged);
+            unzip(pkg.file, staged, p);
             File payloadRoot = findPayloadRoot(staged);
             return new PreparedUpdate(
-                writeZipApplyScript(installDir, payloadRoot, findRelaunchExe(installDir)),
+                writeZipApplyScript(installDir, payloadRoot, findRelaunchExe(installDir), pid),
                 "zip");
         }
         if (lower.endsWith(".msi")) {
-            return new PreparedUpdate(writeMsiApplyScript(pkg.file, installDir), "msi");
+            return new PreparedUpdate(writeMsiApplyScript(pkg.file, installDir, pid), "msi");
         }
         if (lower.endsWith(".exe")) {
-            return new PreparedUpdate(writeExeApplyScript(pkg.file, installDir), "exe");
+            return new PreparedUpdate(writeExeApplyScript(pkg.file, installDir, pid), "exe");
         }
         throw new IOException("不支持的安装包类型: " + pkg.file.getName());
     }
@@ -987,13 +969,25 @@ public final class UpdateModule {
         return bat;
     }
 
-    private File writeZipApplyScript(File installDir, File payloadRoot, File relaunchExe)
-        throws IOException {
+    /**
+     * Wait for the running app process to exit before touching its files. A fixed
+     * sleep raced an orderly shutdown that flushes stores/logs and could take
+     * longer than the wait, which made the xcopy fail on the locked exe.
+     */
+    private static void writeWaitForAppExit(PrintWriter w, long pid) {
+        w.println("rem Wait up to 30s for the running app to exit (PID " + pid + ")");
+        w.println("for /L %%i in (1,1,30) do (");
+        w.println("  tasklist /FI \"PID eq " + pid + "\" 2>nul | find /I \"" + pid
+            + "\" >nul 2>nul && timeout /t 1 /nobreak >nul");
+        w.println(")");
+    }
+
+    private File writeZipApplyScript(File installDir, File payloadRoot, File relaunchExe,
+                                     long pid) throws IOException {
         return writeApplyScript(w -> {
             w.println("setlocal");
             w.println("echo Applying PPoEDialer update...");
-            w.println("rem Wait for main process to exit");
-            w.println("timeout /t 2 /nobreak >nul");
+            writeWaitForAppExit(w, pid);
             w.println("set \"SRC=" + payloadRoot.getAbsolutePath() + "\"");
             w.println("set \"DST=" + installDir.getAbsolutePath() + "\"");
             w.println("if not exist \"%SRC%\\\" (");
@@ -1025,11 +1019,11 @@ public final class UpdateModule {
         });
     }
 
-    private File writeMsiApplyScript(File msi, File installDir) throws IOException {
+    private File writeMsiApplyScript(File msi, File installDir, long pid) throws IOException {
         String exe = new File(installDir, "PPoEDialer.exe").getAbsolutePath();
         return writeApplyScript(w -> {
             w.println("echo Installing MSI update...");
-            w.println("timeout /t 2 /nobreak >nul");
+            writeWaitForAppExit(w, pid);
             // start /wait: msiexec is a GUI-subsystem process — without /wait the
             // script would check for the exe (and relaunch) before install finishes
             w.println("start \"PPoEDialerUpdate\" /wait msiexec /i \"" + msi.getAbsolutePath() + "\"");
@@ -1049,36 +1043,70 @@ public final class UpdateModule {
         });
     }
 
-    private File writeExeApplyScript(File exe, File installDir) throws IOException {
+    private File writeExeApplyScript(File exe, File installDir, long pid) throws IOException {
         return writeApplyScript(w -> {
             w.println("echo Launching installer...");
-            w.println("timeout /t 2 /nobreak >nul");
+            writeWaitForAppExit(w, pid);
             w.println("start \"\" \"" + exe.getAbsolutePath() + "\"");
         });
     }
 
-    static void unzip(File zip, File destDir) throws IOException {
+    static void unzip(File zip, File destDir, Progress progress) throws IOException {
         //noinspection ResultOfMethodCallIgnored
         destDir.mkdirs();
         try (ZipFile zf = new ZipFile(zip, StandardCharsets.UTF_8)) {
+            long total = 0L;
+            Enumeration<? extends ZipEntry> all = zf.entries();
+            while (all.hasMoreElements()) {
+                ZipEntry e = all.nextElement();
+                if (!entryName(e).endsWith("/")) total += Math.max(0L, e.getSize());
+            }
+            progress.onStatus("正在解压更新包…");
             Enumeration<? extends ZipEntry> en = zf.entries();
             Path dest = destDir.toPath().toAbsolutePath().normalize();
+            long done = 0L;
+            long lastReport = 0L;
             while (en.hasMoreElements()) {
                 ZipEntry e = en.nextElement();
-                Path out = dest.resolve(e.getName()).normalize();
+                // Windows CI zippers store '\' separators (a spec violation).
+                // ZipEntry.isDirectory() only recognizes a trailing '/', so a
+                // directory entry would be written as a zero-byte file and every
+                // entry below it would fail — normalize before anything else.
+                String name = entryName(e);
+                Path out = dest.resolve(name).normalize();
                 if (!out.startsWith(dest)) {
-                    throw new IOException("非法 zip 路径: " + e.getName());
+                    throw new IOException("非法 zip 路径: " + name);
                 }
-                if (e.isDirectory()) {
+                if (name.endsWith("/")) {
                     Files.createDirectories(out);
-                } else {
-                    Files.createDirectories(out.getParent());
-                    try (InputStream in = zf.getInputStream(e)) {
-                        Files.copy(in, out, StandardCopyOption.REPLACE_EXISTING);
+                    continue;
+                }
+                Path parent = out.getParent();
+                if (parent != null) Files.createDirectories(parent);
+                try (InputStream in = zf.getInputStream(e)) {
+                    try (java.io.OutputStream os = Files.newOutputStream(out,
+                        StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
+                        StandardOpenOption.WRITE)) {
+                        byte[] buf = new byte[64 * 1024];
+                        int n;
+                        while ((n = in.read(buf)) >= 0) {
+                            if (n == 0) continue;
+                            os.write(buf, 0, n);
+                            done += n;
+                            if (done - lastReport >= 256 * 1024 && total > 0) {
+                                progress.onProgress(done, total);
+                                lastReport = done;
+                            }
+                        }
                     }
                 }
             }
+            progress.onProgress(total, total);
         }
+    }
+
+    private static String entryName(ZipEntry e) {
+        return e.getName().replace('\\', '/');
     }
 
     /** If zip contains a single top-level folder, use it as payload root. */
