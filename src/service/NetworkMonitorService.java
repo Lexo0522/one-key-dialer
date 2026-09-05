@@ -12,12 +12,18 @@ import java.util.function.Supplier;
  */
 public class NetworkMonitorService {
     public static class SpeedSample {
-        public final long downBytes;
-        public final long upBytes;
+        /** Rate for display, bytes per second. */
+        public final long downBytesPerSec;
+        public final long upBytesPerSec;
+        /** Raw bytes accumulated since the previous sample, for totals. */
+        public final long downDelta;
+        public final long upDelta;
 
-        public SpeedSample(long downBytes, long upBytes) {
-            this.downBytes = downBytes;
-            this.upBytes = upBytes;
+        public SpeedSample(long downBytesPerSec, long upBytesPerSec, long downDelta, long upDelta) {
+            this.downBytesPerSec = downBytesPerSec;
+            this.upBytesPerSec = upBytesPerSec;
+            this.downDelta = downDelta;
+            this.upDelta = upDelta;
         }
     }
 
@@ -33,6 +39,7 @@ public class NetworkMonitorService {
     private volatile ScheduledFuture<?> tickFuture;
     private long lastReceived = 0;
     private long lastSent = 0;
+    private long lastSampleTick = 0;
     private boolean firstSample = true;
     private boolean lastOnline = false;
     private int failCount = 0;
@@ -64,6 +71,7 @@ public class NetworkMonitorService {
         firstSample = true;
         failCount = 0;
         tick = 0;
+        lastSampleTick = 0;
         lastOnline = false;
         tickFuture = executor.scheduleAtFixedRate(this::tickSafe, 300L, 1000L);
     }
@@ -73,7 +81,8 @@ public class NetworkMonitorService {
         tickFuture = null;
     }
 
-    private void tickSafe() {
+    // Package-private so tests in src-test/service can drive ticks deterministically.
+    void tickSafe() {
         try {
             boolean online = isOnline.getAsBoolean();
             if (online && !lastOnline) {
@@ -82,25 +91,29 @@ public class NetworkMonitorService {
             }
             lastOnline = online;
 
-            // Offline: sample less often to cut netstat/MXBean + EDT churn (uptime still 1s).
+            // Offline: sample less often to cut netstat + EDT churn (uptime still 1s).
             int speedInterval = online ? 3 : 30;
             if (tick % speedInterval == 0) {
                 long[] traffic = trafficSupplier.get();
                 long curReceived = traffic[0];
                 long curSent = traffic[1];
                 if (curReceived > 0 || curSent > 0) {
-                    if (firstSample) {
+                    if (firstSample || curReceived < lastReceived || curSent < lastSent) {
+                        // Baseline on first sample or after a counter reset; emit nothing.
                         lastReceived = curReceived;
                         lastSent = curSent;
+                        lastSampleTick = tick;
                         firstSample = false;
                     } else {
-                        long dlSpeed = curReceived - lastReceived;
-                        long ulSpeed = curSent - lastSent;
-                        if (dlSpeed >= 0 && ulSpeed >= 0) {
-                            onSpeedSample.accept(new SpeedSample(dlSpeed, ulSpeed));
-                        }
+                        // Ticks run at a fixed 1s rate, so the tick gap is the elapsed seconds.
+                        long elapsedSec = Math.max(1, tick - lastSampleTick);
+                        long dlDelta = curReceived - lastReceived;
+                        long ulDelta = curSent - lastSent;
+                        onSpeedSample.accept(new SpeedSample(
+                            dlDelta / elapsedSec, ulDelta / elapsedSec, dlDelta, ulDelta));
                         lastReceived = curReceived;
                         lastSent = curSent;
+                        lastSampleTick = tick;
                     }
                     failCount = 0;
                 } else {

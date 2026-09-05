@@ -1,77 +1,64 @@
 package util;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.lang.management.ManagementFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Samples host network traffic via MXBean or {@code netstat -e} fallback.
+ * Samples host network traffic counters via {@code netstat -e}.
  */
 public final class TrafficSampler {
     private static final long[] EMPTY = {0, 0};
 
-    private Object osBean;
-    private java.lang.reflect.Method mGetReceived;
-    private java.lang.reflect.Method mGetSent;
-    private boolean mxBeanTried = false;
-    private final Consumer<String> onWarn;
+    // netstat -e rows are "label received sent" in every locale; the Bytes/字节 row is
+    // always the first data row, so taking the first counter row is locale-independent
+    // and immune to childCharset label decoding.
+    private static final Pattern COUNTER_ROW = Pattern.compile("^(.+?)\\s+(\\d+)\\s+(\\d+)$");
 
-    public TrafficSampler() {
-        this(null);
-    }
+    private final Consumer<String> onWarn;
+    private boolean warned = false;
 
     public TrafficSampler(Consumer<String> onWarn) {
         this.onWarn = onWarn;
     }
 
-    /** @return [receivedBytes, sentBytes] */
+    /** @return [receivedBytes, sentBytes], EMPTY when sampling fails */
     public long[] sample() {
-        if (!mxBeanTried) {
-            mxBeanTried = true;
-            try {
-                Class<?> clz = Class.forName("com.sun.management.OperatingSystemMXBean");
-                osBean = clz.cast(ManagementFactory.getOperatingSystemMXBean());
-                mGetReceived = clz.getMethod("getNetworkInterfaceBytesReceived");
-                mGetSent = clz.getMethod("getNetworkInterfaceBytesSent");
-            } catch (Exception e) {
-                osBean = null;
-            }
-        }
-        if (osBean != null && mGetReceived != null && mGetSent != null) {
-            try {
-                long received = (long) mGetReceived.invoke(osBean);
-                long sent = (long) mGetSent.invoke(osBean);
-                if (received >= 0 && sent >= 0) return new long[]{received, sent};
-            } catch (Exception e) {
-                if (onWarn != null) {
-                    onWarn.accept("读取网卡流量失败: " + e.getClass().getSimpleName());
-                }
-                osBean = null;
-                mGetReceived = null;
-                mGetSent = null;
-            }
-        }
-
         try {
             ProcessIO.Result result = ProcessIO.run(
                 java.util.Arrays.asList("cmd", "/c", "netstat -e"),
                 5, TimeUnit.SECONDS, ProcessIO.childCharset(), null);
-            for (String line : result.output.split("\\R")) {
-                String trimmed = line.trim();
-                if (trimmed.matches("^\\d+\\s+\\d+.*")) {
-                    String[] parts = trimmed.split("\\s+");
-                    if (parts.length >= 2) {
-                        long received = Long.parseLong(parts[0]);
-                        long sent = Long.parseLong(parts[1]);
-                        return new long[]{received, sent};
-                    }
-                }
+            long[] counters = parse(result.output);
+            if (counters != null) {
+                warned = false;
+                return counters;
             }
-            if (result.exitCode == 0) return EMPTY;
-        } catch (Exception ignored) {
+            warnOnce("netstat -e 输出解析失败，流量速度不可用");
+        } catch (Exception e) {
+            warnOnce("读取网卡流量失败: " + e.getClass().getSimpleName());
         }
         return EMPTY;
+    }
+
+    /** First "label + two counters" row of {@code netstat -e} output; null when absent. */
+    static long[] parse(String output) {
+        for (String line : output.split("\\R")) {
+            Matcher m = COUNTER_ROW.matcher(line.trim());
+            if (m.matches()) {
+                try {
+                    return new long[]{Long.parseLong(m.group(2)), Long.parseLong(m.group(3))};
+                } catch (NumberFormatException ignored) {
+                    // \d+ overflow past long range is not a realistic counter value
+                }
+            }
+        }
+        return null;
+    }
+
+    private void warnOnce(String message) {
+        if (onWarn == null || warned) return;
+        warned = true;
+        onWarn.accept(message);
     }
 }

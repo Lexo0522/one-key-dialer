@@ -132,12 +132,13 @@ public final class AppServices {
             trafficSampler::sample,
             () -> sessionTraffic.connectTimeMillis().get(),
             sample -> {
-                sessionTraffic.applySample(sample.downBytes, sample.upBytes);
+                sessionTraffic.applySample(sample.downBytesPerSec, sample.upBytesPerSec,
+                    sample.downDelta, sample.upDelta);
                 bridge.invokeIfUiActive(() -> {
                     MainHomePanel h = homePanel(bridge);
                     if (h != null) {
-                        h.setSpeedText("↓" + FormatUtil.formatSpeedLabel(sample.downBytes)
-                            + "  ↑" + FormatUtil.formatSpeedLabel(sample.upBytes));
+                        h.setSpeedText("↓" + FormatUtil.formatSpeedLabel(sample.downBytesPerSec)
+                            + "  ↑" + FormatUtil.formatSpeedLabel(sample.upBytesPerSec));
                     }
                 });
                 tooltipDirty = true;

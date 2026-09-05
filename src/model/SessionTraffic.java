@@ -52,11 +52,12 @@ public final class SessionTraffic {
         return successDialCount;
     }
 
-    public void applySample(long downBytes, long upBytes) {
-        currentSpeedDown.set(downBytes);
-        currentSpeedUp.set(upBytes);
-        totalDownload.addAndGet(downBytes);
-        totalUpload.addAndGet(upBytes);
+    /** Speeds are bytes/sec for display; deltas are bytes accumulated since the previous sample. */
+    public void applySample(long downSpeedBps, long upSpeedBps, long downDelta, long upDelta) {
+        currentSpeedDown.set(downSpeedBps);
+        currentSpeedUp.set(upSpeedBps);
+        totalDownload.addAndGet(downDelta);
+        totalUpload.addAndGet(upDelta);
     }
 
     public void clearSpeeds() {
