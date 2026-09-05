@@ -4,10 +4,11 @@ import model.AccountInfo;
 import util.FormatUtil;
 import util.RedactUtil;
 
+import javax.swing.JFrame;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
-import javax.swing.JWindow;
+import javax.swing.MenuSelectionManager;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.event.PopupMenuEvent;
@@ -15,6 +16,8 @@ import javax.swing.event.PopupMenuListener;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.util.List;
 import java.util.function.Consumer;
@@ -24,8 +27,11 @@ import java.util.function.Consumer;
  * Uses Swing JPopupMenu (not AWT PopupMenu) so Chinese labels render correctly
  * under -Dfile.encoding=UTF-8 on Windows.
  * <p>
- * Popup is anchored on a dedicated always-on-top {@link JWindow} so the menu still
- * appears when the main frame is hidden (minimize-to-tray).
+ * Popup is anchored on a dedicated always-on-top invoker window so the menu still
+ * appears when the main frame is hidden (minimize-to-tray). The invoker must be a
+ * focusable {@link JFrame} (undecorated, POPUP type): JWindow can never take focus
+ * on Windows, so outside clicks would leave the menu floating as an orphan.
+ * Focus + windowLostFocus is what dismisses it.
  */
 public final class TrayController {
     public interface Host {
@@ -82,7 +88,7 @@ public final class TrayController {
     private Image trayImageOnline;
     private JPopupMenu trayPopup;
     private JMenu accountsMenu;
-    private JWindow popupInvoker;
+    private JFrame popupInvoker;
     private Timer showTimer;
     private final StringBuilder tooltipSb = new StringBuilder(256);
 
@@ -287,14 +293,32 @@ public final class TrayController {
 
     private void ensurePopupInvoker() {
         if (popupInvoker != null) return;
-        popupInvoker = new JWindow();
+        popupInvoker = new JFrame();
+        popupInvoker.setUndecorated(true);
+        popupInvoker.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         popupInvoker.setAlwaysOnTop(true);
-        popupInvoker.setFocusableWindowState(false);
+        popupInvoker.setFocusableWindowState(true);
         popupInvoker.setSize(1, 1);
         try {
             popupInvoker.setType(Window.Type.POPUP);
         } catch (Exception ignored) {
         }
+        popupInvoker.addWindowFocusListener(new WindowAdapter() {
+            @Override
+            public void windowLostFocus(WindowEvent e) {
+                hideTrayPopup();
+            }
+        });
+    }
+
+    /** Hides the menu and its invoker; idempotent, also used as the outside-click path. */
+    private void hideTrayPopup() {
+        cancelShowTimer();
+        if (trayPopup != null && trayPopup.isVisible()) {
+            trayPopup.setVisible(false); // fires popupMenuWillBecomeInvisible -> hidePopupInvoker
+            MenuSelectionManager.defaultManager().clearSelectedPath();
+        }
+        hidePopupInvoker();
     }
 
     private void hidePopupInvoker() {
@@ -325,6 +349,10 @@ public final class TrayController {
     }
 
     private void scheduleTrayPopup(MouseEvent e) {
+        if (trayPopup != null && trayPopup.isVisible()) {
+            hideTrayPopup(); // second right-click toggles the menu closed
+            return;
+        }
         final Point anchor = resolveTrayPopupPoint(e);
         cancelShowTimer();
         showTimer = new Timer(POPUP_SHOW_DELAY_MS, ev -> {
@@ -430,6 +458,7 @@ public final class TrayController {
             popupInvoker.setBounds(x, y, 1, 1);
             popupInvoker.setVisible(true);
             popupInvoker.toFront();
+            popupInvoker.requestFocusInWindow();
             trayPopup.show(popupInvoker, 0, 0);
         };
         if (SwingUtilities.isEventDispatchThread()) {
