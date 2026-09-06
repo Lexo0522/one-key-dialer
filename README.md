@@ -47,10 +47,9 @@ Windows 校园网 PPPoE 图形拨号工具（Swing + RAS）：一键拨号/断�
 
 1. 校验标签与 `.mvn/maven.config` 中的 revision 一致
 2. windows-latest + JDK 26 上先跑全量测试，再用 `prepare_release.bat` 构建 ZIP / MSI / `SHA256SUMS.txt`
-3. 自动创建 GitHub Release 并上传三件套（`--generate-notes`）
-4. 将同一 tag 与三件套镜像到 Gitee Release（`scripts/sync_release_to_gitee.ps1`）；**同步失败仅告警、不阻塞发布**——客户端在 Gitee 缺失该版本时会自动降级 GitHub 线路
+3. 自动创建 GitHub Release 并上传三件套（幂等，可安全重跑；已存在时刷新资产）
 
-Gitee 同步前置：在 GitHub 仓库 Settings → Secrets and variables → Actions 添加 `GITEE_TOKEN`（Gitee 个人令牌，勾选 `projects` 权限），并保证 Gitee 侧 webhook 的代码/标签同步已配置。
+Gitee 镜像不在 CI 中自动同步。如需镜像，在 Gitee Release 网页端手动上传同名三件套，或在本地执行 `scripts/sync_release_to_gitee.ps1`（需要 `GITEE_TOKEN`）；Gitee 缺失某版本时客户端会自动降级 GitHub 线路。
 
 也可用 `workflow_dispatch` 只构建校验产物不发布。手动本地发布（`prepare_release.bat`）仍然可用。
 
