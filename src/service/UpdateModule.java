@@ -970,6 +970,17 @@ public final class UpdateModule {
     }
 
     /**
+     * Relaunch the installed app with the install dir as its working directory.
+     * A plain {@code start} inherits this script's CWD (the updates dir), and a
+     * writable CWD is exactly what AppPaths would then adopt as the data dir —
+     * the app would boot factory-fresh with all saved data looking gone.
+     */
+    private static void writeRelaunch(PrintWriter w, File exe, File installDir) {
+        w.println("start \"\" /D \"" + installDir.getAbsolutePath() + "\" \""
+            + exe.getAbsolutePath() + "\"");
+    }
+
+    /**
      * Wait for the running app process to exit before touching its files. A fixed
      * sleep raced an orderly shutdown that flushes stores/logs and could take
      * longer than the wait, which made the xcopy fail on the locked exe.
@@ -1014,7 +1025,7 @@ public final class UpdateModule {
             w.println("  pause");
             w.println("  exit /b 1");
             w.println(")");
-            w.println("start \"\" \"" + relaunchExe.getAbsolutePath() + "\"");
+            writeRelaunch(w, relaunchExe, installDir);
             w.println("endlocal");
         });
     }
@@ -1031,12 +1042,12 @@ public final class UpdateModule {
             // Surface it instead of silently relaunching the unchanged old version.
             w.println("if errorlevel 1 goto msi_failed");
             w.println("if exist \"" + exe + "\" (");
-            w.println("  start \"\" \"" + exe + "\"");
+            writeRelaunch(w, new File(exe), installDir);
             w.println(")");
             w.println("exit /b 0");
             w.println(":msi_failed");
             w.println("echo MSI install failed (exit code %errorlevel%). The previous version is unchanged.");
-            w.println("start \"\" \"" + exe + "\"");
+            writeRelaunch(w, new File(exe), installDir);
             w.println("echo.");
             w.println("pause");
             w.println("exit /b 1");
@@ -1047,7 +1058,7 @@ public final class UpdateModule {
         return writeApplyScript(w -> {
             w.println("echo Launching installer...");
             writeWaitForAppExit(w, pid);
-            w.println("start \"\" \"" + exe.getAbsolutePath() + "\"");
+            writeRelaunch(w, exe, installDir);
         });
     }
 

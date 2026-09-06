@@ -477,6 +477,7 @@ class UpdateModuleTest {
         assertTrue(script.contains("PPoEDialer.exe"));
         assertTrue(script.contains("tasklist"),
             "apply script must wait for the running process instead of a fixed sleep");
+        assertRelaunchPinsWorkingDir(script);
     }
 
     @Test
@@ -537,6 +538,33 @@ class UpdateModuleTest {
         assertTrue(script.contains("msiexec"));
         assertTrue(script.contains("msi_failed"),
             "MSI script must report a failed install instead of silently relaunching");
+        assertRelaunchPinsWorkingDir(script);
+    }
+
+    @Test
+    void prepareExeWritesInstallerScript() throws Exception {
+        File pkg = dir.resolve("PPoEDialer-9.9.9-windows.exe").toFile();
+        Files.write(pkg.toPath(), new byte[]{1, 2, 3});
+        UpdateModule module = module(new FakeFetcher(), new FakeOpener(), script -> { });
+
+        UpdateModule.PreparedUpdate prepared = module.prepare(
+            new UpdateModule.VerifiedPackage(pkg, null, null), new RecordingProgress());
+        assertEquals("exe", prepared.kind);
+        String script = new String(Files.readAllBytes(prepared.applyScript.toPath()),
+            StandardCharsets.UTF_8);
+        assertRelaunchPinsWorkingDir(script);
+    }
+
+    /**
+     * Every relaunch must set the working directory to the install dir. A plain
+     * {@code start} inherits the updates dir, and AppPaths adopts a writable CWD
+     * as the data dir — the app then boots factory-fresh with its data "gone".
+     */
+    private static void assertRelaunchPinsWorkingDir(String script) {
+        assertTrue(script.contains("start \"\" /D"),
+            "relaunch must pin the working directory to the install dir");
+        assertFalse(script.replaceAll("start \"\" /D \"[^\"]*\"", "").contains("start \"\" \""),
+            "no relaunch line may inherit the script's updates-dir CWD");
     }
 
     @Test

@@ -6,7 +6,7 @@ import java.nio.file.Path;
 
 /**
  * Resolves writable application data directory.
- * Prefer: jar/exe directory (if writable) → user.dir (dev) → %APPDATA%\PPoEDialer.
+ * Prefer: jar/exe directory (if writable) → user.dir (dev runs only) → %APPDATA%\PPoEDialer.
  */
 public final class AppPaths {
     private static final String APP_DATA_FOLDER = "PPoEDialer";
@@ -25,10 +25,16 @@ public final class AppPaths {
             return dataDir;
         }
 
-        File userDir = new File(System.getProperty("user.dir")).getAbsoluteFile();
-        if (isWritableDir(userDir)) {
-            dataDir = userDir;
-            return dataDir;
+        // Only dev runs (exploded classes) may fall back to user.dir. A packaged
+        // run must not: the updater relaunches the installed app with the updates
+        // dir as its working directory, and trusting a writable CWD there silently
+        // relocates all data and boots factory-fresh.
+        if (isDevRun(appClass)) {
+            File userDir = new File(System.getProperty("user.dir")).getAbsoluteFile();
+            if (isWritableDir(userDir)) {
+                dataDir = userDir;
+                return dataDir;
+            }
         }
 
         String appData = System.getenv("APPDATA");
@@ -74,6 +80,17 @@ public final class AppPaths {
         }
 
         return new File(System.getProperty("user.dir")).getAbsoluteFile();
+    }
+
+    /** True when the code source is exploded classes (IDE / javac run), false for a jar inside a packaged app. */
+    static boolean isDevRun(Class<?> appClass) {
+        try {
+            File codeSource = new File(appClass.getProtectionDomain().getCodeSource().getLocation().toURI())
+                .getAbsoluteFile();
+            return codeSource.isDirectory();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static boolean isWritableDir(File dir) {
