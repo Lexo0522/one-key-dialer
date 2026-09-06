@@ -7,7 +7,6 @@ import service.UpdateModule.Asset;
 import service.UpdateModule.CheckResult;
 import service.UpdateModule.PreparedUpdate;
 import service.UpdateModule.Progress;
-import service.UpdateModule.Release;
 import service.UpdateModule.VerifiedPackage;
 
 import javax.swing.JOptionPane;
@@ -174,7 +173,6 @@ public final class UpdateCheckUi {
         dlg.setDefaultCloseOperation(javax.swing.WindowConstants.DO_NOTHING_ON_CLOSE);
         dlg.setVisible(true);
 
-        Release release = result.release;
         Progress progress = new Progress() {
             @Override
             public void onProgress(long downloaded, long total) {
@@ -207,7 +205,7 @@ public final class UpdateCheckUi {
             VerifiedPackage pkg = null;
             Exception error = null;
             try {
-                pkg = host.updateModule().download(release, asset, progress, cancel);
+                pkg = host.updateModule().downloadWithFailover(result, asset, progress, cancel);
             } catch (Exception ex) {
                 error = ex;
             }

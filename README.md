@@ -23,8 +23,8 @@ Windows 校园网 PPPoE 图形拨号工具（Swing + RAS）：一键拨号/断�
 - 历史记录、**统计** tab、网络诊断（共享后台调度）、系统托盘（切换账号 / 拨号 / 检查更新）
 - 诊断页可 **选择 PPPoE 设备** 并 **重写电话簿**
 - 开机自启动（`HKCU\...\Run`，以注册表为准）
-- 启动后可选静默检查 GitHub Releases（主页「启动时检查更新」）
-- **在线更新**：比较 `AppVersion` 与最新 Release tag；仅下载带 `SHA256SUMS.txt` 且哈希校验通过的 zip/msi/exe 到 `%APPDATA%\PPoEDialer\updates\`；安装进程确认启动后才退出
+- 启动后可选静默检查更新（主页「启动时检查更新」）
+- **主备双线路在线更新**：主线路 Gitee Release（国内友好），备用线路 GitHub Release（版本唯一真相源）；串行执行、主线路失败自动降级，绝不并发拉取。比较 `AppVersion` 与最新 Release tag；仅下载带 `SHA256SUMS.txt` 且哈希校验通过的 zip/msi/exe 到 `%APPDATA%\PPoEDialer\updates\`；安装进程确认启动后才退出，全程失败保留当前版本
 - 托盘「检查更新」始终可用；无匹配安装包时回退到打开发布页
 - 可选 **FlatLaf**（Maven 依赖 `com.formdev:flatlaf`）；缺失则用系统 L&F
 - **主题**：跟随系统 / 浅色 / 深色（主页设置，重启后生效；跟随系统读取 Windows 应用深浅色）
@@ -48,6 +48,9 @@ Windows 校园网 PPPoE 图形拨号工具（Swing + RAS）：一键拨号/断�
 1. 校验标签与 `.mvn/maven.config` 中的 revision 一致
 2. windows-latest + JDK 26 上先跑全量测试，再用 `prepare_release.bat` 构建 ZIP / MSI / `SHA256SUMS.txt`
 3. 自动创建 GitHub Release 并上传三件套（`--generate-notes`）
+4. 将同一 tag 与三件套镜像到 Gitee Release（`scripts/sync_release_to_gitee.ps1`）；**同步失败仅告警、不阻塞发布**——客户端在 Gitee 缺失该版本时会自动降级 GitHub 线路
+
+Gitee 同步前置：在 GitHub 仓库 Settings → Secrets and variables → Actions 添加 `GITEE_TOKEN`（Gitee 个人令牌，勾选 `projects` 权限），并保证 Gitee 侧 webhook 的代码/标签同步已配置。
 
 也可用 `workflow_dispatch` 只构建校验产物不发布。手动本地发布（`prepare_release.bat`）仍然可用。
 
@@ -62,6 +65,36 @@ Windows 校园网 PPPoE 图形拨号工具（Swing + RAS）：一键拨号/断�
 3. 重启后主页标题应显示新版本号
 
 注意：安装目录不可写时 ZIP 更新会被脚本拒绝并提示改用 MSI。
+
+## 更新线路（Gitee 主 + GitHub 备）
+
+更新引擎按 `update.sources` 声明的顺序**串行**探测各线路，从不并发拉取：
+
+- **主线路 Gitee**：独立短超时（检查 8s）、允许 1 次重试；连接超时、网络错误、404/版本不存在、哈希校验失败均判定为线路失败并降级
+- **备用线路 GitHub**：版本与发布的唯一真相源；降级时会重新检查其 tag，**版本低于主线路已见版本时拒绝更新**（低版本备源不允许覆盖），高于主线路则告警后按真相源继续
+- 主线路「已是最新」是确定性成功答复，不会去查备源
+- **简单熔断**：某线路连续失败达到阈值（Gitee 2 次 / GitHub 3 次）后冷却 10 分钟不再尝试，冷却结束后放行一次探测，再失败立即重新冷却；成功即复位（内存态，重启复位）
+- **哈希门禁**：任何线路下载完成后必须通过 `SHA256SUMS.txt` 的 SHA-256 校验（校验失败会连同断点一起删除，坏字节不会带给下一线路）；主备线路 tag 不一致记录告警日志
+- **失败保护**：所有线路均失败、校验失败或安装启动失败时，本地现有版本不受影响，程序继续运行
+- 行为日志（界面日志 + `pppoe_log.txt`）记录线路切换、失败原因分类（连接超时/网络错误/版本不存在/哈希校验失败等）、tag 与 sha256
+
+### 配置
+
+默认值随包内置在 `update.properties`；可在数据目录放置同名 `update.properties` 逐键覆盖（改参数无需重新构建）：
+
+```properties
+update.sources=gitee,github              # 顺序即优先级，可增删自定义线路
+update.connectTimeoutMs=5000
+source.gitee.api=https://gitee.com/api/v5/repos/kate522/one-key-dialer/releases/latest
+source.gitee.checkTimeoutMs=8000         # 主线路独立短超时
+source.gitee.checkAttempts=2             # 1 次重试
+source.gitee.downloadAttempts=2
+source.gitee.stallTimeoutMs=30000
+source.gitee.breakerThreshold=2
+source.gitee.breakerCooldownMs=600000
+source.github.api=https://api.github.com/repos/Lexo0522/one-key-dialer/releases/latest
+# ...github 同构；enabled=false 可整条停用
+```
 
 ## 快速开始
 

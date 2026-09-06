@@ -85,6 +85,7 @@
         <directory>src/main/resources</directory>
         <includes>
           <include>icons/logo.png</include>
+          <include>update.properties</include>
         </includes>
       </resource>
     </resources>

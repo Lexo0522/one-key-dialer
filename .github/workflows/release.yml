@@ -125,3 +125,24 @@ jobs:
             "release/SHA256SUMS.txt" `
             --verify-tag --title "PPoEDialer $tag" --generate-notes
           Write-Host "Release $tag published"
+
+      # Mirror the same three artifacts to the Gitee Release so the in-app
+      # updater has a mainland-friendly primary line. GitHub stays the source
+      # of truth; a sync failure must never block the release - the updater
+      # automatically falls back to the GitHub line until the mirror catches up.
+      - name: Sync release to Gitee (mirror, non-blocking)
+        id: gitee_sync
+        if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_REPO: kate522/one-key-dialer
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/sync_release_to_gitee.ps1 -ReleaseDir release
+
+      - name: Gitee sync failed (non-blocking)
+        if: steps.gitee_sync.outcome == 'failure'
+        shell: pwsh
+        run: |
+          Write-Host "::warning::Gitee Release 同步失败：已发布的 GitHub Release 不受影响；客户端会自动降级 GitHub 线路。请检查 GITEE_TOKEN / Gitee 网络，重跑本 workflow 或手动补传三件套。"

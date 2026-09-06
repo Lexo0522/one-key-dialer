@@ -15,9 +15,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.ZipEntry;
@@ -50,13 +54,19 @@ class UpdateModuleTest {
         boolean rangeCapable = false;
         /** First open serves this many bytes then throws, simulating a broken transfer. */
         int failFirstAttemptAfterBytes = 0;
+        /** Throw from open() for the first N opens (0 = never), regardless of host. */
+        int failFirstOpens = 0;
         final List<Long> requestedRanges = new ArrayList<>();
         int opens = 0;
 
         @Override
-        public UpdateModule.StreamOpener.DownloadStream open(URI uri, long rangeStart) {
+        public UpdateModule.StreamOpener.DownloadStream open(URI uri, long rangeStart,
+                                                             Duration headersTimeout) {
             opens++;
             requestedRanges.add(rangeStart);
+            if (failFirstOpens > 0 && opens <= failFirstOpens) {
+                throw new RuntimeException("模拟传输中断");
+            }
             if (failure != null) throw failure;
             if (opens == 1 && failFirstAttemptAfterBytes > 0) {
                 return new UpdateModule.StreamOpener.DownloadStream(
@@ -83,9 +93,37 @@ class UpdateModuleTest {
         }
     }
 
-    private UpdateModule module(FakeFetcher fetcher, FakeOpener opener,
+    private static final String TEST_API = "https://test.example/api";
+
+    private static UpdateSources.Source line(String id, String api) {
+        return new UpdateSources.Source(id, id, api, 12_000, 1, 3, 60_000, 60_000, 2, 600_000);
+    }
+
+    private static UpdateSources singleLineSources() {
+        return UpdateSources.of(List.of(line("test", TEST_API)), 5000);
+    }
+
+    private static UpdateSources twoLineSources() {
+        return UpdateSources.of(List.of(
+            line("gitee", "https://gitee.test/api/latest"),
+            line("github", "https://github.test/api/latest")), 5000);
+    }
+
+    private final List<String> logLines = new ArrayList<>();
+
+    private UpdateModule.LogSink recordingSink() {
+        return (message, level) -> logLines.add(level + ": " + message);
+    }
+
+    private UpdateModule module(UpdateModule.ContentFetcher fetcher, FakeOpener opener,
                                 UpdateModule.InstallerLauncher launcher) {
-        return new UpdateModule(dir.resolve("updates").toFile(), fetcher, opener, launcher);
+        return module(fetcher, opener, launcher, singleLineSources());
+    }
+
+    private UpdateModule module(UpdateModule.ContentFetcher fetcher, FakeOpener opener,
+                                UpdateModule.InstallerLauncher launcher, UpdateSources sources) {
+        return new UpdateModule(dir.resolve("updates").toFile(), fetcher, opener, launcher,
+            sources, recordingSink(), null);
     }
 
     /** Records progress events; download/prepare require a non-null progress sink. */
@@ -169,7 +207,8 @@ class UpdateModuleTest {
         FakeFetcher fetcher = new FakeFetcher();
         fetcher.body = "{\"tag_name\":\"v9.9.9\"}";
         UpdateModule module = module(fetcher, new FakeOpener(), script -> { });
-        UpdateModule.CheckResult result = module.check("http://example.test/api", "1.0.0");
+        UpdateModule.CheckResult result =
+            module.checkOnce(line("test", "http://example.test/api"), "1.0.0");
         assertFalse(result.updateAvailable);
         assertTrue(result.message.contains("HTTPS"), result.message);
     }
@@ -440,6 +479,244 @@ class UpdateModuleTest {
         assertFalse(Files.exists(agedPart), ".part files past the resume window are garbage");
         assertTrue(Files.exists(freshPart), "recent .part files feed cross-run resume");
         assertTrue(Files.exists(keptPkg), "downloaded packages are offered as 仅保留文件 and kept");
+    }
+
+    // ---------- multi-line failover ----------
+
+    /** Metadata answers routed by URL path, so each fake line serves its own payload. */
+    private static final class RoutingFetcher implements UpdateModule.ContentFetcher {
+        static final class Answer {
+            int statusCode = 200;
+            String body = "";
+            Exception failure;
+        }
+
+        private final Map<String, Answer> byHostPath = new HashMap<>();
+        final List<URI> requests = new ArrayList<>();
+
+        void route(String host, String path, Answer answer) {
+            byHostPath.put(host + path, answer);
+        }
+
+        long count(String host) {
+            return requests.stream().filter(u -> u.getHost().equals(host)).count();
+        }
+
+        @Override
+        public UpdateModule.ContentFetcher.FetchedText get(URI uri, Duration timeout)
+                throws Exception {
+            requests.add(uri);
+            Answer answer = byHostPath.get(uri.getHost() + uri.getPath());
+            if (answer == null) {
+                throw new IllegalStateException("no fake route for " + uri);
+            }
+            if (answer.failure != null) throw answer.failure;
+            return new UpdateModule.ContentFetcher.FetchedText(answer.statusCode, answer.body);
+        }
+    }
+
+    private static RoutingFetcher.Answer answer(String body) {
+        RoutingFetcher.Answer a = new RoutingFetcher.Answer();
+        a.body = body;
+        return a;
+    }
+
+    private static String releaseJson(String host, String tag) {
+        return "{\"tag_name\":\"" + tag + "\",\"assets\":["
+            + "{\"name\":\"PPoEDialer-1.2.0-windows.zip\","
+            + "\"browser_download_url\":\"https://" + host + "/pkg.zip\",\"size\":13},"
+            + "{\"name\":\"SHA256SUMS.txt\",\"browser_download_url\":\"https://" + host + "/sums\"}]}";
+    }
+
+    private Path writeTemp(byte[] content) throws IOException {
+        Path path = dir.resolve("tmp-" + System.nanoTime());
+        Files.write(path, content);
+        return path;
+    }
+
+    @Test
+    void primaryCheckFailureFallsOverToBackupLine() {
+        RoutingFetcher fetcher = new RoutingFetcher();
+        RoutingFetcher.Answer gitee = new RoutingFetcher.Answer();
+        gitee.failure = new java.net.http.HttpConnectTimeoutException("connect timed out");
+        fetcher.route("gitee.test", "/api/latest", gitee);
+        fetcher.route("github.test", "/api/latest", answer(releaseJson("github.test", "v9.9.9")));
+
+        UpdateModule module = module(fetcher, new FakeOpener(), script -> { }, twoLineSources());
+        UpdateModule.CheckResult result = module.check("1.0.0");
+
+        assertTrue(result.updateAvailable);
+        assertEquals("github", result.sourceId, "the backup line served the check");
+        assertEquals("v9.9.9", result.latestTag);
+        assertTrue(logLines.stream().anyMatch(l -> l.contains("连接超时")),
+            "the failure reason must reach the log");
+    }
+
+    @Test
+    void primaryUpToDateDoesNotConsultBackup() {
+        RoutingFetcher fetcher = new RoutingFetcher();
+        fetcher.route("gitee.test", "/api/latest",
+            answer(releaseJson("gitee.test", "v" + AppVersion.NUMERIC)));
+        fetcher.route("github.test", "/api/latest", answer(releaseJson("github.test", "v9.9.9")));
+
+        UpdateModule module = module(fetcher, new FakeOpener(), script -> { }, twoLineSources());
+        UpdateModule.CheckResult result = module.check(AppVersion.NUMERIC);
+
+        assertFalse(result.updateAvailable);
+        assertTrue(result.message.contains("已是最新版本"), result.message);
+        assertEquals("gitee", result.sourceId);
+        assertEquals(0L, fetcher.count("github.test"),
+            "a healthy primary saying 'no update' must end the walk (serial, no backup probe)");
+    }
+
+    @Test
+    void primaryHashMismatchFallsOverToBackup() throws Exception {
+        byte[] pkg = "zip-content-12345".getBytes(StandardCharsets.UTF_8);
+        String goodHash = UpdateModule.sha256(writeTemp(pkg));
+        RoutingFetcher fetcher = new RoutingFetcher();
+        fetcher.route("gitee.test", "/api/latest", answer(releaseJson("gitee.test", "v9.9.9")));
+        fetcher.route("gitee.test", "/sums", answer(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+                + "  PPoEDialer-1.2.0-windows.zip\n"));
+        fetcher.route("github.test", "/api/latest", answer(releaseJson("github.test", "v9.9.9")));
+        fetcher.route("github.test", "/sums", answer(goodHash + "  PPoEDialer-1.2.0-windows.zip\n"));
+        FakeOpener opener = new FakeOpener();
+        opener.content = pkg;
+
+        UpdateModule module = module(fetcher, opener, script -> { }, twoLineSources());
+        UpdateModule.CheckResult check = module.check("1.0.0");
+        assertTrue(check.updateAvailable);
+        assertEquals("gitee", check.sourceId);
+
+        UpdateModule.VerifiedPackage verified = module.downloadWithFailover(check,
+            check.release.preferredWindowsAsset(true).get(),
+            new RecordingProgress(), new AtomicBoolean(false));
+
+        assertEquals("github", verified.release.sourceId,
+            "the verified package must come from the backup line");
+        try (var files = Files.list(dir.resolve("updates"))) {
+            assertTrue(files.allMatch(f -> !f.getFileName().toString().endsWith(".part")),
+                "corrupted bytes must not survive into another line's resume");
+        }
+        assertTrue(logLines.stream().anyMatch(l -> l.contains("哈希校验失败")
+                && l.contains("expected=") && l.contains("actual=")),
+            "the hash failure must be logged with both hashes");
+    }
+
+    @Test
+    void lowerVersionBackupIsRefused() throws Exception {
+        byte[] pkg = "zip-content-12345".getBytes(StandardCharsets.UTF_8);
+        String goodHash = UpdateModule.sha256(writeTemp(pkg));
+        RoutingFetcher fetcher = new RoutingFetcher();
+        fetcher.route("gitee.test", "/api/latest", answer(releaseJson("gitee.test", "v9.9.9")));
+        fetcher.route("gitee.test", "/sums", answer(goodHash + "  PPoEDialer-1.2.0-windows.zip\n"));
+        fetcher.route("github.test", "/api/latest", answer(releaseJson("github.test", "v1.0.0")));
+        FakeOpener opener = new FakeOpener();
+        opener.content = pkg;
+        opener.failFirstOpens = 1;
+
+        UpdateModule module = module(fetcher, opener, script -> { }, twoLineSources());
+        UpdateModule.CheckResult check = module.check("1.0.0");
+        assertTrue(check.updateAvailable);
+        assertEquals("gitee", check.sourceId);
+
+        Exception e = assertThrows(Exception.class, () ->
+            module.downloadWithFailover(check, check.release.preferredWindowsAsset(true).get(),
+                new RecordingProgress(), new AtomicBoolean(false)));
+
+        assertTrue(e.getMessage().contains("低于主线路"), e.getMessage());
+        assertTrue(logLines.stream().anyMatch(l -> l.contains("主备版本不一致")),
+            "the version mismatch must be logged");
+        assertEquals(1L, fetcher.count("github.test"),
+            "the backup's metadata was checked, but nothing may be downloaded from it");
+        assertEquals(1, opener.opens, "only the primary transfer attempt happened");
+    }
+
+    @Test
+    void higherVersionBackupProceedsWhenPrimaryFails() throws Exception {
+        byte[] pkg = "zip-content-12345".getBytes(StandardCharsets.UTF_8);
+        String goodHash = UpdateModule.sha256(writeTemp(pkg));
+        RoutingFetcher fetcher = new RoutingFetcher();
+        fetcher.route("gitee.test", "/api/latest", answer(releaseJson("gitee.test", "v2.0.0")));
+        fetcher.route("gitee.test", "/sums", answer(goodHash + "  PPoEDialer-1.2.0-windows.zip\n"));
+        fetcher.route("github.test", "/api/latest", answer(releaseJson("github.test", "v3.0.0")));
+        fetcher.route("github.test", "/sums", answer(goodHash + "  PPoEDialer-1.2.0-windows.zip\n"));
+        FakeOpener opener = new FakeOpener();
+        opener.content = pkg;
+        opener.failFirstOpens = 1;
+
+        UpdateModule module = module(fetcher, opener, script -> { }, twoLineSources());
+        UpdateModule.CheckResult check = module.check("1.0.0");
+        assertEquals("gitee", check.sourceId);
+        assertEquals("v2.0.0", check.latestTag);
+
+        UpdateModule.VerifiedPackage verified = module.downloadWithFailover(check,
+            check.release.preferredWindowsAsset(true).get(),
+            new RecordingProgress(), new AtomicBoolean(false));
+
+        assertEquals("github", verified.release.sourceId);
+        assertEquals("v3.0.0", verified.release.tagName);
+        assertTrue(logLines.stream().anyMatch(l -> l.contains("主备版本不一致")),
+            "the mismatch is logged, but the truth-source version wins");
+    }
+
+    @Test
+    void cancellationAbortsTheWholeFlowWithoutFailover() throws Exception {
+        RoutingFetcher fetcher = new RoutingFetcher();
+        fetcher.route("gitee.test", "/api/latest", answer(releaseJson("gitee.test", "v9.9.9")));
+        fetcher.route("github.test", "/api/latest", answer(releaseJson("github.test", "v9.9.9")));
+        FakeOpener opener = new FakeOpener();
+        opener.content = new byte[1024 * 1024];
+
+        UpdateModule module = module(fetcher, opener, script -> { }, twoLineSources());
+        UpdateModule.CheckResult check = module.check("1.0.0");
+
+        Exception e = assertThrows(Exception.class, () ->
+            module.downloadWithFailover(check, check.release.preferredWindowsAsset(true).get(),
+                new RecordingProgress(), new AtomicBoolean(true)));
+
+        assertTrue(e instanceof UpdateModule.UpdateCancelledException, e.getMessage());
+        assertEquals(1L, fetcher.count("gitee.test"),
+            "cancel hits before the manifest fetch");
+        assertEquals(0L, fetcher.count("github.test"),
+            "cancellation must not trigger failover");
+        assertEquals(0, opener.opens);
+    }
+
+    @Test
+    void breakerSkipsFailingLineAndRecoversAfterCooldown() {
+        RoutingFetcher fetcher = new RoutingFetcher();
+        RoutingFetcher.Answer gitee = new RoutingFetcher.Answer();
+        gitee.failure = new java.net.http.HttpConnectTimeoutException("connect timed out");
+        fetcher.route("gitee.test", "/api/latest", gitee);
+        fetcher.route("github.test", "/api/latest", answer(releaseJson("github.test", "v9.9.9")));
+
+        UpdateSources sources = UpdateSources.of(List.of(
+            new UpdateSources.Source("gitee", "Gitee", "https://gitee.test/api/latest",
+                8_000, 1, 2, 30_000, 30_000, 2, 600_000),
+            line("github", "https://github.test/api/latest")), 5000);
+        long[] now = {System.currentTimeMillis()};
+        UpdateModule module = new UpdateModule(dir.resolve("updates").toFile(), fetcher,
+            new FakeOpener(), script -> { }, sources, recordingSink(), () -> now[0]);
+
+        UpdateModule.CheckResult first = module.check("1.0.0");
+        assertEquals("github", first.sourceId);
+        module.check("1.0.0");
+        assertEquals(2L, fetcher.count("gitee.test"), "two checks, one probe each");
+
+        UpdateModule.CheckResult third = module.check("1.0.0");
+        assertEquals("github", third.sourceId);
+        assertEquals(2L, fetcher.count("gitee.test"),
+            "a tripped line is skipped entirely");
+        assertTrue(logLines.stream().anyMatch(l -> l.contains("熔断开启")));
+
+        now[0] += 601_000;
+        module.check("1.0.0");
+        assertEquals(3L, fetcher.count("gitee.test"),
+            "cooldown expired: one half-open probe is allowed");
+        module.check("1.0.0");
+        assertEquals(3L, fetcher.count("gitee.test"),
+            "a failed probe re-opens the line for a full cooldown");
     }
 
     // ---------- prepare & install ----------

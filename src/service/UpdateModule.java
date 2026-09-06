@@ -27,30 +27,39 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /**
- * The single online-update module: version check, asset selection, download,
- * SHA-256 verification, install preparation, and installer launch.
- * Only a hash-verified download yields a {@link VerifiedPackage}; the installer
- * process must be confirmed started before the app exits, and a launch failure
- * keeps the app running with an error report. Downloads resume from an
- * interrupted {@code .part} file (within one call and across app runs) and the
- * updates dir is pruned of never-reusable leftovers. Release JSON is parsed
- * with Gson.
+ * The single online-update module: multi-line version check, asset selection,
+ * download, SHA-256 verification, install preparation, and installer launch.
+ *
+ * <p>Update lines come from {@link UpdateSources} in priority order (primary
+ * Gitee mirror, backup GitHub — GitHub stays the source of truth for tags and
+ * artifacts). Everything runs serially: the primary line is tried first and the
+ * backup only after the primary failed (timeout, network error, 404, missing
+ * version, hash mismatch). Failures charge a per-line breaker that skips a
+ * flapping line for a cooldown. Only a hash-verified download yields a
+ * {@link VerifiedPackage}; the installer process must be confirmed started
+ * before the app exits, and a launch failure keeps the app running with an
+ * error report. Downloads resume from an interrupted {@code .part} file (within
+ * one call and across app runs) and the updates dir is pruned of
+ * never-reusable leftovers. Release JSON (GitHub- and Gitee-compatible field
+ * names) is parsed with Gson. All line-level behavior is reported through the
+ * {@link LogSink}: which line was used, why one failed, versions and hashes.
  */
 public final class UpdateModule {
     private static final Pattern SHA256SUM_LINE = Pattern.compile("(?i)^([0-9a-f]{64}) {2}([^\\r\\n]+)$");
     private static final int MAX_CHECKSUM_MANIFEST_CHARS = 1024 * 1024;
-    /** No bytes for this long during a download ⇒ abort with a clear message. */
-    private static final long DOWNLOAD_STALL_TIMEOUT_MS = 60_000;
-    /** Transfer attempts per download() call: the first try plus resume retries. */
-    private static final int MAX_DOWNLOAD_ATTEMPTS = 3;
     /** .part files older than this are garbage; younger ones feed cross-run resume. */
     private static final long PART_FILE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000L;
+    /** downloadFrom defaults when no configured line is in play (tests, manual use). */
+    private static final int DEFAULT_DOWNLOAD_ATTEMPTS = 3;
+    private static final int DEFAULT_STALL_TIMEOUT_MS = 60_000;
+    private static final int DEFAULT_MANIFEST_TIMEOUT_MS = 20_000;
 
     // ---------- data ----------
 
@@ -87,14 +96,19 @@ public final class UpdateModule {
     }
 
     public static final class Release {
+        public final String sourceId;
+        public final String sourceName;
         public final String tagName;
         public final String htmlUrl;
         public final String body;
         public final List<Asset> assets;
 
-        public Release(String tagName, String htmlUrl, String body, List<Asset> assets) {
+        public Release(String sourceId, String sourceName, String tagName, String htmlUrl,
+                       String body, List<Asset> assets) {
+            this.sourceId = sourceId != null ? sourceId : "";
+            this.sourceName = sourceName != null ? sourceName : "";
             this.tagName = tagName != null ? tagName : "";
-            this.htmlUrl = htmlUrl != null ? htmlUrl : AppVersion.GITHUB_URL + "/releases";
+            this.htmlUrl = htmlUrl != null ? htmlUrl : "";
             this.body = body != null ? body : "";
             this.assets = assets != null
                 ? java.util.Collections.unmodifiableList(new ArrayList<>(assets))
@@ -186,20 +200,32 @@ public final class UpdateModule {
 
     public static final class CheckResult {
         public final boolean updateAvailable;
+        /** True when the line was reachable and its payload parsed, update or not. */
+        public final boolean sourceOk;
+        public final String sourceId;
+        public final String sourceName;
         public final String currentVersion;
         public final String latestTag;
         public final String releaseUrl;
         public final String message;
         public final Release release;
+        /** Why the check failed; null when {@link #sourceOk}. */
+        public final FailureKind failureKind;
 
-        public CheckResult(boolean updateAvailable, String currentVersion, String latestTag,
-                           String releaseUrl, String message, Release release) {
+        public CheckResult(boolean updateAvailable, boolean sourceOk, String sourceId,
+                           String sourceName, String currentVersion, String latestTag,
+                           String releaseUrl, String message, Release release,
+                           FailureKind failureKind) {
             this.updateAvailable = updateAvailable;
+            this.sourceOk = sourceOk;
+            this.sourceId = sourceId != null ? sourceId : "";
+            this.sourceName = sourceName != null ? sourceName : "";
             this.currentVersion = currentVersion;
             this.latestTag = latestTag;
             this.releaseUrl = releaseUrl;
             this.message = message;
             this.release = release;
+            this.failureKind = failureKind;
         }
 
         public boolean hasInstallableAsset(boolean installDirWritable) {
@@ -237,6 +263,149 @@ public final class UpdateModule {
         void onProgress(long downloaded, long total);
 
         void onStatus(String message);
+    }
+
+    /** Behavior log seam: line switches, failure reasons, versions, hashes. */
+    @FunctionalInterface
+    public interface LogSink {
+        enum Level { INFO, WARNING, ERROR }
+
+        void log(String message, Level level);
+    }
+
+    // ---------- failure taxonomy ----------
+
+    /** 更新失败原因分类：驱动行为日志、降级与熔断决策。 */
+    public enum FailureKind {
+        CONNECT_TIMEOUT("连接超时"),
+        TIMEOUT("响应超时"),
+        STALL("下载停滞超时"),
+        NETWORK("网络错误"),
+        HTTP_STATUS("HTTP 错误"),
+        VERSION_MISSING("版本不存在"),
+        PARSE("响应解析失败"),
+        HASH_MISMATCH("哈希校验失败"),
+        CANCELLED("已取消"),
+        UNKNOWN("未知错误");
+
+        private final String label;
+
+        FailureKind(String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
+    }
+
+    /** User cancellation — aborts the whole flow: no failover, no breaker charge. */
+    public static final class UpdateCancelledException extends IOException {
+        public UpdateCancelledException() {
+            super("下载已取消");
+        }
+
+        public UpdateCancelledException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    /** The transfer received no bytes for the line's stall window. */
+    public static final class StallTimeoutException extends IOException {
+        public StallTimeoutException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    /** Non-2xx status on an asset or checksum-manifest fetch. */
+    public static final class HttpStatusException extends IOException {
+        public final int statusCode;
+
+        public HttpStatusException(String message, int statusCode) {
+            super(message);
+            this.statusCode = statusCode;
+        }
+    }
+
+    /** SHA-256 mismatch — the package is corrupt or tampered; it is never installed. */
+    public static final class HashMismatchException extends IOException {
+        public final String expectedSha256;
+        public final String actualSha256;
+
+        public HashMismatchException(String expectedSha256, String actualSha256) {
+            super("更新包 SHA-256 校验失败 expected=" + expectedSha256
+                + " actual=" + actualSha256);
+            this.expectedSha256 = expectedSha256;
+            this.actualSha256 = actualSha256;
+        }
+    }
+
+    static FailureKind classify(Throwable e) {
+        if (e instanceof UpdateCancelledException) return FailureKind.CANCELLED;
+        if (e instanceof HashMismatchException) return FailureKind.HASH_MISMATCH;
+        if (e instanceof StallTimeoutException) return FailureKind.STALL;
+        if (e instanceof HttpStatusException h) {
+            return h.statusCode == 404 ? FailureKind.VERSION_MISSING : FailureKind.HTTP_STATUS;
+        }
+        if (e instanceof java.net.http.HttpConnectTimeoutException) return FailureKind.CONNECT_TIMEOUT;
+        if (e instanceof java.net.http.HttpTimeoutException) return FailureKind.TIMEOUT;
+        if (e instanceof java.net.SocketTimeoutException) return FailureKind.TIMEOUT;
+        if (e instanceof java.util.concurrent.CancellationException) return FailureKind.CANCELLED;
+        if (e instanceof IOException) return FailureKind.NETWORK;
+        return FailureKind.UNKNOWN;
+    }
+
+    // ---------- breaker ----------
+
+    /**
+     * In-memory simple breaker: after {@code breakerThreshold} consecutive
+     * failures a line is skipped for {@code breakerCooldownMs}; when the cooldown
+     * expires one half-open probe is allowed and a failed probe re-opens the line
+     * for a full cooldown. Any success resets the line. Not persisted — every
+     * app start starts with all lines enabled.
+     */
+    static final class SourceBreaker {
+        private static final class State {
+            int consecutiveFailures;
+            long openUntilMs;
+        }
+
+        private final LongSupplier clock;
+        private final java.util.Map<String, State> states = new java.util.HashMap<>();
+
+        SourceBreaker(LongSupplier clock) {
+            this.clock = clock != null ? clock : System::currentTimeMillis;
+        }
+
+        boolean isOpen(UpdateSources.Source source) {
+            State st = states.get(source.id);
+            return st != null && clock.getAsLong() < st.openUntilMs;
+        }
+
+        long cooldownRemainingMs(UpdateSources.Source source) {
+            State st = states.get(source.id);
+            return st == null ? 0L : Math.max(0L, st.openUntilMs - clock.getAsLong());
+        }
+
+        void recordSuccess(UpdateSources.Source source) {
+            states.remove(source.id);
+        }
+
+        void recordFailure(UpdateSources.Source source) {
+            State st = states.computeIfAbsent(source.id, k -> new State());
+            long now = clock.getAsLong();
+            if (st.openUntilMs > 0 && now >= st.openUntilMs) {
+                // the half-open probe failed: re-open immediately for a full cooldown
+                st.openUntilMs = now + source.breakerCooldownMs;
+                st.consecutiveFailures = 0;
+                return;
+            }
+            st.consecutiveFailures++;
+            if (st.consecutiveFailures >= source.breakerThreshold) {
+                st.openUntilMs = now + source.breakerCooldownMs;
+                st.consecutiveFailures = 0;
+            }
+        }
     }
 
     // ---------- seams ----------
@@ -279,9 +448,11 @@ public final class UpdateModule {
         /**
          * Open the asset stream. {@code rangeStart > 0} asks the opener to send a
          * Range request: a 206 response resumes the {@code .part}, any other 2xx
-         * means the caller restarts from zero.
+         * means the caller restarts from zero. {@code headersTimeout} bounds the
+         * wait for the response headers; the body itself is stall-guarded by the
+         * caller.
          */
-        DownloadStream open(URI uri, long rangeStart) throws Exception;
+        DownloadStream open(URI uri, long rangeStart, Duration headersTimeout) throws Exception;
     }
 
     /** Installer launch seam. Production starts the apply script via cmd. */
@@ -298,15 +469,28 @@ public final class UpdateModule {
     private final ContentFetcher fetcher;
     private final StreamOpener opener;
     private final InstallerLauncher launcher;
+    private final UpdateSources sources;
+    private final LogSink logSink;
+    private final java.util.function.LongSupplier clock;
+    private final SourceBreaker breaker;
 
     public UpdateModule(File updatesDir, ContentFetcher fetcher, StreamOpener opener,
-                        InstallerLauncher launcher) {
+                        InstallerLauncher launcher, UpdateSources sources, LogSink logSink,
+                        java.util.function.LongSupplier clock) {
         this.updatesDir = updatesDir != null ? updatesDir : defaultUpdatesDir();
-        this.fetcher = fetcher != null ? fetcher : defaultContentFetcher();
-        this.opener = opener != null ? opener : defaultStreamOpener();
+        this.sources = sources != null ? sources : UpdateSources.defaults();
+        this.fetcher = fetcher != null ? fetcher : defaultContentFetcher(this.sources.connectTimeoutMs);
+        this.opener = opener != null ? opener : defaultStreamOpener(this.sources.connectTimeoutMs);
         this.launcher = launcher != null ? launcher : defaultInstallerLauncher();
+        this.logSink = logSink != null ? logSink : (message, level) -> { };
+        this.clock = clock != null ? clock : System::currentTimeMillis;
+        this.breaker = new SourceBreaker(this.clock);
         //noinspection ResultOfMethodCallIgnored
         this.updatesDir.mkdirs();
+    }
+
+    private void log(LogSink.Level level, String message) {
+        logSink.log(message, level);
     }
 
     public static File defaultUpdatesDir() {
@@ -319,9 +503,9 @@ public final class UpdateModule {
         return dir;
     }
 
-    private static ContentFetcher defaultContentFetcher() {
+    private static ContentFetcher defaultContentFetcher(int connectTimeoutMs) {
         java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
+            .connectTimeout(Duration.ofMillis(connectTimeoutMs))
             .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
             .build();
         return (uri, timeout) -> {
@@ -338,15 +522,15 @@ public final class UpdateModule {
         };
     }
 
-    private static StreamOpener defaultStreamOpener() {
+    private static StreamOpener defaultStreamOpener(int connectTimeoutMs) {
         java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
+            .connectTimeout(Duration.ofMillis(connectTimeoutMs))
             // NORMAL: never follow an HTTPS -> HTTP redirect downgrade
             .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
             .build();
-        return (uri, rangeStart) -> {
+        return (uri, rangeStart, headersTimeout) -> {
             java.net.http.HttpRequest.Builder builder = java.net.http.HttpRequest.newBuilder(uri)
-                .timeout(Duration.ofMinutes(10))
+                .timeout(headersTimeout)
                 .header("User-Agent", AppVersion.USER_AGENT)
                 .header("Accept", "application/octet-stream")
                 .GET();
@@ -354,8 +538,7 @@ public final class UpdateModule {
                 builder.header("Range", "bytes=" + rangeStart + "-");
             }
             java.net.http.HttpResponse<InputStream> resp = sendBounded(client, builder.build(),
-                java.net.http.HttpResponse.BodyHandlers.ofInputStream(),
-                Duration.ofSeconds(60));
+                java.net.http.HttpResponse.BodyHandlers.ofInputStream(), headersTimeout);
             long len = resp.headers().firstValueAsLong("Content-Length").orElse(0L);
             return new StreamOpener.DownloadStream(resp.body(), len, resp.statusCode());
         };
@@ -387,11 +570,10 @@ public final class UpdateModule {
             () -> future.cancel(true), hardMs, java.util.concurrent.TimeUnit.MILLISECONDS);
         try {
             return future.join();
-        } catch (java.util.concurrent.CompletionException e) {
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            if (cause instanceof java.util.concurrent.CancellationException) {
-                throw new IOException("请求无响应（网络或 CDN 可能被拦截），已超时中止", cause);
-            }
+        } catch (java.util.concurrent.CompletionException
+                 | java.util.concurrent.CancellationException e) {
+            Throwable cause = e instanceof java.util.concurrent.CompletionException
+                && e.getCause() != null ? e.getCause() : e;
             if (cause instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
@@ -399,8 +581,6 @@ public final class UpdateModule {
                 throw (IOException) cause;
             }
             throw new IOException("请求无响应（网络或 CDN 可能被拦截），已超时中止", cause);
-        } catch (java.util.concurrent.CancellationException e) {
-            throw new IOException("请求无响应（网络或 CDN 可能被拦截），已超时中止", e);
         } finally {
             ceiling.cancel(false);
         }
@@ -428,8 +608,81 @@ public final class UpdateModule {
 
     // ---------- check ----------
 
+    /**
+     * Multi-line version check. Walks the configured lines serially in priority
+     * order (primary first); a line that answers — with an update or with
+     * "already latest" — wins immediately, and only a line that failed all of
+     * its retries falls through to the next one. "No update" from a healthy
+     * primary is a definitive answer, not a failure, so the backup is not
+     * consulted for it.
+     */
     public CheckResult check(String currentVersion) {
-        return check(AppVersion.RELEASES_API, currentVersion);
+        String current = currentVersion != null ? currentVersion : AppVersion.NUMERIC;
+        List<UpdateSources.Source> chain = sources.enabled();
+        if (chain.isEmpty()) {
+            return failedCheck(null, current, FailureKind.UNKNOWN, "未配置可用更新线路");
+        }
+        StringBuilder lines = new StringBuilder();
+        for (UpdateSources.Source src : chain) {
+            if (lines.length() > 0) lines.append(" → ");
+            lines.append(src.displayName);
+        }
+        log(LogSink.Level.INFO, "[更新] 检查更新 当前=" + AppVersion.DISPLAY
+            + " 线路=" + lines);
+        CheckResult last = null;
+        for (UpdateSources.Source src : chain) {
+            if (breaker.isOpen(src)) {
+                log(LogSink.Level.WARNING, "[更新] 线路=" + src.displayName + " 熔断中（剩余 "
+                    + breaker.cooldownRemainingMs(src) / 1000 + "s），跳过");
+                continue;
+            }
+            CheckResult result = checkWithRetry(src, current);
+            if (result.sourceOk) {
+                breaker.recordSuccess(src);
+                return result;
+            }
+            breaker.recordFailure(src);
+            if (breaker.isOpen(src)) {
+                log(LogSink.Level.WARNING, "[更新] 线路=" + src.displayName
+                    + " 连续失败达到阈值，熔断开启，冷却 " + src.breakerCooldownMs / 1000 + "s");
+            }
+            last = result;
+        }
+        if (last == null) {
+            return failedCheck(null, current, FailureKind.UNKNOWN, "所有更新线路均在熔断冷却中");
+        }
+        return last;
+    }
+
+    /** One line's check with its configured short timeout and retry budget. */
+    private CheckResult checkWithRetry(UpdateSources.Source src, String current) {
+        int attempts = Math.max(1, src.checkAttempts);
+        CheckResult last = null;
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            long started = clock.getAsLong();
+            CheckResult result = checkOnce(src, current);
+            long elapsedMs = clock.getAsLong() - started;
+            if (result.sourceOk) {
+                log(LogSink.Level.INFO, "[更新] 线路=" + src.displayName + " 检查成功 耗时="
+                    + elapsedMs + "ms tag=" + result.latestTag
+                    + (result.updateAvailable ? "（有更新）" : "（无更新）"));
+                return result;
+            }
+            log(LogSink.Level.WARNING, "[更新] 线路=" + src.displayName + " 检查失败("
+                + attempt + "/" + attempts + ") 原因="
+                + (result.failureKind != null ? result.failureKind.label() : FailureKind.UNKNOWN.label())
+                + " 耗时=" + elapsedMs + "ms");
+            last = result;
+            if (attempt < attempts) {
+                try {
+                    Thread.sleep(1000L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        return last;
     }
 
     /**
@@ -450,26 +703,31 @@ public final class UpdateModule {
         }
     }
 
-    public CheckResult check(String apiUrl, String currentVersion) {
+    /** One probe against one line: no retry, no breaker — the caller owns those. */
+    public CheckResult checkOnce(UpdateSources.Source source, String currentVersion) {
         String current = currentVersion != null ? currentVersion : AppVersion.NUMERIC;
         try {
             ContentFetcher.FetchedText resp = fetcher.get(
-                requireHttpsUri(apiUrl, "更新接口"), Duration.ofSeconds(12));
+                requireHttpsUri(source.apiUrl, "更新接口"),
+                Duration.ofMillis(source.checkTimeoutMs));
             if (resp.statusCode != 200) {
-                String hint = resp.statusCode == 403
-                    ? "（GitHub API 限流，稍后再试或到发布页查看）" : "";
-                return new CheckResult(false, current, null, null,
-                    "检查更新失败 HTTP " + resp.statusCode + hint, null);
+                if (resp.statusCode == 404) {
+                    return failedCheck(source, current, FailureKind.VERSION_MISSING,
+                        "版本不存在（HTTP 404，该线路可能尚未同步此发布）");
+                }
+                String hint = resp.statusCode == 403 ? "（更新接口限流，稍后再试或到发布页查看）" : "";
+                return failedCheck(source, current, FailureKind.HTTP_STATUS,
+                    "HTTP " + resp.statusCode + hint);
             }
-            Release release = parseReleaseJson(resp.body);
+            Release release = parseReleaseJson(resp.body, source);
             String tag = release.tagName;
             if (tag == null || tag.isEmpty()) {
-                return new CheckResult(false, current, null, release.htmlUrl,
-                    "未解析到最新版本号", release);
+                return failedCheck(source, current, FailureKind.PARSE, "未解析到最新版本号");
             }
             int cmp = AppVersion.compareNumeric(current, tag);
             if (cmp < 0) {
-                String msg = "发现新版本 " + tag + "（当前 " + AppVersion.DISPLAY + "）";
+                String msg = "发现新版本 " + tag + "（当前 " + AppVersion.DISPLAY
+                    + "，线路 " + source.displayName + "）";
                 boolean writable = isInstallDirWritable();
                 if (release.preferredWindowsAsset(writable).isPresent()
                     && release.checksumManifest().isPresent()) {
@@ -484,26 +742,47 @@ public final class UpdateModule {
                 } else {
                     msg += "\n（发布页暂无匹配的 Windows 安装包，可手动打开网页）";
                 }
-                return new CheckResult(true, current, tag, release.htmlUrl, msg, release);
+                return new CheckResult(true, true, source.id, source.displayName, current,
+                    tag, release.htmlUrl, msg, release, null);
             }
-            return new CheckResult(false, current, tag, release.htmlUrl,
-                "已是最新版本（" + AppVersion.DISPLAY + "）", release);
+            return new CheckResult(false, true, source.id, source.displayName, current,
+                tag, release.htmlUrl,
+                "已是最新版本（" + AppVersion.DISPLAY + "，线路 " + source.displayName + "）",
+                release, null);
         } catch (JsonParseException e) {
-            return new CheckResult(false, current, null, null,
-                "更新响应解析失败: " + e.getMessage(), null);
+            return failedCheck(source, current, FailureKind.PARSE,
+                "更新响应解析失败: " + e.getMessage());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return new CheckResult(false, current, null, null, "检查更新已中断", null);
+            return failedCheck(source, current, FailureKind.CANCELLED, "检查更新已中断");
         } catch (Exception e) {
             String detail = e.getMessage() != null && !e.getMessage().isEmpty()
                 ? e.getMessage() : e.getClass().getSimpleName();
-            return new CheckResult(false, current, null, null,
-                "检查更新失败: " + detail, null);
+            return failedCheck(source, current, classify(e), detail);
         }
     }
 
-    /** Gson parse of a GitHub latest-release payload. */
+    private CheckResult failedCheck(UpdateSources.Source source, String current,
+                                    FailureKind kind, String detail) {
+        String name = source != null ? source.displayName : "";
+        String prefix = name.isEmpty() ? "检查更新失败: " : "检查更新失败[" + name + "]: ";
+        return new CheckResult(false, false,
+            source != null ? source.id : "", name, current, null, null,
+            prefix + detail, null, kind);
+    }
+
+    /** Gson parse of a GitHub/Gitee latest-release payload, tagged with its line. */
     public static Release parseReleaseJson(String json) {
+        return parseReleaseJson(json, null, null);
+    }
+
+    public static Release parseReleaseJson(String json, UpdateSources.Source source) {
+        return parseReleaseJson(json,
+            source != null ? source.id : null,
+            source != null ? source.displayName : null);
+    }
+
+    private static Release parseReleaseJson(String json, String sourceId, String sourceName) {
         if (json == null || json.trim().isEmpty()) {
             throw new JsonParseException("更新响应为空");
         }
@@ -518,7 +797,7 @@ public final class UpdateModule {
                 assets.add(new Asset(a.name, a.browser_download_url, a.size));
             }
         }
-        return new Release(parsed.tag_name, parsed.html_url,
+        return new Release(sourceId, sourceName, parsed.tag_name, parsed.html_url,
             parsed.body != null ? parsed.body : "", assets);
     }
 
@@ -538,17 +817,147 @@ public final class UpdateModule {
     // ---------- download ----------
 
     /**
-     * Download the asset and verify SHA-256, resuming from an interrupted
-     * {@code .part} (same call or a previous run) when the server honors Range.
-     * Only a verified file becomes a {@link VerifiedPackage}; the temp file is
-     * removed on verification failure or cancellation, and kept otherwise so a
-     * later attempt can resume.
+     * Serial multi-line download. Walks the configured lines starting at the
+     * line that served {@code primary}: the primary release/asset is downloaded
+     * as-is; before switching to a backup line that line is re-checked and its
+     * tag must not be lower than the primary's (a lower-version backup must
+     * never overwrite the update) nor lower than the running version. Cancellation
+     * aborts everything — no failover, no breaker charge. Lines are never
+     * fetched concurrently.
+     *
+     * @throws IOException when every usable line failed; the local install is
+     *     untouched in that case
+     */
+    public VerifiedPackage downloadWithFailover(CheckResult primary, Asset primaryAsset,
+                                                Progress progress,
+                                                AtomicBoolean cancel) throws Exception {
+        Progress p = java.util.Objects.requireNonNull(progress, "progress");
+        AtomicBoolean cancelled = cancel != null ? cancel : new AtomicBoolean(false);
+        List<UpdateSources.Source> chain = orderedChain(primary != null ? primary.sourceId : "");
+        String primaryTag = primary != null ? primary.latestTag : null;
+        String current = primary != null ? primary.currentVersion : AppVersion.NUMERIC;
+        Exception lastFailure = null;
+
+        for (UpdateSources.Source src : chain) {
+            Release release;
+            Asset asset;
+            if (primary != null && src.id.equals(primary.sourceId)) {
+                release = primary.release;
+                asset = primaryAsset;
+            } else {
+                // Failover: the backup line serves its own metadata, possibly a
+                // different tag. Guard both consistency rules before touching it.
+                if (cancelled.get()) throw new UpdateCancelledException();
+                log(LogSink.Level.INFO, "[更新] 切换线路 → " + src.displayName);
+                if (breaker.isOpen(src)) {
+                    log(LogSink.Level.WARNING, "[更新] 线路=" + src.displayName
+                        + " 熔断中（剩余 " + breaker.cooldownRemainingMs(src) / 1000 + "s），跳过");
+                    continue;
+                }
+                CheckResult alt = checkWithRetry(src, current);
+                if (!alt.sourceOk) {
+                    breaker.recordFailure(src);
+                    lastFailure = new IOException(alt.message != null ? alt.message
+                        : "线路 " + src.displayName + " 检查失败");
+                    continue;
+                }
+                breaker.recordSuccess(src);
+                if (primaryTag != null && !primaryTag.isEmpty()
+                    && AppVersion.compareNumeric(alt.latestTag, primaryTag) < 0) {
+                    log(LogSink.Level.WARNING, "[更新] 主备版本不一致 主="
+                        + primary.sourceName + " " + primaryTag + " 备="
+                        + alt.sourceName + " " + alt.latestTag
+                        + "：低版本备源不允许覆盖更新，已停止本次更新");
+                    throw new IOException("备用线路版本（" + alt.latestTag
+                        + "）低于主线路（" + primaryTag + "），已保留当前版本");
+                }
+                if (AppVersion.compareNumeric(current, alt.latestTag) >= 0) {
+                    log(LogSink.Level.WARNING, "[更新] 线路=" + src.displayName
+                        + " 版本 " + alt.latestTag + " 不高于当前版本 " + AppVersion.DISPLAY
+                        + "，不安装");
+                    throw new IOException("备用线路版本不高于当前版本，无需更新");
+                }
+                if (alt.latestTag != null && !alt.latestTag.isEmpty()
+                    && primaryTag != null && !primaryTag.isEmpty()
+                    && AppVersion.compareNumeric(alt.latestTag, primaryTag) > 0) {
+                    log(LogSink.Level.WARNING, "[更新] 主备版本不一致 主=" + primary.sourceName
+                        + " " + primaryTag + " 备=" + alt.sourceName + " " + alt.latestTag
+                        + "：备源版本更高，按发布真相源继续");
+                }
+                release = alt.release;
+                asset = alt.release.preferredWindowsAsset(isInstallDirWritable()).orElse(null);
+                if (asset == null || release.checksumManifest().isEmpty()) {
+                    log(LogSink.Level.WARNING, "[更新] 线路=" + src.displayName
+                        + " 无可自动安装的更新包（缺资产或 SHA256SUMS.txt），跳过");
+                    lastFailure = new IOException("线路 " + src.displayName
+                        + " 无可安装的更新包");
+                    continue;
+                }
+            }
+
+            try {
+                VerifiedPackage pkg = downloadFrom(src, release, asset, p, cancelled);
+                breaker.recordSuccess(src);
+                log(LogSink.Level.INFO, "[更新] 下载完成 线路=" + src.displayName
+                    + " tag=" + release.tagName + " 资产=" + asset.name
+                    + " 文件=" + pkg.file.getAbsolutePath());
+                return pkg;
+            } catch (Exception e) {
+                if (cancelled.get() || e instanceof UpdateCancelledException) {
+                    throw e;
+                }
+                breaker.recordFailure(src);
+                log(LogSink.Level.WARNING, "[更新] 线路=" + src.displayName + " 下载失败 原因="
+                    + classify(e).label() + " tag=" + release.tagName
+                    + (e.getMessage() != null && !e.getMessage().isEmpty()
+                        ? " 详情=" + e.getMessage() : ""));
+                lastFailure = e;
+            }
+        }
+        throw new IOException("所有更新线路均下载失败，已保留当前版本"
+            + (lastFailure != null && lastFailure.getMessage() != null
+                ? "；最后错误：" + lastFailure.getMessage() : ""), lastFailure);
+    }
+
+    /** Configured lines with the line that served {@code primarySourceId} first. */
+    private List<UpdateSources.Source> orderedChain(String primarySourceId) {
+        List<UpdateSources.Source> chain = new ArrayList<>(sources.enabled());
+        if (primarySourceId != null && !primarySourceId.isEmpty()) {
+            for (int i = 1; i < chain.size(); i++) {
+                if (chain.get(i).id.equals(primarySourceId)) {
+                    chain.add(0, chain.remove(i));
+                    break;
+                }
+            }
+        }
+        return chain;
+    }
+
+    /**
+     * Download the asset from one line and verify SHA-256, resuming from an
+     * interrupted {@code .part} (same call or a previous run) when the server
+     * honors Range. Attempts, header timeout and the stall watchdog come from
+     * the line config; {@code src == null} falls back to conservative defaults
+     * (tests and manual single-line use). Only a verified file becomes a
+     * {@link VerifiedPackage}; the temp file is removed on verification failure
+     * or cancellation, and kept otherwise so a later attempt can resume.
      */
     public VerifiedPackage download(Release release, Asset asset,
                                     Progress progress, AtomicBoolean cancel) throws Exception {
+        return downloadFrom(null, release, asset, progress, cancel);
+    }
+
+    private VerifiedPackage downloadFrom(UpdateSources.Source src, Release release, Asset asset,
+                                         Progress progress, AtomicBoolean cancel) throws Exception {
         if (release == null || asset == null) {
             throw new IOException("缺少发布信息或资产");
         }
+        int maxAttempts = src != null ? src.downloadAttempts : DEFAULT_DOWNLOAD_ATTEMPTS;
+        long stallTimeoutMs = src != null ? src.stallTimeoutMs : DEFAULT_STALL_TIMEOUT_MS;
+        Duration manifestTimeout = Duration.ofMillis(src != null
+            ? src.checkTimeoutMs : DEFAULT_MANIFEST_TIMEOUT_MS);
+        Duration headersTimeout = Duration.ofMillis(src != null
+            ? src.downloadHeaderTimeoutMs : 60_000);
         Progress p = java.util.Objects.requireNonNull(progress, "progress");
         AtomicBoolean cancelled = cancel != null ? cancel : new AtomicBoolean(false);
 
@@ -559,15 +968,16 @@ public final class UpdateModule {
         File part = new File(updatesDir, safeName + ".part");
 
         URI target = requireHttpsUri(asset.downloadUrl, "更新包");
-        String expectedSha256 = fetchExpectedSha256(release, asset, p, cancelled);
+        String expectedSha256 = fetchExpectedSha256(release, asset, p, cancelled, manifestTimeout);
+        String lineName = src != null ? src.displayName : "默认";
 
         p.onStatus("正在下载 " + asset.name + " …");
         long downloaded = 0L;
         Exception lastFailure = null;
         boolean lastStalled = false;
-        for (int attempt = 1; attempt <= MAX_DOWNLOAD_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             long onDisk = part.isFile() ? part.length() : 0L;
-            // Campus networks routinely blackhole the GitHub asset CDN mid-transfer;
+            // Campus networks routinely blackhole the update CDN mid-transfer;
             // a blocking read() must not hang forever, so a watchdog closes the
             // stream after a no-data window or when the user cancels, and the
             // transfer either resumes from the .part or aborts with a clear message.
@@ -578,7 +988,7 @@ public final class UpdateModule {
             java.io.OutputStream os = null;
             Thread watchdog = null;
             try {
-                ds = opener.open(target, onDisk);
+                ds = opener.open(target, onDisk, headersTimeout);
                 if (ds.statusCode == 416 && asset.sizeBytes > 0 && onDisk == asset.sizeBytes) {
                     // .part already reaches the end of the remote file: go verify it.
                     downloaded = onDisk;
@@ -588,13 +998,13 @@ public final class UpdateModule {
                     // Stale or incompatible .part: drop it and restart from zero.
                     //noinspection ResultOfMethodCallIgnored
                     part.delete();
-                    if (attempt < MAX_DOWNLOAD_ATTEMPTS) {
+                    if (attempt < maxAttempts) {
                         continue;
                     }
                     throw new IOException("本地断点与服务器不匹配，已重置下载");
                 }
                 if (ds.statusCode / 100 != 2) {
-                    throw new IOException("下载失败 HTTP " + ds.statusCode);
+                    throw new HttpStatusException("下载失败 HTTP " + ds.statusCode, ds.statusCode);
                 }
                 boolean resumed = onDisk > 0 && ds.statusCode == 206;
                 downloaded = resumed ? onDisk : 0L;
@@ -604,7 +1014,8 @@ public final class UpdateModule {
                     : Files.newOutputStream(part.toPath(),
                         StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
                         StandardOpenOption.WRITE);
-                watchdog = startStallWatchdog(ds.stream, lastDataNanos, done, stalled, cancelled);
+                watchdog = startStallWatchdog(ds.stream, lastDataNanos, done, stalled,
+                    cancelled, stallTimeoutMs);
                 long total = asset.sizeBytes > 0 ? asset.sizeBytes
                     : (resumed ? ds.contentLength + downloaded : ds.contentLength);
                 InputStream in = new BufferedInputStream(ds.stream);
@@ -613,7 +1024,7 @@ public final class UpdateModule {
                 long lastReport = downloaded;
                 while ((n = in.read(buf)) >= 0) {
                     if (cancelled.get()) {
-                        throw new IOException("下载已取消");
+                        throw new UpdateCancelledException();
                     }
                     if (n == 0) continue;
                     os.write(buf, 0, n);
@@ -629,21 +1040,21 @@ public final class UpdateModule {
                 break;
             } catch (Exception e) {
                 lastFailure = e;
-                if (cancelled.get()) {
+                if (cancelled.get() || e instanceof UpdateCancelledException) {
                     //noinspection ResultOfMethodCallIgnored
                     part.delete();
-                    throw new IOException("下载已取消", e);
+                    throw new UpdateCancelledException("下载已取消", e);
                 }
                 // Retrying only pays off once bytes are on disk; a blackholed CDN
                 // that never sent anything would just burn the stall timeout again.
                 boolean resumable = part.isFile() && part.length() > 0L;
-                if (attempt < MAX_DOWNLOAD_ATTEMPTS && resumable) {
+                if (attempt < maxAttempts && resumable) {
                     p.onStatus("下载中断，正在从断点续传（重试 " + attempt
-                        + "/" + (MAX_DOWNLOAD_ATTEMPTS - 1) + "）…");
+                        + "/" + (maxAttempts - 1) + "）…");
                     if (!sleepBeforeRetry(attempt, cancelled)) {
                         //noinspection ResultOfMethodCallIgnored
                         part.delete();
-                        throw new IOException("下载已取消", e);
+                        throw new UpdateCancelledException("下载已取消", e);
                     }
                     continue;
                 }
@@ -679,20 +1090,22 @@ public final class UpdateModule {
         }
         if (lastFailure != null) {
             if (lastStalled) {
-                throw new IOException("下载停滞超过 " + (DOWNLOAD_STALL_TIMEOUT_MS / 1000)
-                    + " 秒，已中止（断点已保留，可重试续传）；校园网可能拦截了 GitHub 资源，请到发布页手动下载",
+                throw new StallTimeoutException("下载停滞超过 " + (stallTimeoutMs / 1000)
+                    + " 秒，已中止（断点已保留，可重试续传）；可稍后重试或到发布页手动下载",
                     lastFailure);
             }
             throw lastFailure;
         }
 
+        String actualSha256;
         try {
             p.onStatus("正在验证 SHA-256 …");
-            String actualSha256 = sha256(part.toPath());
+            actualSha256 = sha256(part.toPath());
             if (!expectedSha256.equals(actualSha256)) {
-                throw new IOException("更新包 SHA-256 校验失败");
+                throw new HashMismatchException(expectedSha256, actualSha256);
             }
         } catch (Exception e) {
+            // The corrupted bytes must never leak into another line's resume.
             //noinspection ResultOfMethodCallIgnored
             part.delete();
             throw e;
@@ -700,6 +1113,8 @@ public final class UpdateModule {
         Files.move(part.toPath(), out.toPath(), StandardCopyOption.REPLACE_EXISTING);
         p.onProgress(downloaded, downloaded);
         p.onStatus("下载完成: " + out.getAbsolutePath());
+        log(LogSink.Level.INFO, "[更新] 哈希校验通过 sha256=" + actualSha256
+            + " 线路=" + lineName + " 资产=" + asset.name);
         return new VerifiedPackage(out, asset, release);
     }
 
@@ -715,18 +1130,19 @@ public final class UpdateModule {
     }
 
     private String fetchExpectedSha256(Release release, Asset asset, Progress progress,
-                                       AtomicBoolean cancelled) throws Exception {
-        if (cancelled.get()) throw new IOException("下载已取消");
+                                       AtomicBoolean cancelled,
+                                       Duration manifestTimeout) throws Exception {
+        if (cancelled.get()) throw new UpdateCancelledException();
         Optional<Asset> manifest = release.checksumManifest();
         if (!manifest.isPresent()) {
             throw new IOException("该 Release 未提供 SHA256SUMS.txt，已拒绝下载未校验的更新包");
         }
         progress.onStatus("正在下载 SHA-256 校验清单…");
         ContentFetcher.FetchedText resp = fetcher.get(
-            requireHttpsUri(manifest.get().downloadUrl, "SHA-256 校验清单"),
-            Duration.ofSeconds(20));
+            requireHttpsUri(manifest.get().downloadUrl, "SHA-256 校验清单"), manifestTimeout);
         if (resp.statusCode / 100 != 2) {
-            throw new IOException("无法下载 SHA-256 校验清单 HTTP " + resp.statusCode);
+            throw new HttpStatusException("无法下载 SHA-256 校验清单 HTTP " + resp.statusCode,
+                resp.statusCode);
         }
         if (resp.body == null || resp.body.length() > MAX_CHECKSUM_MANIFEST_CHARS) {
             throw new IOException("SHA-256 校验清单无效或过大");
@@ -808,12 +1224,12 @@ public final class UpdateModule {
 
     /**
      * Daemon thread that closes the download stream when no bytes arrive for
-     * {@link #DOWNLOAD_STALL_TIMEOUT_MS} — or as soon as the user cancels —
-     * closing unblocks the reader loop in both cases.
+     * {@code stallTimeoutMs} — or as soon as the user cancels — closing
+     * unblocks the reader loop in both cases.
      */
     private static Thread startStallWatchdog(InputStream stream, AtomicLong lastDataNanos,
                                              AtomicBoolean done, AtomicBoolean stalled,
-                                             AtomicBoolean cancelled) {
+                                             AtomicBoolean cancelled, long stallTimeoutMs) {
         Thread t = new Thread(() -> {
             while (!done.get()) {
                 try {
@@ -827,7 +1243,7 @@ public final class UpdateModule {
                     return;
                 }
                 long stalledMs = (System.nanoTime() - lastDataNanos.get()) / 1_000_000L;
-                if (stalledMs > DOWNLOAD_STALL_TIMEOUT_MS) {
+                if (stalledMs > stallTimeoutMs) {
                     stalled.set(true);
                     closeQuietly(stream);
                     return;

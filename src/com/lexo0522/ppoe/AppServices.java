@@ -16,6 +16,7 @@ import service.ScheduleService;
 import service.SettingsManager;
 import service.StartupService;
 import service.UpdateModule;
+import service.UpdateSources;
 import service.WindowsRasModule;
 import storage.AccountStore;
 import storage.DpapiSecretProtector;
@@ -186,7 +187,14 @@ public final class AppServices {
             backgroundExecutor
         );
 
-        updateModule = new UpdateModule(UpdateModule.defaultUpdatesDir(), null, null, null);
+        updateModule = new UpdateModule(UpdateModule.defaultUpdatesDir(), null, null, null,
+            UpdateSources.load(message -> logService.log(message, UiTheme.COLOR_WARNING)),
+            (message, level) -> logService.log(message, switch (level) {
+                case INFO -> UiTheme.COLOR_INFO;
+                case WARNING -> UiTheme.COLOR_WARNING;
+                case ERROR -> UiTheme.COLOR_ERROR;
+            }),
+            System::currentTimeMillis);
     }
 
     private DialEnvironment dialEnvironment(ShellBridge bridge) {
