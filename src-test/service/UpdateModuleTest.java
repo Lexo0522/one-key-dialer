@@ -538,6 +538,12 @@ class UpdateModuleTest {
         assertTrue(script.contains("msiexec"));
         assertTrue(script.contains("msi_failed"),
             "MSI script must report a failed install instead of silently relaunching");
+        assertTrue(script.contains("msiexec /i"),
+            "the batch must run msiexec directly so its exit code is the MSI result");
+        assertTrue(script.contains("if not errorlevel 3010"),
+            "3010 (installed, reboot pending) is a success and must not hit msi_failed");
+        assertFalse(script.contains("PPoEDialerUpdate"),
+            "no console window title: the script must run in a hidden console");
         assertRelaunchPinsWorkingDir(script);
     }
 
@@ -601,5 +607,28 @@ class UpdateModuleTest {
             new UpdateModule.VerifiedPackage(pkg, null, null), new RecordingProgress());
         assertTrue(module.launchInstall(prepared));
         assertEquals(1, launched.size());
+    }
+
+    /**
+     * The real launcher must return before the script finishes (the app exits and
+     * the batch continues in a hidden console: waits for our exit, applies, relaunches).
+     */
+    @Test
+    void defaultLauncherRunsScriptDetached() throws Exception {
+        File script = dir.resolve("probe.bat").toFile();
+        File done = dir.resolve("done.flag").toFile();
+        Files.write(script.toPath(), ("@echo off\r\n"
+            + "ping -n 2 127.0.0.1 > nul\r\n"
+            + "type nul > \"" + done.getAbsolutePath() + "\"\r\n").getBytes(StandardCharsets.UTF_8));
+
+        long started = System.nanoTime();
+        UpdateModule.defaultInstallerLauncher().launch(script);
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(elapsedMs < 2000, "launcher must not wait for the script to finish");
+
+        for (int i = 0; i < 100 && !done.isFile(); i++) {
+            Thread.sleep(100);
+        }
+        assertTrue(done.isFile(), "the detached script ran to completion");
     }
 }

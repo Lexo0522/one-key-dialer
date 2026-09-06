@@ -406,13 +406,22 @@ public final class UpdateModule {
         }
     }
 
-    private static InstallerLauncher defaultInstallerLauncher() {
+    /**
+     * Runs the apply script in a hidden console: Java pipes the child's stdio, so
+     * Windows creates cmd.exe with CREATE_NO_WINDOW — no flashing console during
+     * the update (the old {@code start "title" script} invocation opened a visible
+     * window and could leave it open on failure paths). The batch outlives this
+     * app: it waits for our exit, applies the package, and relaunches the exe.
+     */
+    static InstallerLauncher defaultInstallerLauncher() {
         return script -> {
             if (script == null || !script.isFile()) {
                 throw new IOException("更新脚本不存在");
             }
-            new ProcessBuilder("cmd.exe", "/c", "start", "\"PPoEDialerUpdate\"", script.getAbsolutePath())
+            new ProcessBuilder("cmd.exe", "/c", script.getAbsolutePath())
                 .directory(script.getParentFile())
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .start();
         };
     }
@@ -1035,12 +1044,12 @@ public final class UpdateModule {
         return writeApplyScript(w -> {
             w.println("echo Installing MSI update...");
             writeWaitForAppExit(w, pid);
-            // start /wait: msiexec is a GUI-subsystem process — without /wait the
-            // script would check for the exe (and relaunch) before install finishes
-            w.println("start \"PPoEDialerUpdate\" /wait msiexec /i \"" + msi.getAbsolutePath() + "\"");
-            // 1602 = UAC cancelled; any nonzero exit means nothing was installed.
-            // Surface it instead of silently relaunching the unchanged old version.
-            w.println("if errorlevel 1 goto msi_failed");
+            w.println("msiexec /i \"" + msi.getAbsolutePath() + "\"");
+            // A batch command waits for the GUI-subsystem msiexec to exit, so the
+            // errorlevel here is the MSI result: 0 = installed, 3010 = installed
+            // with a reboot pending; anything else (e.g. 1602 = UAC cancelled)
+            // means nothing was installed — relaunch the unchanged old version.
+            w.println("if errorlevel 1 if not errorlevel 3010 goto msi_failed");
             w.println("if exist \"" + exe + "\" (");
             writeRelaunch(w, new File(exe), installDir);
             w.println(")");
