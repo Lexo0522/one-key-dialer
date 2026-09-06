@@ -119,11 +119,20 @@ jobs:
         run: |
           $tag = $env:TAG
           $rev = $tag.Substring(1)
-          gh release create $tag `
-            "release/PPoEDialer-$rev-windows.zip" `
-            "release/PPoEDialer-$rev-windows.msi" `
-            "release/SHA256SUMS.txt" `
-            --verify-tag --title "PPoEDialer $tag" --generate-notes
+          $files = @(
+            "release/PPoEDialer-$rev-windows.zip",
+            "release/PPoEDialer-$rev-windows.msi",
+            "release/SHA256SUMS.txt")
+          # Idempotent: a re-run (or a moved tag) hits an existing release —
+          # refresh the assets instead of failing on `gh release create`.
+          $existing = gh release view $tag --json tagName -q .tagName 2>$null
+          if ($LASTEXITCODE -eq 0 -and $existing) {
+            Write-Host "Release $tag already exists - refreshing assets"
+            gh release upload $tag $files --clobber
+          } else {
+            gh release create $tag $files `
+              --verify-tag --title "PPoEDialer $tag" --generate-notes
+          }
           Write-Host "Release $tag published"
 
       # Mirror the same three artifacts to the Gitee Release so the in-app

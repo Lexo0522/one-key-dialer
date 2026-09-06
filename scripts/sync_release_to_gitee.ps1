@@ -16,6 +16,9 @@
 param([string]$ReleaseDir = "release")
 
 $ErrorActionPreference = 'Stop'
+# PowerShell's progress rendering measurably slows large Invoke-RestMethod
+# transfers; the CI log has no use for it either.
+$ProgressPreference = 'SilentlyContinue'
 
 $token = $env:GITEE_TOKEN
 $repo = $env:GITEE_REPO
@@ -37,7 +40,8 @@ $assets = @(
 $tagFound = $false
 for ($i = 1; $i -le 24; $i++) {
     try {
-        $tags = Invoke-RestMethod -Uri "$api/tags?access_token=$($token)&per_page=100" -Method Get
+        $tags = Invoke-RestMethod -Uri "$api/tags?access_token=$($token)&per_page=100" `
+            -Method Get -TimeoutSec 60
         if ($tags -and @($tags | Where-Object { $_.name -eq $tag }).Count -gt 0) {
             $tagFound = $true
             break
@@ -56,7 +60,8 @@ if (-not $tagFound) {
 # 2. Find the release by tag; create it when absent (idempotent on re-runs).
 $release = $null
 try {
-    $release = Invoke-RestMethod -Uri "$api/releases/tags/$($tag)?access_token=$($token)" -Method Get
+    $release = Invoke-RestMethod -Uri "$api/releases/tags/$($tag)?access_token=$($token)" `
+        -Method Get -TimeoutSec 60
 } catch { }
 
 if (-not $release) {
@@ -75,7 +80,7 @@ if (-not $release) {
     } | ConvertTo-Json
     Write-Host "Creating Gitee release $tag..."
     $release = Invoke-RestMethod -Uri "$api/releases?access_token=$($token)" `
-        -Method Post -Body $payload -ContentType "application/json"
+        -Method Post -Body $payload -ContentType "application/json" -TimeoutSec 60
 }
 
 # 3. Attach the artifacts (Gitee caps a single file at 100 MB).
@@ -100,26 +105,29 @@ foreach ($name in $assets) {
         $failed = $true
         continue
     }
-    Write-Host ("Uploading {0} ({1:N1} MB)..." -f $name, ($size / 1MB))
+    Write-Host ("Uploading {0} ({1:N1} MB) - the cross-border link can take several minutes..." -f $name, ($size / 1MB))
     $uploaded = $false
     for ($attempt = 1; $attempt -le 3; $attempt++) {
-        try {
-            $form = @{ file = Get-Item -LiteralPath $path }
-            Invoke-RestMethod -Uri "$api/releases/$($release.id)/attach_files?access_token=$($token)" `
-                -Method Post -Form $form | Out-Null
+        # curl.exe streams multipart uploads with a hard ceiling; PowerShell's
+        # Invoke-RestMethod -Form had no timeout and hung the whole job when
+        # Gitee stalled mid-upload.
+        $curlOut = curl.exe -sS --fail-with-body --connect-timeout 30 --max-time 1800 `
+            -X POST "$api/releases/$($release.id)/attach_files?access_token=$($token)" `
+            -F "file=@$path" 2>&1
+        if ($LASTEXITCODE -eq 0) {
             $uploaded = $true
             break
-        } catch {
-            Write-Warning "upload attempt $attempt for $name failed: $($_.Exception.Message)"
-            Start-Sleep -Seconds 5
         }
+        Write-Warning "upload attempt $attempt for $name failed (curl exit $LASTEXITCODE): $curlOut"
+        Start-Sleep -Seconds 5
     }
     if (-not $uploaded) { $failed = $true }
 }
 
 # 4. Verify the release now lists every artifact.
 try {
-    $check = Invoke-RestMethod -Uri "$api/releases/tags/$($tag)?access_token=$($token)" -Method Get
+    $check = Invoke-RestMethod -Uri "$api/releases/tags/$($tag)?access_token=$($token)" `
+        -Method Get -TimeoutSec 60
     $names = @($check.assets | ForEach-Object { $_.name })
     foreach ($name in $assets) {
         if ($names -notcontains $name) {
