@@ -81,6 +81,12 @@
           <include>i18n/*.properties</include>
         </includes>
       </resource>
+      <resource>
+        <directory>src/main/resources</directory>
+        <includes>
+          <include>icons/logo.png</include>
+        </includes>
+      </resource>
     </resources>
     <sourceDirectory>src</sourceDirectory>
     <testSourceDirectory>src-test</testSourceDirectory>
