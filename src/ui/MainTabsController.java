@@ -251,13 +251,32 @@ public final class MainTabsController {
         return diagPanelComponent;
     }
 
+    /** Re-apply theme colors to every current tab component (created panels and placeholders). */
+    public void restyle() {
+        for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+            if (tabbedPane.getComponentAt(i) instanceof Themeable t) t.restyle();
+        }
+    }
+
     private static JPanel lazyPlaceholder(String text) {
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.setBackground(UiTheme.COLOR_BG);
-        JLabel label = new JLabel(text, SwingConstants.CENTER);
-        label.setFont(UiTheme.FONT_CN);
-        label.setForeground(UiTheme.COLOR_HINT);
-        panel.add(label, BorderLayout.CENTER);
-        return panel;
+        return new PlaceholderPanel(text);
+    }
+
+    private static final class PlaceholderPanel extends JPanel implements Themeable {
+        private final JLabel label;
+
+        PlaceholderPanel(String text) {
+            super(new BorderLayout());
+            label = new JLabel(text, SwingConstants.CENTER);
+            label.setFont(UiTheme.FONT_CN);
+            add(label, BorderLayout.CENTER);
+            restyle();
+        }
+
+        @Override
+        public void restyle() {
+            setBackground(UiTheme.COLOR_BG);
+            label.setForeground(UiTheme.COLOR_HINT);
+        }
     }
 }

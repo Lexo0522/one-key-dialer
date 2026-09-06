@@ -13,16 +13,16 @@ import java.util.function.Supplier;
 /**
  * History tab: table + export/clear actions.
  */
-public class HistoryPanel extends JPanel {
+public class HistoryPanel extends JPanel implements Themeable {
     private final DefaultTableModel tableModel;
     private final JTable table;
+    private final JScrollPane scrollPane;
 
     public HistoryPanel(HistoryService historyService,
                         Supplier<Boolean> uiActive,
                         BiConsumer<String, Color> log,
                         Component parent) {
         super(new BorderLayout(0, 8));
-        setBackground(UiTheme.COLOR_BG);
         setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
 
         JPanel titlePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
@@ -43,11 +43,7 @@ public class HistoryPanel extends JPanel {
         table.setFont(UiTheme.FONT_CN_SMALL);
         table.setRowHeight(28);
         table.setShowGrid(true);
-        table.setGridColor(UiTheme.COLOR_TABLE_GRID);
-        table.setSelectionBackground(UiTheme.COLOR_TABLE_SEL);
-        table.setSelectionForeground(Color.BLACK);
         table.getTableHeader().setFont(UiTheme.FONT_CN);
-        table.getTableHeader().setBackground(UiTheme.COLOR_TABLE_HEADER);
         table.getTableHeader().setPreferredSize(new Dimension(0, 32));
         table.getColumnModel().getColumn(0).setPreferredWidth(140);
         table.getColumnModel().getColumn(1).setPreferredWidth(55);
@@ -58,10 +54,9 @@ public class HistoryPanel extends JPanel {
 
         historyService.bindTable(tableModel, uiActive);
 
-        JScrollPane sp = new JScrollPane(table);
-        sp.setBorder(BorderFactory.createLineBorder(UiTheme.COLOR_BORDER_LIGHT));
-        sp.getViewport().setBackground(Color.WHITE);
-        add(sp, BorderLayout.CENTER);
+        scrollPane = new JScrollPane(table);
+        scrollPane.getViewport().setBackground(UiTheme.COLOR_VIEWPORT_BG);
+        add(scrollPane, BorderLayout.CENTER);
 
         JPanel bp = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         bp.setOpaque(false);
@@ -95,6 +90,19 @@ public class HistoryPanel extends JPanel {
         bp.add(btnExport);
         bp.add(btnClear);
         add(bp, BorderLayout.SOUTH);
+        restyle();
+    }
+
+    /** Re-apply every themed color from {@link UiTheme} (EDT). */
+    @Override
+    public void restyle() {
+        setBackground(UiTheme.COLOR_BG);
+        table.setGridColor(UiTheme.COLOR_TABLE_GRID);
+        table.setSelectionBackground(UiTheme.COLOR_TABLE_SEL);
+        table.setSelectionForeground(UiTheme.COLOR_TABLE_SEL_FG);
+        table.getTableHeader().setBackground(UiTheme.COLOR_TABLE_HEADER);
+        scrollPane.setBorder(BorderFactory.createLineBorder(UiTheme.COLOR_BORDER_LIGHT));
+        scrollPane.getViewport().setBackground(UiTheme.COLOR_VIEWPORT_BG);
     }
 
     public DefaultTableModel getTableModel() {

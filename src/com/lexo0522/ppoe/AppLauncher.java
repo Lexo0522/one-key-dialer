@@ -21,7 +21,7 @@ public final class AppLauncher {
 
     public static void main(String[] args) {
         // Resolve the theme before any component exists — components capture the
-        // palette at construction; a theme change therefore needs a restart.
+        // palette at construction; live switches later re-run init + restyle passes.
         String themePref = loadThemePreference();
         UiTheme.init(themePref);
         LookAndFeelInstaller.install(UiTheme.isDark());

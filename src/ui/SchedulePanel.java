@@ -8,7 +8,7 @@ import java.awt.*;
 /**
  * Schedule tab: daily dial / disconnect toggles and time spinners.
  */
-public class SchedulePanel extends JPanel {
+public class SchedulePanel extends JPanel implements Themeable {
     public interface Host {
         void onScheduleChanged();
 
@@ -21,20 +21,38 @@ public class SchedulePanel extends JPanel {
     private final JSpinner spnDialMinute = new JSpinner(new SpinnerNumberModel(0, 0, 59, 1));
     private final JSpinner spnDisconnectHour = new JSpinner(new SpinnerNumberModel(23, 0, 23, 1));
     private final JSpinner spnDisconnectMinute = new JSpinner(new SpinnerNumberModel(0, 0, 59, 1));
+    private JPanel dialCard;
+    private JPanel disconnectCard;
 
     public SchedulePanel(Host host) {
         setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
-        setBackground(UiTheme.COLOR_BG);
         setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
 
         add(buildDialCard(host));
         add(Box.createVerticalStrut(12));
         add(buildDisconnectCard(host));
         add(Box.createVerticalGlue());
+        restyle();
+    }
+
+    /** Re-apply every themed color from {@link UiTheme} (EDT). */
+    @Override
+    public void restyle() {
+        setBackground(UiTheme.COLOR_BG);
+        restyleCard(dialCard);
+        restyleCard(disconnectCard);
+    }
+
+    private static void restyleCard(JPanel card) {
+        if (card == null) return;
+        card.setBackground(UiTheme.COLOR_CARD);
+        card.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(UiTheme.COLOR_BORDER),
+            BorderFactory.createEmptyBorder(10, 15, 10, 15)));
     }
 
     private JPanel buildDialCard(Host host) {
-        JPanel dialCard = createCard();
+        dialCard = createCard();
         dialCard.setLayout(new BorderLayout(10, 5));
 
         JPanel dialHeader = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
@@ -65,7 +83,8 @@ public class SchedulePanel extends JPanel {
     }
 
     private JPanel buildDisconnectCard(Host host) {
-        JPanel card = createCard();
+        disconnectCard = createCard();
+        JPanel card = disconnectCard;
         card.setLayout(new BorderLayout(10, 5));
 
         JPanel header = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));

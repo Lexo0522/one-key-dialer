@@ -14,10 +14,13 @@ import service.DialView;
 import service.SettingsManager;
 import service.StartupSelfCheck;
 import ui.AccountUiController;
+import ui.AppIcon;
 import ui.DialUiActions;
+import ui.LookAndFeelInstaller;
 import ui.MainHomePanel;
 import ui.MainTabsController;
 import ui.ProbeSettingsPanel;
+import ui.Themeable;
 import ui.TrayController;
 import ui.UiTheme;
 import ui.UpdateCheckUi;
@@ -29,6 +32,7 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.Window;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -45,7 +49,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * completes (no this-escape).
  */
 @SuppressWarnings("serial")
-public class PPoEDialer extends JFrame implements ShellBridge, DialView {
+public class PPoEDialer extends JFrame implements ShellBridge, DialView, Themeable {
 
     public static final String APP_TITLE = "PPPoE校园网拨号工具";
     public static final String APP_VERSION = model.AppVersion.DISPLAY;
@@ -62,10 +66,12 @@ public class PPoEDialer extends JFrame implements ShellBridge, DialView {
     private UpdateCheckUi updateCheckUi;
     private DialUiActions dialUi;
     private ShellShutdown shutdown;
+    private JPanel mainPanel;
     private final AtomicBoolean pendingSettingsSave = new AtomicBoolean(false);
 
     public PPoEDialer() {
         super(APP_TITLE + " " + APP_VERSION);
+        setIconImage(AppIcon.image());
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setSize(WINDOW_WIDTH, WINDOW_HEIGHT);
         setLocationRelativeTo(null);
@@ -182,6 +188,7 @@ public class PPoEDialer extends JFrame implements ShellBridge, DialView {
         mainPanel.add(homePanel.getStatusBar(), BorderLayout.NORTH);
         mainPanel.add(tabs.getTabbedPane(), BorderLayout.CENTER);
         setContentPane(mainPanel);
+        this.mainPanel = mainPanel;
 
         trayController = new TrayController(APP_TITLE, new TrayController.Host() {
             @Override public void showWindow() { PPoEDialer.this.showWindow(); }
@@ -260,6 +267,7 @@ public class PPoEDialer extends JFrame implements ShellBridge, DialView {
             }
             @Override public void onAutoStartToggled() { toggleAutoStart(); }
             @Override public void saveSettings() { PPoEDialer.this.saveSettings(); }
+            @Override public void onThemeSelected(String theme) { applyThemeLive(theme); }
             @Override public void onDisconnectOnNoInternetToggled(boolean enabled) {
                 PPoEDialer.this.saveSettings();
             }
@@ -363,10 +371,36 @@ public class PPoEDialer extends JFrame implements ShellBridge, DialView {
         invokeIfUiActive(() -> {
             if (homePanel != null) homePanel.setOnlineStatus(online);
             if (trayController != null) {
-                trayController.updateOnlineIcon(online);
                 trayController.updateTooltip();
             }
         });
+    }
+
+    /**
+     * Live theme switch (EDT): re-resolve the palette, swap FlatLaf, then restyle
+     * every window. Same-preference calls are ignored, so the startup settings
+     * replay (applySettings → theme combo listener) never triggers a redundant pass.
+     */
+    private void applyThemeLive(String theme) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> applyThemeLive(theme));
+            return;
+        }
+        if (theme == null || theme.equals(UiTheme.appliedPreference())) return;
+        UiTheme.init(theme);
+        LookAndFeelInstaller.install(UiTheme.isDark());
+        for (Window w : Window.getWindows()) {
+            SwingUtilities.updateComponentTreeUI(w);
+            if (w instanceof Themeable t) t.restyle();
+            w.repaint();
+        }
+        if (trayController != null) trayController.restyle();
+    }
+
+    @Override
+    public void restyle() {
+        if (mainPanel != null) mainPanel.setBackground(UiTheme.COLOR_BG);
+        if (tabs != null) tabs.restyle();
     }
 
     // ---------- DialView ----------

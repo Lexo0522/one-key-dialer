@@ -18,7 +18,6 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.awt.image.BufferedImage;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -84,8 +83,6 @@ public final class TrayController {
 
     private SystemTray systemTray;
     private TrayIcon trayIcon;
-    private Image trayImageOffline;
-    private Image trayImageOnline;
     private JPopupMenu trayPopup;
     private JMenu accountsMenu;
     private JFrame popupInvoker;
@@ -103,9 +100,7 @@ public final class TrayController {
         if (!SystemTray.isSupported()) return;
         if (trayIcon != null) return;
         systemTray = SystemTray.getSystemTray();
-        trayImageOffline = createTrayImage(Color.GRAY);
-        trayImageOnline = createTrayImage(UiTheme.COLOR_SUCCESS);
-        trayIcon = new TrayIcon(trayImageOffline, appTitle);
+        trayIcon = new TrayIcon(AppIcon.image(), appTitle);
         trayIcon.setImageAutoSize(true);
         trayIcon.setToolTip(appTitle + "\n未连接");
 
@@ -176,9 +171,15 @@ public final class TrayController {
         trayIcon = null;
     }
 
-    public void updateOnlineIcon(boolean online) {
-        if (trayIcon != null) {
-            trayIcon.setImage(online ? trayImageOnline : trayImageOffline);
+    /** Re-apply the L&F/theme to the long-lived tray popup UI (EDT). */
+    public void restyle() {
+        // A visible popup is focus-driven and closes on the next outside click;
+        // touching it mid-display would fight the invoker focus logic.
+        if (trayPopup != null && !trayPopup.isVisible()) {
+            SwingUtilities.updateComponentTreeUI(trayPopup);
+        }
+        if (popupInvoker != null) {
+            SwingUtilities.updateComponentTreeUI(popupInvoker);
         }
     }
 
@@ -479,18 +480,4 @@ public final class TrayController {
         return ge.getDefaultScreenDevice().getDefaultConfiguration();
     }
 
-    private static Image createTrayImage(Color c) {
-        int s = 16;
-        BufferedImage img = new BufferedImage(s, s, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = img.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setColor(c);
-        g.fillOval(1, 1, s - 2, s - 2);
-        g.setColor(Color.WHITE);
-        g.setFont(new Font("Arial", Font.BOLD, 11));
-        FontMetrics fm = g.getFontMetrics();
-        g.drawString("P", (s - fm.stringWidth("P")) / 2, (s - fm.getHeight()) / 2 + fm.getAscent());
-        g.dispose();
-        return img;
-    }
 }

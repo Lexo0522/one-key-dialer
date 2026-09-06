@@ -26,7 +26,7 @@ import java.util.function.Supplier;
  * Network diagnostics tab: command runners + connection status report.
  * Work runs on the shared {@link BackgroundExecutor} (one job at a time via {@code running}).
  */
-public class DiagPanel extends JPanel {
+public class DiagPanel extends JPanel implements Themeable {
     private static final int MAX_DIAG_LINES = 2000;
     private static final long DIAG_TIMEOUT_SEC = 60;
     private static final DateTimeFormatter FMT_TIME =
@@ -77,6 +77,8 @@ public class DiagPanel extends JPanel {
     private final Supplier<Boolean> uiActive;
     private final BackgroundExecutor executor;
     private final JTextArea output = new JTextArea();
+    private final JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 5));
+    private final JScrollPane scrollPane;
     private final List<JButton> actionButtons = new ArrayList<>();
     private final Deque<Integer> lineLengths = new ArrayDeque<>();
     private final StringBuilder batch = new StringBuilder(4096);
@@ -96,11 +98,7 @@ public class DiagPanel extends JPanel {
         }
         this.executor = executor;
 
-        setBackground(UiTheme.COLOR_BG);
         setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-
-        JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 5));
-        bp.setBackground(UiTheme.COLOR_BG);
 
         JButton btnPing = actionButton("Ping测试", () -> runCommand("ping -n 4 223.5.5.5"));
         JButton btnIP = actionButton("IP配置", () -> runCommand("ipconfig /all"));
@@ -114,24 +112,33 @@ public class DiagPanel extends JPanel {
         btnClear.setFont(UiTheme.FONT_CN);
         btnClear.addActionListener(e -> clearOutput());
 
-        bp.add(btnPing);
-        bp.add(btnIP);
-        bp.add(btnTrace);
-        bp.add(btnDNS);
-        bp.add(btnConn);
-        bp.add(btnPbk);
-        bp.add(btnDevice);
-        bp.add(btnRewrite);
-        bp.add(btnClear);
-        add(bp, BorderLayout.NORTH);
+        buttonPanel.add(btnPing);
+        buttonPanel.add(btnIP);
+        buttonPanel.add(btnTrace);
+        buttonPanel.add(btnDNS);
+        buttonPanel.add(btnConn);
+        buttonPanel.add(btnPbk);
+        buttonPanel.add(btnDevice);
+        buttonPanel.add(btnRewrite);
+        buttonPanel.add(btnClear);
+        add(buttonPanel, BorderLayout.NORTH);
 
         output.setFont(UiTheme.FONT_DIAG);
         output.setEditable(false);
-        output.setBackground(UiTheme.COLOR_DARK);
-        output.setForeground(Color.WHITE);
         JScrollPane sp = new JScrollPane(output);
-        sp.setBorder(BorderFactory.createLineBorder(UiTheme.COLOR_BORDER));
         add(sp, BorderLayout.CENTER);
+        this.scrollPane = sp;
+        restyle();
+    }
+
+    /** Re-apply every themed color from {@link UiTheme} (EDT). */
+    @Override
+    public void restyle() {
+        setBackground(UiTheme.COLOR_BG);
+        buttonPanel.setBackground(UiTheme.COLOR_BG);
+        output.setBackground(UiTheme.COLOR_CONSOLE_BG);
+        output.setForeground(UiTheme.COLOR_CONSOLE_FG);
+        scrollPane.setBorder(BorderFactory.createLineBorder(UiTheme.COLOR_BORDER));
     }
 
     private JButton actionButton(String text, Runnable action) {

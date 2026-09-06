@@ -49,6 +49,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
+call "%~dp0build_icon.bat"
+if errorlevel 1 (
+    echo [Error] Application logo generation failed
+    call :maybe_pause
+    exit /b 1
+)
+
 if exist "output" rmdir /s /q "output"
 if exist "build\jpackage-input" rmdir /s /q "build\jpackage-input"
 mkdir "build\jpackage-input" 2>nul
@@ -58,7 +65,7 @@ xcopy "target\lib" "build\jpackage-input\lib\" /E /I /Y /Q >nul
 echo [1/2] Maven package: done
 echo [2/2] Building EXE (app-image)...
 REM jlink --compress=zip-6 requires JDK 21+ (recommended JDK 26). Do not use legacy 0/1/2 on modern JDKs.
-jpackage --input build\jpackage-input --name PPoEDialer --main-jar one-key-dialer-%APP_VER%.jar --main-class com.lexo0522.ppoe.PPoEDialer --type app-image --dest output --app-version %APP_VER% --java-options "-Xms16m" --java-options "-Xmx96m" --java-options "-XX:+UseSerialGC" --java-options "-XX:MaxMetaspaceSize=96m" --java-options "-Dfile.encoding=UTF-8" --java-options "--enable-native-access=ALL-UNNAMED" --jlink-options "--strip-debug --no-header-files --no-man-pages --compress=zip-6"
+jpackage --input build\jpackage-input --name PPoEDialer --main-jar one-key-dialer-%APP_VER%.jar --main-class com.lexo0522.ppoe.PPoEDialer --type app-image --dest output --app-version %APP_VER% --icon build\logo.ico --java-options "-Xms16m" --java-options "-Xmx96m" --java-options "-XX:+UseSerialGC" --java-options "-XX:MaxMetaspaceSize=96m" --java-options "-Dfile.encoding=UTF-8" --java-options "--enable-native-access=ALL-UNNAMED" --jlink-options "--strip-debug --no-header-files --no-man-pages --compress=zip-6"
 if errorlevel 1 (
     echo.
     echo [Error] jpackage failed!

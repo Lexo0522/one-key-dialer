@@ -31,7 +31,7 @@ public interface DialView {
      */
     void onDialPhase(String phase);
 
-    /** Online/offline status change (dot, status bar, tray icon). */
+    /** Online/offline status change (status dot and status bar). */
     void onConnectionState(boolean online);
 
     void notifyUser(String title, String message);

@@ -14,7 +14,7 @@ import java.awt.event.MouseEvent;
 /**
  * Main tab content (account / config / options / log / dial) plus a detachable status bar.
  */
-public class MainHomePanel extends JPanel {
+public class MainHomePanel extends JPanel implements Themeable {
     public interface Host {
         void onAccountSelected();
 
@@ -27,6 +27,10 @@ public class MainHomePanel extends JPanel {
         void saveSettings();
 
         void onDialToggle();
+
+        /** Optional: live-apply the theme picked in {@code cmbTheme} (EDT). */
+        default void onThemeSelected(String theme) {
+        }
 
         /** Optional: no-internet disconnect policy changed. */
         default void onDisconnectOnNoInternetToggled(boolean enabled) {
@@ -41,6 +45,8 @@ public class MainHomePanel extends JPanel {
 
     private static final int WINDOW_WIDTH = 580;
     private static final int DEFAULT_INTERVAL = 30;
+    /** Hover base color of styled buttons; updated on state changes (see setOnlineStatus). */
+    private static final String BUTTON_BASE_COLOR = "ppoe.buttonBaseColor";
 
     private final Host host;
     private final JPanel statusBar = new JPanel(new BorderLayout());
@@ -64,10 +70,23 @@ public class MainHomePanel extends JPanel {
     private final JLabel lblSpeed = new JLabel("↓ -- ↑ --");
     private final JLabel lblUptime = new JLabel("时长: --");
 
+    private JPanel southPanel;
+    private JPanel centerPanel;
+    private JPanel accountRow;
+    private JPanel configPanel;
+    private JPanel optionPanel;
+    private JPanel logWrapper;
+    private JLabel themeHintLabel;
+    private JLabel autostartHintLabel;
+
+    /** Dial-control state, replayed by {@link #restyle()} after a theme switch. */
+    private boolean online;
+    private boolean dialBusy;
+    private String dialProgressLabel;
+
     public MainHomePanel(Host host, LogService logService) {
         super(new BorderLayout(0, 8));
         this.host = host;
-        setBackground(UiTheme.COLOR_BG);
         setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 
         buildStatusBar();
@@ -76,13 +95,11 @@ public class MainHomePanel extends JPanel {
         btnDial = createStyledButton(Messages.get("home.dial.connect"), UiTheme.COLOR_INFO);
         btnDial.setPreferredSize(new Dimension(300, 45));
         btnDial.addActionListener(e -> host.onDialToggle());
-        JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 5));
-        south.setBackground(UiTheme.COLOR_BG);
-        south.add(btnDial);
-        add(south, BorderLayout.SOUTH);
+        southPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 5));
+        southPanel.add(btnDial);
+        add(southPanel, BorderLayout.SOUTH);
 
         logPane.setEditable(false);
-        logPane.setBackground(UiTheme.COLOR_DARK);
         // CJK-capable font — the log stream is Chinese; monospace western fonts tofu it.
         logPane.setFont(UiTheme.FONT_DIAG);
         logPane.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
@@ -90,6 +107,7 @@ public class MainHomePanel extends JPanel {
         logService.attach(logPane, doc);
 
         wireFields();
+        restyle();
     }
 
     /** Always-visible top status strip (place on frame NORTH). */
@@ -98,7 +116,6 @@ public class MainHomePanel extends JPanel {
     }
 
     private void buildStatusBar() {
-        statusBar.setBackground(UiTheme.COLOR_INFO);
         statusBar.setBorder(BorderFactory.createEmptyBorder(8, 15, 8, 15));
 
         JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
@@ -157,55 +174,48 @@ public class MainHomePanel extends JPanel {
         chkUpdateCheck.addActionListener(e ->
             host.onUpdateCheckToggled(chkUpdateCheck.isSelected()));
         cmbTheme.setFont(UiTheme.FONT_CN);
-        cmbTheme.setToolTipText("重启应用后生效");
-        cmbTheme.addActionListener(e -> host.saveSettings());
+        cmbTheme.addActionListener(e -> {
+            host.saveSettings();
+            host.onThemeSelected(selectedTheme());
+        });
     }
 
     private JPanel buildCenter() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setBackground(UiTheme.COLOR_BG);
-        panel.add(buildAccountRow());
-        panel.add(Box.createVerticalStrut(5));
-        panel.add(buildConfigPanel());
-        panel.add(Box.createVerticalStrut(5));
-        panel.add(buildOptionPanel());
-        panel.add(Box.createVerticalStrut(5));
-        panel.add(buildLogPanel());
-        return panel;
+        centerPanel = new JPanel();
+        centerPanel.setLayout(new BoxLayout(centerPanel, BoxLayout.Y_AXIS));
+        centerPanel.add(buildAccountRow());
+        centerPanel.add(Box.createVerticalStrut(5));
+        centerPanel.add(buildConfigPanel());
+        centerPanel.add(Box.createVerticalStrut(5));
+        centerPanel.add(buildOptionPanel());
+        centerPanel.add(Box.createVerticalStrut(5));
+        centerPanel.add(buildLogPanel());
+        return centerPanel;
     }
 
     private JPanel buildAccountRow() {
-        JPanel panel = new JPanel(new BorderLayout(5, 0));
-        panel.setBackground(UiTheme.COLOR_CARD);
-        panel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(UiTheme.COLOR_BORDER),
-            BorderFactory.createEmptyBorder(8, 10, 8, 10)));
+        accountRow = new JPanel(new BorderLayout(5, 0));
         JButton btnAccountConfig = new JButton(Messages.get("home.account.config"));
         btnAccountConfig.setFont(UiTheme.FONT_CN);
         btnAccountConfig.addActionListener(e -> host.openAccountManager());
         JLabel lbl = new JLabel(Messages.get("home.account.label"));
         lbl.setFont(UiTheme.FONT_CN);
-        panel.add(lbl, BorderLayout.WEST);
-        panel.add(cmbAccounts, BorderLayout.CENTER);
-        panel.add(btnAccountConfig, BorderLayout.EAST);
-        return panel;
+        accountRow.add(lbl, BorderLayout.WEST);
+        accountRow.add(cmbAccounts, BorderLayout.CENTER);
+        accountRow.add(btnAccountConfig, BorderLayout.EAST);
+        return accountRow;
     }
 
     private JPanel buildConfigPanel() {
-        JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBackground(UiTheme.COLOR_CARD);
-        panel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(UiTheme.COLOR_BORDER),
-            BorderFactory.createEmptyBorder(8, 10, 8, 10)));
+        configPanel = new JPanel(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(4, 5, 4, 5);
         gbc.fill = GridBagConstraints.HORIZONTAL;
         int row = 0;
 
-        addLabeled(panel, gbc, row++, Messages.get("home.nickname.label"), txtConnectionName);
-        addLabeled(panel, gbc, row++, Messages.get("home.username.label"), txtUsername);
-        addLabeled(panel, gbc, row++, Messages.get("home.password.label"), txtPassword);
+        addLabeled(configPanel, gbc, row++, Messages.get("home.nickname.label"), txtConnectionName);
+        addLabeled(configPanel, gbc, row++, Messages.get("home.username.label"), txtUsername);
+        addLabeled(configPanel, gbc, row++, Messages.get("home.password.label"), txtPassword);
 
         gbc.gridx = 0;
         gbc.gridy = row;
@@ -213,11 +223,11 @@ public class MainHomePanel extends JPanel {
         gbc.gridwidth = 1;
         JLabel n4 = new JLabel(Messages.get("home.interval.label"));
         n4.setFont(UiTheme.FONT_CN);
-        panel.add(n4, gbc);
+        configPanel.add(n4, gbc);
         gbc.gridx = 1;
         gbc.weightx = 1.0;
-        panel.add(spnInterval, gbc);
-        return panel;
+        configPanel.add(spnInterval, gbc);
+        return configPanel;
     }
 
     private static void addLabeled(JPanel panel, GridBagConstraints gbc, int row, String label, JComponent field) {
@@ -235,12 +245,8 @@ public class MainHomePanel extends JPanel {
     }
 
     private JPanel buildOptionPanel() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setBackground(UiTheme.COLOR_CARD);
-        panel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(UiTheme.COLOR_BORDER),
-            BorderFactory.createEmptyBorder(6, 10, 6, 10)));
+        optionPanel = new JPanel();
+        optionPanel.setLayout(new BoxLayout(optionPanel, BoxLayout.Y_AXIS));
 
         JPanel themeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 2));
         themeRow.setOpaque(false);
@@ -248,22 +254,20 @@ public class MainHomePanel extends JPanel {
         themeLabel.setFont(UiTheme.FONT_CN);
         themeRow.add(themeLabel);
         themeRow.add(cmbTheme);
-        JLabel themeHint = new JLabel(Messages.get("theme.restartHint"));
-        themeHint.setFont(UiTheme.FONT_CN_SMALL);
-        themeHint.setForeground(UiTheme.COLOR_HINT);
-        themeRow.add(themeHint);
-        panel.add(wrapLeft(themeRow));
+        themeHintLabel = new JLabel(Messages.get("theme.liveHint"));
+        themeHintLabel.setFont(UiTheme.FONT_CN_SMALL);
+        themeRow.add(themeHintLabel);
+        optionPanel.add(wrapLeft(themeRow));
 
-        panel.add(wrapLeft(chkAutoReconnect));
-        panel.add(wrapLeft(chkAutoStart));
-        panel.add(wrapLeft(chkStartMinimized));
-        panel.add(wrapLeft(chkDisconnectOnNoInternet));
-        panel.add(wrapLeft(chkUpdateCheck));
-        JLabel autostartHint = new JLabel(Messages.get("home.autostartHint"));
-        autostartHint.setFont(UiTheme.FONT_CN_SMALL);
-        autostartHint.setForeground(UiTheme.COLOR_HINT);
-        panel.add(wrapLeft(autostartHint));
-        return panel;
+        optionPanel.add(wrapLeft(chkAutoReconnect));
+        optionPanel.add(wrapLeft(chkAutoStart));
+        optionPanel.add(wrapLeft(chkStartMinimized));
+        optionPanel.add(wrapLeft(chkDisconnectOnNoInternet));
+        optionPanel.add(wrapLeft(chkUpdateCheck));
+        autostartHintLabel = new JLabel(Messages.get("home.autostartHint"));
+        autostartHintLabel.setFont(UiTheme.FONT_CN_SMALL);
+        optionPanel.add(wrapLeft(autostartHintLabel));
+        return optionPanel;
     }
 
     private static JPanel wrapLeft(JComponent c) {
@@ -280,48 +284,82 @@ public class MainHomePanel extends JPanel {
         sp.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
         sp.getVerticalScrollBar().setUnitIncrement(16);
 
-        JPanel wrapper = new JPanel(new BorderLayout()) {
+        logWrapper = new JPanel(new BorderLayout()) {
             @Override
             public Dimension getPreferredSize() {
                 return new Dimension(WINDOW_WIDTH - 30, 140);
             }
         };
-        wrapper.setBackground(UiTheme.COLOR_CARD);
-        wrapper.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(UiTheme.COLOR_BORDER_LIGHT),
-            BorderFactory.createTitledBorder(
-                BorderFactory.createEmptyBorder(5, 5, 0, 5),
-                Messages.get("home.log.title"),
-                TitledBorder.LEFT,
-                TitledBorder.TOP,
-                UiTheme.FONT_CN_BOLD,
-                new Color(100, 100, 100))));
-        wrapper.add(sp, BorderLayout.CENTER);
-        return wrapper;
+        logWrapper.add(sp, BorderLayout.CENTER);
+        return logWrapper;
+    }
+
+    /** Re-apply every themed color from {@link UiTheme} (EDT). */
+    @Override
+    public void restyle() {
+        setBackground(UiTheme.COLOR_BG);
+        if (southPanel != null) southPanel.setBackground(UiTheme.COLOR_BG);
+        if (centerPanel != null) centerPanel.setBackground(UiTheme.COLOR_BG);
+        logPane.setBackground(UiTheme.COLOR_CONSOLE_BG);
+        restyleCard(accountRow, 8);
+        restyleCard(configPanel, 8);
+        restyleCard(optionPanel, 6);
+        if (themeHintLabel != null) themeHintLabel.setForeground(UiTheme.COLOR_HINT);
+        if (autostartHintLabel != null) autostartHintLabel.setForeground(UiTheme.COLOR_HINT);
+        if (logWrapper != null) {
+            logWrapper.setBackground(UiTheme.COLOR_CARD);
+            logWrapper.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UiTheme.COLOR_BORDER_LIGHT),
+                BorderFactory.createTitledBorder(
+                    BorderFactory.createEmptyBorder(5, 5, 0, 5),
+                    Messages.get("home.log.title"),
+                    TitledBorder.LEFT,
+                    TitledBorder.TOP,
+                    UiTheme.FONT_CN_BOLD,
+                    UiTheme.COLOR_TITLED_BORDER)));
+        }
+        replayDialState();
+    }
+
+    private static void restyleCard(JPanel card, int verticalInset) {
+        if (card == null) return;
+        card.setBackground(UiTheme.COLOR_CARD);
+        card.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(UiTheme.COLOR_BORDER),
+            BorderFactory.createEmptyBorder(verticalInset, 10, verticalInset, 10)));
     }
 
     private static JButton createStyledButton(String text, Color bg) {
         JButton btn = new JButton(text);
         btn.setFont(UiTheme.FONT_CN_BOLD);
         btn.setPreferredSize(new Dimension(140, 40));
-        btn.setBackground(bg);
         btn.setForeground(Color.BLACK);
         btn.setFocusPainted(false);
         btn.setBorderPainted(false);
         btn.setOpaque(true);
         btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        setButtonBaseColor(btn, bg);
         btn.addMouseListener(new MouseAdapter() {
-            final Color original = bg;
-
             public void mouseEntered(MouseEvent e) {
-                btn.setBackground(bg.darker());
+                Color base = buttonBaseColor(btn);
+                if (base != null) btn.setBackground(base.darker());
             }
 
             public void mouseExited(MouseEvent e) {
-                btn.setBackground(original);
+                Color base = buttonBaseColor(btn);
+                if (base != null) btn.setBackground(base);
             }
         });
         return btn;
+    }
+
+    private static Color buttonBaseColor(JButton btn) {
+        return btn.getClientProperty(BUTTON_BASE_COLOR) instanceof Color c ? c : null;
+    }
+
+    private static void setButtonBaseColor(JButton btn, Color c) {
+        btn.putClientProperty(BUTTON_BASE_COLOR, c);
+        btn.setBackground(c);
     }
 
     /** Read option controls into the builder (EDT). */
@@ -366,18 +404,20 @@ public class MainHomePanel extends JPanel {
     }
 
     public void setOnlineStatus(boolean online) {
+        this.online = online;
+        dialBusy = false;
         if (online) {
             lblStatus.setText(Messages.get("home.status.connected"));
             lblStatusDot.setForeground(Color.WHITE);
-            statusBar.setBackground(new Color(22, 163, 74));
+            statusBar.setBackground(UiTheme.COLOR_STATUS_ONLINE);
             btnDial.setText(Messages.get("home.dial.disconnect"));
-            btnDial.setBackground(UiTheme.COLOR_ERROR);
+            setButtonBaseColor(btnDial, UiTheme.COLOR_ERROR);
         } else {
             lblStatus.setText(Messages.get("home.status.disconnected"));
             lblStatusDot.setForeground(Color.WHITE);
             statusBar.setBackground(UiTheme.COLOR_INFO);
             btnDial.setText(Messages.get("home.dial.connect"));
-            btnDial.setBackground(UiTheme.COLOR_INFO);
+            setButtonBaseColor(btnDial, UiTheme.COLOR_INFO);
             lblSpeed.setText("↓ -- ↑ --");
             lblUptime.setText("时长: 未连接");
         }
@@ -391,10 +431,25 @@ public class MainHomePanel extends JPanel {
      * @param bg button background while busy
      */
     public void setDialProgress(String label, Color bg) {
+        dialBusy = true;
         btnDial.setEnabled(false);
-        if (label != null) btnDial.setText(label);
-        if (bg != null) btnDial.setBackground(bg);
+        if (label != null) {
+            dialProgressLabel = label;
+            btnDial.setText(label);
+        }
+        if (bg != null) {
+            setButtonBaseColor(btnDial, bg);
+        }
         btnDial.repaint();
+    }
+
+    /** Replay the recorded dial state so themed colors land on the right control state. */
+    private void replayDialState() {
+        if (dialBusy) {
+            setDialProgress(dialProgressLabel, UiTheme.COLOR_WARNING);
+        } else {
+            setOnlineStatus(online);
+        }
     }
 
     public void setDialEnabled(boolean enabled) {

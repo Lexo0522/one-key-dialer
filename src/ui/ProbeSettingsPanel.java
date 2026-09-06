@@ -11,7 +11,7 @@ import java.util.function.Consumer;
  * Probe settings tab: icmp / http / auto mode, host, URL, attempts, delay,
  * and a no-dial 「测试连通」 action.
  */
-public class ProbeSettingsPanel extends JPanel {
+public class ProbeSettingsPanel extends JPanel implements Themeable {
     public interface Host {
         void onProbeSettingsChanged();
 
@@ -39,27 +39,50 @@ public class ProbeSettingsPanel extends JPanel {
     private final JButton btnTest = new JButton("测试连通");
     private final JLabel lblResult = new JLabel(" ");
     private final Host host;
+    private JPanel contentPanel;
+    private JPanel formCard;
+    private JPanel hintCard;
     private volatile boolean testRunning;
 
     public ProbeSettingsPanel(Host host) {
         this.host = host;
         setLayout(new BorderLayout());
-        setBackground(UiTheme.COLOR_BG);
 
-        JPanel content = new JPanel();
-        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-        content.setBackground(UiTheme.COLOR_BG);
-        content.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
-        content.add(buildFormCard(host));
-        content.add(Box.createVerticalStrut(10));
-        content.add(buildHintCard());
-        content.add(Box.createVerticalGlue());
+        contentPanel = new JPanel();
+        contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
+        contentPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
+        formCard = buildFormCard(host);
+        contentPanel.add(formCard);
+        contentPanel.add(Box.createVerticalStrut(10));
+        hintCard = buildHintCard();
+        contentPanel.add(hintCard);
+        contentPanel.add(Box.createVerticalGlue());
 
-        JScrollPane scroll = new JScrollPane(content);
+        JScrollPane scroll = new JScrollPane(contentPanel);
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.getVerticalScrollBar().setUnitIncrement(16);
         scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         add(scroll, BorderLayout.CENTER);
+        restyle();
+    }
+
+    /** Re-apply every themed color from {@link UiTheme} (EDT). */
+    @Override
+    public void restyle() {
+        setBackground(UiTheme.COLOR_BG);
+        if (contentPanel != null) contentPanel.setBackground(UiTheme.COLOR_BG);
+        restyleCard(formCard);
+        restyleCard(hintCard);
+        lblResult.setForeground(UiTheme.COLOR_HINT);
+    }
+
+    private static void restyleCard(JPanel card) {
+        if (card == null) return;
+        card.setBackground(UiTheme.COLOR_CARD);
+        card.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(UiTheme.COLOR_BORDER),
+            BorderFactory.createEmptyBorder(12, 12, 12, 12)));
+        card.setAlignmentX(Component.LEFT_ALIGNMENT);
     }
 
     private JPanel buildFormCard(Host host) {

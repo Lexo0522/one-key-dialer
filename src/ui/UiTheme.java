@@ -9,10 +9,10 @@ import java.util.Locale;
 /**
  * Shared Swing look constants for extracted UI components.
  * <p>
- * Colors are resolved once at startup via {@link #init(String)}: components
- * capture the references when they are constructed, so a theme change needs an
- * app restart. Before {@link #init} runs (tests, static access) the light
- * palette is active.
+ * Colors are resolved by {@link #init(String)}: components capture the references
+ * when they are constructed, so a live theme switch re-runs {@code init} and then
+ * asks every {@link Themeable} to {@code restyle()}. Before {@link #init} runs
+ * (tests, static access) the light palette is active.
  */
 public final class UiTheme {
     /** CJK-capable UI font; falls back to a logical composite font when YaHei is absent. */
@@ -29,15 +29,23 @@ public final class UiTheme {
     public static Color COLOR_WARNING;
     public static Color COLOR_BG;
     public static Color COLOR_CARD;
-    public static Color COLOR_DARK;
     public static Color COLOR_BORDER;
     public static Color COLOR_BORDER_LIGHT;
     public static Color COLOR_HINT;
     public static Color COLOR_TABLE_GRID;
     public static Color COLOR_TABLE_SEL;
     public static Color COLOR_TABLE_HEADER;
+    public static Color COLOR_TABLE_SEL_FG;
+    public static Color COLOR_VIEWPORT_BG;
+    /** Console-style log areas: dark background in both palettes, themed text color. */
+    public static Color COLOR_CONSOLE_BG;
+    public static Color COLOR_CONSOLE_FG;
+    public static Color COLOR_STATUS_ONLINE;
+    public static Color COLOR_TITLED_BORDER;
 
     private static boolean dark;
+    /** Preference passed to the most recent {@link #init} — live-switch loop guard. */
+    private static String appliedPreference = SettingsSnapshot.THEME_SYSTEM;
 
     static {
         applyLight();
@@ -52,6 +60,9 @@ public final class UiTheme {
      */
     public static void init(String themePref) {
         dark = resolveDark(themePref);
+        appliedPreference = SettingsSnapshot.THEME_LIGHT.equals(themePref) ? SettingsSnapshot.THEME_LIGHT
+            : SettingsSnapshot.THEME_DARK.equals(themePref) ? SettingsSnapshot.THEME_DARK
+            : SettingsSnapshot.THEME_SYSTEM;
         if (dark) {
             applyDark();
         } else {
@@ -61,6 +72,11 @@ public final class UiTheme {
 
     public static boolean isDark() {
         return dark;
+    }
+
+    /** Preference passed to the most recent {@link #init} call. */
+    public static String appliedPreference() {
+        return appliedPreference;
     }
 
     private static boolean resolveDark(String themePref) {
@@ -105,13 +121,18 @@ public final class UiTheme {
         COLOR_WARNING = new Color(255, 193, 7);
         COLOR_BG = new Color(248, 249, 250);
         COLOR_CARD = Color.WHITE;
-        COLOR_DARK = new Color(40, 44, 52);
         COLOR_BORDER = new Color(209, 213, 219);
         COLOR_BORDER_LIGHT = new Color(218, 220, 224);
         COLOR_HINT = new Color(150, 150, 150);
         COLOR_TABLE_GRID = new Color(230, 230, 230);
         COLOR_TABLE_SEL = new Color(232, 240, 254);
         COLOR_TABLE_HEADER = new Color(245, 245, 245);
+        COLOR_TABLE_SEL_FG = Color.BLACK;
+        COLOR_VIEWPORT_BG = Color.WHITE;
+        COLOR_CONSOLE_BG = new Color(40, 44, 52);
+        COLOR_CONSOLE_FG = Color.WHITE;
+        COLOR_STATUS_ONLINE = new Color(22, 163, 74);
+        COLOR_TITLED_BORDER = new Color(100, 100, 100);
     }
 
     private static void applyDark() {
@@ -121,13 +142,18 @@ public final class UiTheme {
         COLOR_WARNING = new Color(255, 202, 44);
         COLOR_BG = new Color(30, 31, 34);
         COLOR_CARD = new Color(43, 45, 49);
-        COLOR_DARK = new Color(212, 215, 221);
         COLOR_BORDER = new Color(64, 67, 73);
         COLOR_BORDER_LIGHT = new Color(56, 59, 65);
         COLOR_HINT = new Color(138, 143, 152);
         COLOR_TABLE_GRID = new Color(56, 59, 65);
         COLOR_TABLE_SEL = new Color(38, 62, 92);
         COLOR_TABLE_HEADER = new Color(47, 50, 55);
+        COLOR_TABLE_SEL_FG = Color.WHITE;
+        COLOR_VIEWPORT_BG = new Color(43, 45, 49);
+        COLOR_CONSOLE_BG = new Color(24, 25, 28);
+        COLOR_CONSOLE_FG = new Color(212, 215, 221);
+        COLOR_STATUS_ONLINE = new Color(34, 197, 94);
+        COLOR_TITLED_BORDER = new Color(138, 143, 152);
     }
 
     private static String resolveCjkFontName() {

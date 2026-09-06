@@ -148,6 +148,45 @@ class SettingsBindingTest {
     }
 
     @Test
+    void restyleReplaysOnlineStateColors() {
+        MainHomePanel panel = newHomePanel();
+
+        panel.setOnlineStatus(true);
+        panel.restyle();
+        assertEquals(UiTheme.COLOR_ERROR, panel.getBtnDial().getBackground(),
+            "restyle must replay the online button color, not the constructor default");
+        assertEquals(UiTheme.COLOR_STATUS_ONLINE, panel.getStatusBar().getBackground());
+        assertTrue(panel.getBtnDial().isEnabled());
+
+        panel.setOnlineStatus(false);
+        panel.restyle();
+        assertEquals(UiTheme.COLOR_INFO, panel.getBtnDial().getBackground());
+        assertEquals(UiTheme.COLOR_INFO, panel.getStatusBar().getBackground());
+    }
+
+    @Test
+    void restyleReplaysBusyDialState() {
+        MainHomePanel panel = newHomePanel();
+
+        panel.setDialProgress(i18n.Messages.get("home.dial.dialing"), UiTheme.COLOR_WARNING);
+        panel.restyle();
+        assertFalse(panel.getBtnDial().isEnabled(), "busy state must survive a restyle");
+        assertEquals(UiTheme.COLOR_WARNING, panel.getBtnDial().getBackground());
+        assertEquals(i18n.Messages.get("home.dial.dialing"), panel.getBtnDial().getText());
+    }
+
+    private MainHomePanel newHomePanel() {
+        return new MainHomePanel(new MainHomePanel.Host() {
+            @Override public void onAccountSelected() { }
+            @Override public void openAccountManager() { }
+            @Override public void onAutoReconnectToggled(boolean enabled) { }
+            @Override public void onAutoStartToggled() { }
+            @Override public void saveSettings() { }
+            @Override public void onDialToggle() { }
+        }, new service.LogService(null));
+    }
+
+    @Test
     void settingsApplyRunsOnEdtThread() throws Exception {
         // Panels are created and applied on the EDT in production; the binding must work there.
         final MainHomePanel[] holder = new MainHomePanel[1];

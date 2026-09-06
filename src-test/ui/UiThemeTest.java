@@ -2,6 +2,7 @@ package ui;
 
 import org.junit.jupiter.api.Test;
 
+import java.awt.Color;
 import java.awt.Font;
 import java.util.Locale;
 
@@ -29,5 +30,20 @@ class UiThemeTest {
     void diagFontSharesResolvedCjkFamily() {
         // Locale.US: getFamily() returns the localized name (微软雅黑) in the default locale
         assertEquals(UiTheme.FONT_NAME_CN, UiTheme.FONT_DIAG.getFamily(Locale.US));
+    }
+
+    @Test
+    void initSwitchesPaletteAndRecordsPreference() {
+        UiTheme.init(model.SettingsSnapshot.THEME_DARK);
+        try {
+            assertEquals(model.SettingsSnapshot.THEME_DARK, UiTheme.appliedPreference());
+            assertTrue(UiTheme.isDark());
+            assertEquals(new Color(30, 31, 34), UiTheme.COLOR_BG);
+        } finally {
+            UiTheme.init(model.SettingsSnapshot.THEME_LIGHT);
+        }
+        assertEquals(model.SettingsSnapshot.THEME_LIGHT, UiTheme.appliedPreference());
+        assertFalse(UiTheme.isDark());
+        assertEquals(new Color(248, 249, 250), UiTheme.COLOR_BG);
     }
 }
