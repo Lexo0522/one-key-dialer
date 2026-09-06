@@ -41,17 +41,6 @@ Windows 校园网 PPPoE 图形拨号工具（Swing + RAS）：一键拨号/断�
 - 打包 EXE / MSI：JDK **26**（`jpackage` + `jlink --compress=zip-6`；最低建议 21+）
 - MSI 安装包：部分环境另需 WiX
 
-## 自动发布
-
-推送标签 `v<revision>`（如 `v1.1.5`）会触发 `.github/workflows/release.yml`：
-
-1. 校验标签与 `.mvn/maven.config` 中的 revision 一致
-2. windows-latest + JDK 26 上先跑全量测试，再用 `prepare_release.bat` 构建 ZIP / MSI / `SHA256SUMS.txt`
-3. 自动创建 GitHub Release 并上传三件套（幂等，可安全重跑；已存在时刷新资产）
-
-Gitee 镜像不在 CI 中自动同步。如需镜像，在 Gitee Release 网页端手动上传同名三件套，或在本地执行 `scripts/sync_release_to_gitee.ps1`（需要 `GITEE_TOKEN`）；Gitee 缺失某版本时客户端会自动降级 GitHub 线路。
-
-也可用 `workflow_dispatch` 只构建校验产物不发布。手动本地发布（`prepare_release.bat`）仍然可用。
 
 ## 在线更新验证
 
@@ -65,35 +54,8 @@ Gitee 镜像不在 CI 中自动同步。如需镜像，在 Gitee Release 网页�
 
 注意：安装目录不可写时 ZIP 更新会被脚本拒绝并提示改用 MSI。
 
-## 更新线路（Gitee 主 + GitHub 备）
 
-更新引擎按 `update.sources` 声明的顺序**串行**探测各线路，从不并发拉取：
 
-- **主线路 Gitee**：独立短超时（检查 8s）、允许 1 次重试；连接超时、网络错误、404/版本不存在、哈希校验失败均判定为线路失败并降级
-- **备用线路 GitHub**：版本与发布的唯一真相源；降级时会重新检查其 tag，**版本低于主线路已见版本时拒绝更新**（低版本备源不允许覆盖），高于主线路则告警后按真相源继续
-- 主线路「已是最新」是确定性成功答复，不会去查备源
-- **简单熔断**：某线路连续失败达到阈值（Gitee 2 次 / GitHub 3 次）后冷却 10 分钟不再尝试，冷却结束后放行一次探测，再失败立即重新冷却；成功即复位（内存态，重启复位）
-- **哈希门禁**：任何线路下载完成后必须通过 `SHA256SUMS.txt` 的 SHA-256 校验（校验失败会连同断点一起删除，坏字节不会带给下一线路）；主备线路 tag 不一致记录告警日志
-- **失败保护**：所有线路均失败、校验失败或安装启动失败时，本地现有版本不受影响，程序继续运行
-- 行为日志（界面日志 + `pppoe_log.txt`）记录线路切换、失败原因分类（连接超时/网络错误/版本不存在/哈希校验失败等）、tag 与 sha256
-
-### 配置
-
-默认值随包内置在 `update.properties`；可在数据目录放置同名 `update.properties` 逐键覆盖（改参数无需重新构建）：
-
-```properties
-update.sources=gitee,github              # 顺序即优先级，可增删自定义线路
-update.connectTimeoutMs=5000
-source.gitee.api=https://gitee.com/api/v5/repos/kate522/one-key-dialer/releases/latest
-source.gitee.checkTimeoutMs=8000         # 主线路独立短超时
-source.gitee.checkAttempts=2             # 1 次重试
-source.gitee.downloadAttempts=2
-source.gitee.stallTimeoutMs=30000
-source.gitee.breakerThreshold=2
-source.gitee.breakerCooldownMs=600000
-source.github.api=https://api.github.com/repos/Lexo0522/one-key-dialer/releases/latest
-# ...github 同构；enabled=false 可整条停用
-```
 
 ## 快速开始
 
@@ -123,17 +85,7 @@ mvn -q package
 
 版本号：由 `.mvn/maven.config` 中的 `-Drevision=…` 统一定义；Maven、jpackage 脚本和运行时 `AppVersion` 均从该值获得。发布标签必须是 `v<revision>`，例如 `v1.1.5`。
 
-## 发布产物约定
 
-执行 `prepare_release.bat` 会按当前 `revision` 构建 `release/` 下的三个文件：
-
-```text
-PPoEDialer-<revision>-windows.zip
-PPoEDialer-<revision>-windows.msi
-SHA256SUMS.txt
-```
-
-该脚本依赖 Windows PowerShell、JDK 21+（推荐 26）以及 MSI 打包所需的 WiX；它会先在 `release/.staging/` 构建，所有文件成功后才发布到 `release/`，只生成本地文件，不会创建或发布 GitHub Release。推送 `v<revision>` 标签即可由 GitHub Actions 自动创建 Release（见「自动发布」）。手动创建 GitHub Release 时，标签必须为 `v<revision>`，并且必须同时上传这三个文件。`SHA256SUMS.txt` 使用标准 SHA-256 格式，每行是两个空格分隔的 `哈希值  文件名`；更新器会在下载完成后以它校验安装包，缺失、格式不正确或不包含目标文件时会拒绝自动安装。
 
 ## 数据与安全
 
