@@ -39,6 +39,7 @@ class SettingsStoreJsonTest {
             .probe("http", "1.2.3.4", "http://example.test/204", 5, 250)
             .disconnectOnNoInternet(true)
             .updateCheckEnabled(false)
+            .uiTheme(SettingsSnapshot.THEME_DARK)
             .build();
 
         store.save(snapshot);
@@ -62,6 +63,21 @@ class SettingsStoreJsonTest {
         assertEquals(250, loaded.probeDelayMs);
         assertTrue(loaded.disconnectOnNoInternet);
         assertFalse(loaded.updateCheckEnabled);
+        assertEquals(SettingsSnapshot.THEME_DARK, loaded.uiTheme);
+    }
+
+    /**
+     * Documents written before the theme preference existed carry no uiTheme key;
+     * Gson leaves the mirror field null and the builder must fall back to system.
+     */
+    @Test
+    void missingUiThemeKeyFallsBackToSystem() throws Exception {
+        Files.write(file().toPath(), ("{\"schemaVersion\": 1, \"data\": {\"data\": {"
+            + "\"intervalSeconds\": 60, \"updateCheckEnabled\": true}}}").getBytes(StandardCharsets.UTF_8));
+        SettingsStore store = new SettingsStore(file());
+        SettingsSnapshot loaded = store.load();
+        assertEquals(60, loaded.intervalSeconds);
+        assertEquals(SettingsSnapshot.THEME_SYSTEM, loaded.uiTheme);
     }
 
     @Test

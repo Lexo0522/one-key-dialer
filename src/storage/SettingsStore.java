@@ -59,6 +59,7 @@ public final class SettingsStore {
         private int probeDelayMs;
         private boolean disconnectOnNoInternet;
         private boolean updateCheckEnabled;
+        private String uiTheme;
 
         SnapshotData() {
         }
@@ -82,6 +83,7 @@ public final class SettingsStore {
             probeDelayMs = s.probeDelayMs;
             disconnectOnNoInternet = s.disconnectOnNoInternet;
             updateCheckEnabled = s.updateCheckEnabled;
+            uiTheme = s.uiTheme;
         }
 
         SettingsSnapshot.Builder toBuilder() {
@@ -95,7 +97,8 @@ public final class SettingsStore {
                 .scheduledDisconnect(scheduledDisconnect, scheduledDisconnectHour, scheduledDisconnectMinute)
                 .probe(probeMode, probeHost, probeHttpUrl, probeAttempts, probeDelayMs)
                 .disconnectOnNoInternet(disconnectOnNoInternet)
-                .updateCheckEnabled(updateCheckEnabled);
+                .updateCheckEnabled(updateCheckEnabled)
+                .uiTheme(uiTheme);
         }
     }
 
