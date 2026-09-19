@@ -1,41 +1,59 @@
-# Build outputs
+# ---------------------------------------------------------------- 构建产物
+# 路径统一用前导斜杠锚定仓库根，避免误伤 build/windows/ 这类资源目录。
 build/bin/
-release/
-# 注：build/windows/ 与 build/appicon.png 是构建资源，必须提交；
-#     frontend/dist/ 也不能忽略——Wails 通过 go:embed 内嵌它（构建前靠 gitkeep 占位）
+build/*.jar
+build/MANIFEST.MF
+build/effective-pom.txt
+build/jpackage-input/
+build/logo.ico
+/release/
+/target/
+/output/
+/installer/
 
-# Go
+# 注：build/windows/ 与 build/appicon.png 是构建资源，必须提交。
+#     frontend/dist 目录也必须存在——Wails 用 go:embed all:frontend/dist 内嵌它，
+#     构建前靠 gitkeep 占位，真实产物由 npm run build / wails build 现生成。
+
+# ---------------------------------------------------------------------- Go
 *.exe
 *.dll
 *.syso
 *.test
 *.out
-vendor/
+/vendor/
 
-# 前端依赖
+# ------------------------------------------------------------------ 前端
 frontend/node_modules/
 
-# 前端构建产物：dist 目录本身必须存在（Wails 用 go:embed all:frontend/dist 内嵌），
-# 但只保留占位文件，真实产物由 `npm run build` / `wails build` 现生成。
+# dist 只提交占位文件
 frontend/dist/*
 !frontend/dist/gitkeep
 
-# Runtime data / secrets
+# Wails 的 npm 缓存指纹（每次 install 都会变）
+frontend/package.json.md5
+
+# --------------------------------------------------- 运行时数据与凭据（绝不入库）
 settings.json
 accounts.json
 history.json
 master.key
+
+# Java 时代的配置/日志残留：可能含明文账号密码
+pppoe_accounts.ini
+pppoe_settings.ini
+pppoe_history.csv
+pppoe_log.txt
+
 *.bak
 
-# Local agent / IDE / OS
+# ------------------------------------------------- 本地工具 / IDE / 系统文件
+.workbuddy/
+.claude/
+.zcode/
 CLAUDE.md
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
 *.log
-.claude/
-.zcode/
-
-# Wails npm 缓存指纹（每次 install 都会变）
-frontend/package.json.md5
