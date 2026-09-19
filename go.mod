@@ -1,6 +1,6 @@
 module github.com/Lexo0522/one-key-dialer
 
-go 1.26.0
+go 1.26.6
 
 require (
 	github.com/getlantern/systray v1.2.2
