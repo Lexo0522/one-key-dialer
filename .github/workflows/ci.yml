@@ -52,14 +52,14 @@ jobs:
             exit 1
           }
 
-      - name: go vet
-        run: go vet ./...
-
       - name: Build frontend
         working-directory: frontend
         run: |
           npm ci
           npm run build
+
+      - name: go vet
+        run: go vet ./...
 
       - name: go test
         run: go test ./... -count=1
