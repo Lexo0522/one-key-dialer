@@ -1,0 +1,293 @@
+:root {
+  --c-success: #22c55e;
+  --c-error: #dc3545;
+  --c-info: #007bff;
+  --c-warning: #ffc107;
+  --c-bg: #f8f9fa;
+  --c-card: #ffffff;
+  --c-border: #d1d5db;
+  --c-border-light: #dadce0;
+  --c-hint: #969696;
+  --c-text: #1f2328;
+  --c-text-sub: #5b6470;
+  --c-table-grid: #e6e6e6;
+  --c-table-sel: #e8f0fe;
+  --c-table-header: #f5f5f5;
+  --c-table-sel-fg: #000000;
+  --c-viewport: #ffffff;
+  --c-console-bg: #282c34;
+  --c-console-fg: #ffffff;
+  --c-status-online: #16a34a;
+  --c-titled-border: #646464;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: "Microsoft YaHei", "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  font-size: 13px;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100%;
+}
+
+/* ---------------- 通用控件 ---------------- */
+
+.card {
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.field-label {
+  color: var(--c-text);
+  white-space: nowrap;
+}
+
+.hint {
+  color: var(--c-hint);
+  font-size: 11px;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="number"],
+select {
+  background: var(--c-card);
+  color: var(--c-text);
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--c-info);
+}
+
+input[type="number"] {
+  width: 62px;
+}
+
+.btn {
+  background: var(--c-card);
+  color: var(--c-text);
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 5px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--c-bg);
+  border-color: var(--c-info);
+}
+
+.btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--c-info);
+  border-color: var(--c-info);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(.92);
+  background: var(--c-info);
+}
+
+.btn-danger {
+  background: var(--c-error);
+  border-color: var(--c-error);
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(.92);
+  background: var(--c-error);
+}
+
+/* 复选框 */
+.chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  line-height: 22px;
+}
+
+.chk input {
+  accent-color: var(--c-info);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+/* 控制台风格文本区 */
+.console {
+  background: var(--c-console-bg);
+  color: var(--c-console-fg);
+  font-family: Consolas, "Microsoft YaHei", monospace;
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+/* 表格 */
+table.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+table.grid th {
+  background: var(--c-table-header);
+  color: var(--c-text);
+  font-weight: 600;
+  text-align: left;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--c-table-grid);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+table.grid td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--c-table-grid);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+table.grid tbody tr:hover td {
+  background: var(--c-table-sel);
+  color: var(--c-table-sel-fg);
+}
+
+table.grid tbody tr.selected td {
+  background: var(--c-table-sel);
+  color: var(--c-table-sel-fg);
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--c-border);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------------- 模态对话框 ---------------- */
+.mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .38);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 900;
+}
+
+.dialog {
+  background: var(--c-card);
+  color: var(--c-text);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  min-width: 340px;
+  max-width: 560px;
+  max-height: 78vh;
+  overflow: auto;
+  padding: 14px 16px 12px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .28);
+}
+
+.dialog-title {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.dialog-body {
+  white-space: pre-wrap;
+  line-height: 1.7;
+  margin-bottom: 12px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.form-grid input {
+  width: 100%;
+}
+
+.pick-list {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+}
+
+.pick-item {
+  padding: 6px 9px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pick-item:hover {
+  background: var(--c-bg);
+}
+
+.pick-item.sel {
+  background: var(--c-table-sel);
+  color: var(--c-table-sel-fg);
+}

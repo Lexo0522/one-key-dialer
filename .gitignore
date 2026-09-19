@@ -1,34 +1,41 @@
 # Build outputs
-bin/
-bin-test/
-build/
-output/
-target/
-installer/
+build/bin/
 release/
+# 注：build/windows/ 与 build/appicon.png 是构建资源，必须提交；
+#     frontend/dist/ 也不能忽略——Wails 通过 go:embed 内嵌它（构建前靠 gitkeep 占位）
 
-# Runtime jars (deps resolved by Maven)
-lib/
+# Go
+*.exe
+*.dll
+*.syso
+*.test
+*.out
+vendor/
+
+# 前端依赖
+frontend/node_modules/
+
+# 前端构建产物：dist 目录本身必须存在（Wails 用 go:embed all:frontend/dist 内嵌），
+# 但只保留占位文件，真实产物由 `npm run build` / `wails build` 现生成。
+frontend/dist/*
+!frontend/dist/gitkeep
 
 # Runtime data / secrets
-pppoe_accounts.ini
-pppoe_settings.ini
-pppoe_history.csv
-pppoe_log.txt
-*.bak
 settings.json
 accounts.json
 history.json
 master.key
+*.bak
 
 # Local agent / IDE / OS
 CLAUDE.md
 .idea/
-*.iml
 .vscode/
 .DS_Store
 Thumbs.db
-*.class
 *.log
 .claude/
 .zcode/
+
+# Wails npm 缓存指纹（每次 install 都会变）
+frontend/package.json.md5

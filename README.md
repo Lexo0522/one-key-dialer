@@ -1,101 +1,102 @@
 # PPPoE校园网自动拨号工具
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v1.1.10-blue.svg)](https://github.com/Lexo0522/one-key-dialer)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)](https://github.com/Lexo0522/one-key-dialer)
 [![CI](https://github.com/Lexo0522/one-key-dialer/actions/workflows/ci.yml/badge.svg)](https://github.com/Lexo0522/one-key-dialer/actions/workflows/ci.yml)
 
-
-Windows 校园网 PPPoE 图形拨号工具（Swing + RAS）：一键拨号/断开、自动重连、定时任务、多账号、托盘与诊断。拨号优先走 Win32 `RasDial` API（密码不出进程命令行），不可用时回退 `rasdial.exe`。
+Windows 校园网 PPPoE 图形拨号工具：**Go + Wails v2 + Vue 3**。一键拨号/断开、自动重连、定时任务、多账号、托盘、网络诊断与在线更新。拨号走原生 Win32 `RasDialW`（密码只存在于进程内存，不落到命令行）。
 
 仓库：<https://github.com/Lexo0522/one-key-dialer>
 
-唯一入口：`com.lexo0522.ppoe.PPoEDialer`。装配在 `AppServices`，懒加载 Tab 在 `ui.MainTabsController`，账号 UI 在 `ui.AccountUiController`，更新 UI `UpdateCheckUi`，拨号前校验 `DialPrecheck`/`DialUiActions`，退出 `ShellShutdown`，进程入口 `AppLauncher`。拨号协调通过窄接口 `DialPort` / `DialView` / `DialEnvironment`（`DialOrchestrator`），RAS 封装在 `WindowsRasModule`，在线更新在 `UpdateModule`，业务在 `service/*`，持久化在 `storage/*`。版本号以 `.mvn/maven.config` 的 `revision` 为唯一来源。
+## 架构
+
+```
+main.go            Wails 入口（窗口、托盘、--autostart）
+app.go             Wails 绑定门面：Bootstrap / 拨号 / 设置 / 账号 / 诊断 / 更新
+app_internal.go    事件推送、状态机、DialView / DialEnvironment 实现
+tray.go            系统托盘菜单与气泡
+internal/
+  model/           设置 / 账号 / 历史 / 探测配置（JSON 字段与旧版一致）
+  platform/        RAS、DPAPI、注册表、电话簿、气泡通知（纯 syscall，无 cgo）
+  storage/         JSON 信封读写、原子替换、CSV 导入导出、ACL 收紧
+  service/         拨号编排、自动重连、定时任务、流量采样、监控、诊断
+  update/          双线路在线更新（Gitee 主 / GitHub 备）
+  i18n/            中英文案表
+  util/            格式化、脱敏、进程 IO
+frontend/          Vue 3 + Vite；wailsjs/ 为自动生成的 Go 绑定
+```
+
+前端只做展示与输入采集，**全部业务逻辑在 Go 侧**：账号密码经 DPAPI 加密落盘、拨号凭据一次性使用后立即清零、更新包强制 HTTPS + SHA-256 校验。
 
 ## 功能
 
-- 拨号/断开，固定 RAS 连接名 `pppoe_native_java`（UI「昵称」仅账号显示名）
-- 断网自动重连、定时拨号/断开
-- **统一网络探测**：自动重连 / 拨号后确认 /「网络探测」Tab 共用探测配置（icmp / http / auto）
-- 多账号；密码仅以 **Windows DPAPI**（CurrentUser）保护后存入 `accounts.json`；DPAPI 不可用或解密失败时不持久化、不加载密码，拨号前需重新输入
-- **网络探测** tab：icmp / http / auto，以及 **「测试连通」**（不拨号）
-- 拨号成功后外网确认；可选无外网自动断开；历史可记 `RAS成功无外网`
-- 历史记录、**统计** tab、网络诊断（共享后台调度）、系统托盘（切换账号 / 拨号 / 检查更新）
-- 诊断页可 **选择 PPPoE 设备** 并 **重写电话簿**
-- 开机自启动（`HKCU\...\Run`，以注册表为准）
-- 启动后可选静默检查更新（主页「启动时检查更新」）
-- **主备双线路在线更新**：主线路 Gitee Release（国内友好），备用线路 GitHub Release（版本唯一真相源）；串行执行、主线路失败自动降级，绝不并发拉取。比较 `AppVersion` 与最新 Release tag；仅下载带 `SHA256SUMS.txt` 且哈希校验通过的 zip/msi/exe 到 `%APPDATA%\PPoEDialer\updates\`；安装进程确认启动后才退出，全程失败保留当前版本
-- 托盘「检查更新」始终可用；无匹配安装包时回退到打开发布页
-- 可选 **FlatLaf**（Maven 依赖 `com.formdev:flatlaf`）；缺失则用系统 L&F
-- **主题**：跟随系统 / 浅色 / 深色（主页设置，重启后生效；跟随系统读取 Windows 应用深浅色）
-- **界面语言**：简体中文（默认）与英文（跟随系统语言；基于 ResourceBundle，`i18n/`）
+- 拨号/断开，固定 RAS 连接名 `pppoe_native_java`（界面「昵称」仅为显示名）
+- 断网自动重连、定时拨号/断开（分钟对齐）
+- **统一网络探测**：自动重连 / 拨号后确认 / 网络探测页共用一套配置（icmp / http / auto）
+- 多账号管理；密码以 **Windows DPAPI**（CurrentUser）保护后存入 `accounts.json`，界面列表永不回传明文
+- 拨号成功后外网确认；可选「无外网时自动断开宽带」；历史可记 `RAS成功无外网`
+- 历史记录（可导出 CSV）、统计、网络诊断（Ping/IPConfig/Tracert/FlushDNS/连接状态/电话簿/选择 PPPoE 设备/重写电话簿）
+- 系统托盘：显示窗口、拨号、断开、切换账号、检查更新、退出；关闭窗口仅隐藏到托盘
+- 开机自启动（`HKCU\...\Run`，以注册表为准，设置项仅用于启动时修复）
+- **主备双线路在线更新**：主线路 Gitee Release，备用线路 GitHub Release；串行执行、主线路失败自动降级、按线路熔断。仅下载带 `SHA256SUMS.txt` 且哈希校验通过的包到 `%APPDATA%\PPoEDialer\updates\`，支持断点续传与停滞看门狗；安装进程确认启动后才退出，全程失败保留当前版本
+- 主题：跟随系统 / 浅色 / 深色（切换立即生效）；界面语言：简体中文 / 英文
 
 ## 数据存储
 
-应用数据（`settings.json`、`accounts.json`、`history.json`，含 `schemaVersion`）位于数据目录（打包版为程序目录，开发时为工作目录，均写入失败时回退 `%APPDATA%\PPoEDialer`）。全部写入为原子替换；非法 JSON、未知 `schemaVersion` 或 I/O 失败会明确报告并安全回退默认值。旧版 `pppoe_settings.ini` / `pppoe_accounts.ini` / `pppoe_history.csv` / `master.key` 不会被读取、转换或删除。
+`settings.json`、`accounts.json`、`history.json` 位于数据目录（打包版为程序目录，开发时为工作目录，均不可写时回退 `%APPDATA%\PPoEDialer`）。写入为原子替换，JSON 根节点带 `schemaVersion`，非法内容会明确报告并安全回退默认值。
 
 ## 系统要求
 
-- Windows 10/11
-- 构建：Maven 3.9+（`pom.xml` + JUnit 5 under `src-test/`；`compiler.release=17`）
-- 打包 EXE / MSI：JDK **26**（`jpackage` + `jlink --compress=zip-6`；最低建议 21+）
-- MSI 安装包：部分环境另需 WiX
-
-
-## 在线更新验证
-
-发布新版本后，可按以下步骤验证在线更新闭环：
-
-
-1. 托盘 →「检查更新」：应提示发现新版本并推荐安装包
-   - 便携版（安装目录可写）推荐 ZIP；MSI 安装版（Program Files）推荐 MSI
-2. 「下载并安装」→ 进度条 → SHA-256 校验 → 程序退出 → `apply_update.bat` 应用更新并重启
-3. 重启后主页标题应显示新版本号
-
-注意：安装目录不可写时 ZIP 更新会被脚本拒绝并提示改用 MSI。
-
-
-
+- 运行：Windows 10/11（WebView2 Runtime）
+- 构建：Go 1.24+、Node 22+（前端）、Wails CLI v2
 
 ## 快速开始
 
-```bat
-compile_and_run.bat      :: Maven 打包并运行
-run_tests.bat            :: mvn test
-build_jpackage.bat       :: Maven package + jpackage app-image
-build_msi.bat            :: MSI（需要 WiX）
-prepare_release.bat      :: ZIP + MSI + SHA256SUMS.txt
-运行程序.bat
+```bash
+# 开发模式（热重载）
+wails dev
+
+# 构建 Windows 可执行文件
+wails build                    # → build/bin/PPoEDialer.exe
+
+# 单独构建前端（浏览器 dev 模式会自动降级到 mock 后端）
+cd frontend && npm install && npm run dev
+
+# 检查与测试
+gofmt -l . && go vet ./... && go test ./...
 ```
 
-或直接使用 Maven：
+`version.txt` 是版本号的唯一来源（裸 semver，如 `1.1.11`），构建时经 `-ldflags` 注入。发布标签必须是 `v<version.txt>`，例如 `v1.1.11`——CI 会校验一致性。
 
-```bat
-mvn -q test
-mvn -q package
-```
+## 发布
 
-推荐运行 JVM 参数（启动脚本 / jpackage 已写入，可降低默认大堆下的 Working Set）：
+推送 tag `v*` 触发 `.github/workflows/release.yml`，产出更新器依赖的三件套并发布 Release：
 
-```text
--Xms16m -Xmx96m -XX:+UseSerialGC -XX:MaxMetaspaceSize=96m -Dfile.encoding=UTF-8
-```
+- `PPoEDialer-<version>-windows.zip`
+- `PPoEDialer-<version>-windows.msi`
+- `SHA256SUMS.txt`（严格格式 `<hash>  <filename>`）
 
-工程化入口：`mvn -Pcoverage test` 生成 JaCoCo 覆盖率报告（CI 在 JDK 17 腿自动上传）；`mvn -Perrorprone compile` 运行 Error Prone 静态分析（需要 JDK 17–25，发现项以 warning 呈现）。
+**产物契约不可随意更改**：`internal/update` 按文件名打分选包（安装目录可写时优先 ZIP，否则 MSI），且拒绝安装未出现在 `SHA256SUMS.txt` 中的文件。
 
-版本号：由 `.mvn/maven.config` 中的 `-Drevision=…` 统一定义；Maven、jpackage 脚本和运行时 `AppVersion` 均从该值获得。发布标签必须是 `v<revision>`，例如 `v1.1.5`。
+配置了 `GITEE_TOKEN` / `GITEE_REPO` 时，`scripts/sync_release_to_gitee.ps1` 会把 Release 镜像到 Gitee（`continue-on-error`，失败不阻断发布）。
 
+## 在线更新验证
 
+1. 托盘 →「检查更新」：应提示发现新版本并推荐安装包
+   - 便携版（安装目录可写）推荐 ZIP；MSI 安装版（Program Files）推荐 MSI
+2. 「下载并安装」→ 进度条 → SHA-256 校验 → 程序退出 → 更新脚本应用并重启
+3. 重启后标题栏应显示新版本号
+
+安装目录不可写时 ZIP 更新会被脚本拒绝并提示改用 MSI。
 
 ## 数据与安全
 
 - 账号导出默认**不含密码**；含密码导出需二次确认
 - 密码持久化仅经 DPAPI（`DPAPI1:` 前缀 blob）；不生成任何明文密钥文件
-- 拨号优先通过 **JNA 调用 Win32 `RasDialW`**（`RASDIALPARAMS` 结构体传参，密码不出进程命令行）；原生绑定不可用时回退 `rasdial.exe`，并使用 `ProcessBuilder` 参数数组避免 `cmd /c` 拼接
-- `accounts.json` / `settings.json` 写入后按 **NTFS ACL** 限制为 所有者 + SYSTEM + Administrators（POSIX 文件系统走等价标志位）
-- 进程内密码尽量 `char[]` 并用后清零（`DialCredentials` 为一次性凭据；结构体在拨号后清零）
-- 日志对 `password=` / `pwd=` 等模式做简单脱敏；托盘提示账号尾号遮罩
-- 更新下载强制 HTTPS（不跟随降级重定向），仅安装通过 `SHA256SUMS.txt` 校验的安装包
+- 拨号调用原生 `RasDialW`，密码经结构体传入，不出现在命令行；凭据为一次性对象，用后清零
+- `accounts.json` / `settings.json` 写入后经 NTFS ACL 限制为所有者 + SYSTEM + Administrators
+- 日志对 `password=` / `pwd=` 等模式脱敏；托盘提示账号尾号遮罩
+- 更新下载强制 HTTPS（不接受降级重定向），仅安装通过 `SHA256SUMS.txt` 校验的包
 - DPAPI 仅保护本机当前用户密钥；同用户恶意进程仍可能读取——比硬编码强，不是 HSM
 - 若账号文件曾泄露，请在学校/运营商侧修改密码
 

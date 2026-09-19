@@ -6,97 +6,78 @@ on:
   pull_request:
     branches: [main, master]
 
+env:
+  GO_VERSION: '1.24'
+  NODE_VERSION: '22'
+
 jobs:
-  test:
+  verify:
     runs-on: windows-latest
-    strategy:
-      matrix:
-        java: ['17', '26']
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up JDK ${{ matrix.java }}
-        uses: actions/setup-java@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          distribution: temurin
-          java-version: ${{ matrix.java }}
-          cache: maven
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Verify canonical version
-        shell: cmd
+        shell: pwsh
         run: |
-          set "APP_VER="
-          for /f "tokens=2 delims==" %%A in ('findstr /b /c:"-Drevision=" ".mvn\maven.config"') do set "APP_VER=%%A"
-          if not defined APP_VER (
-            echo revision missing from .mvn\maven.config
-            exit /b 1
-          )
-          findstr /l /c:"<version>${revision}</version>" pom.xml >nul
-          if errorlevel 1 (
-            echo pom.xml must use ^<version^>${revision}^</version^> as its project version
-            exit /b 1
-          )
-          findstr /l /c:"app.version=${revision}" version.properties >nul
-          if errorlevel 1 (
-            echo version.properties must use app.version=${revision}
-            exit /b 1
-          )
-          echo Canonical version: %APP_VER%
+          $rev = (Get-Content version.txt -Raw).Trim()
+          if (-not $rev) {
+            Write-Error "version.txt is empty - it is the single source of truth for the app version"
+            exit 1
+          }
+          if ($rev -notmatch '^\d+\.\d+\.\d+$') {
+            Write-Error "version.txt must be a bare semver (got '$rev')"
+            exit 1
+          }
+          Add-Content $env:GITHUB_ENV "APP_VERSION=$rev"
+          Write-Host "Canonical version: $rev"
 
-      - name: Maven JUnit with coverage
-        if: matrix.java == '17'
-        run: mvn -B -q clean test -Pcoverage
+      - name: gofmt check
+        shell: pwsh
+        run: |
+          $bad = gofmt -l .
+          if ($bad) {
+            Write-Error "not gofmt-clean:`n$bad"
+            exit 1
+          }
 
-      - name: Error Prone static analysis
-        if: matrix.java == '17'
-        continue-on-error: true
-        run: mvn -B -q compile -Perrorprone
+      - name: go vet
+        run: go vet ./...
 
-      - name: Maven JUnit
-        if: matrix.java != '17'
-        run: mvn -B -q clean test
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
 
-      - name: Upload coverage report
-        if: matrix.java == '17'
+      - name: go test
+        run: go test ./... -count=1
+
+      - name: Build app (wails)
+        shell: pwsh
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          wails build -platform windows/amd64
+          if (-not (Test-Path build/bin/PPoEDialer.exe)) {
+            Write-Error "build/bin/PPoEDialer.exe missing"
+            exit 1
+          }
+
+      - name: Upload app binary
         uses: actions/upload-artifact@v5
         with:
-          name: coverage-report
-          path: target/site/jacoco/
-          if-no-files-found: error
-
-  package:
-    needs: test
-    runs-on: windows-latest
-    if: github.event_name == 'push'
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up JDK 26
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '26'
-          cache: maven
-
-      - name: Build app-image
-        shell: cmd
-        env:
-          CI: "true"
-          GITHUB_ACTIONS: "true"
-        run: |
-          call build_jpackage.bat
-          if errorlevel 1 (
-            echo app-image build script failed
-            exit /b 1
-          )
-          if not exist output\PPoEDialer\PPoEDialer.exe (
-            echo app-image missing
-            exit /b 1
-          )
-
-      - name: Upload app-image
-        uses: actions/upload-artifact@v5
-        with:
-          name: PPoEDialer-app-image
-          path: output/PPoEDialer
+          name: PPoEDialer-exe
+          path: build/bin/PPoEDialer.exe
           if-no-files-found: error

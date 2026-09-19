@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX v3 source for the PPoEDialer MSI.
+
+  The in-app updater falls back to this MSI when the install directory is not
+  writable (see internal/update), so it must stay a per-machine install that
+  only ever replaces the single EXE.
+
+  Candle variables (passed on the command line):
+    -dVersion=X.Y.Z         MSI ProductVersion; must be numeric only
+    -dSrcDir=<path>         directory containing PPoEDialer.exe
+    -dIconPath=<file>       icon shown in Programs and Features
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+  <?define ProductName = "PPoEDialer" ?>
+  <?define Manufacturer = "Lexo0522" ?>
+
+  <Product Id="*"
+           Name="$(var.ProductName)"
+           Language="2052"
+           Codepage="936"
+           Version="$(var.Version)"
+           Manufacturer="$(var.Manufacturer)"
+           UpgradeCode="{8F6B2A41-5C3D-4E7A-9B12-6D0F4A7C2E31}">
+
+    <Package InstallerVersion="200"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="PPPoE 校园网拨号工具"
+             Comments="PPPoE campus network dialer"
+             Manufacturer="$(var.Manufacturer)"
+             Languages="2052"
+             SummaryCodepage="936"/>
+
+    <!-- Always remove a previous version before installing this one. -->
+    <MajorUpgrade Schedule="afterInstallValidate"
+                  DowngradeErrorMessage="已安装了更高版本的 $(var.ProductName)。"/>
+
+    <Media Id="1" Cabinet="app.cab" EmbedCab="yes"/>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="$(var.ProductName)"/>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="AppProgramMenuFolder" Name="$(var.ProductName)"/>
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="{2D9E1C77-4A58-4F0B-8E63-1C7B5D9A0F42}">
+        <File Id="PPoEDialerExe"
+              Name="PPoEDialer.exe"
+              Source="$(var.SrcDir)\PPoEDialer.exe"
+              KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="AppProgramMenuFolder">
+      <Component Id="ApplicationShortcut" Guid="{5A3F8B29-7C64-4D1E-9A08-3E5B6C7D2F14}">
+        <Shortcut Id="AppStartMenuShortcut"
+                  Name="$(var.ProductName)"
+                  Description="PPPoE 校园网拨号工具"
+                  Target="[INSTALLFOLDER]PPoEDialer.exe"
+                  WorkingDirectory="INSTALLFOLDER"/>
+        <RemoveFolder Id="CleanUpShortcut" Directory="AppProgramMenuFolder" On="uninstall"/>
+        <RegistryValue Root="HKCU"
+                       Key="Software\$(var.Manufacturer)\$(var.ProductName)"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="ProductFeature" Title="$(var.ProductName)" Level="1">
+      <ComponentRef Id="MainExecutable"/>
+      <ComponentRef Id="ApplicationShortcut"/>
+    </Feature>
+
+    <!-- Keep the pretty minimal-dialog UI; no reboot prompts. -->
+    <Property Id="ARPHELPLINK" Value="https://github.com/Lexo0522/one-key-dialer"/>
+    <Property Id="ARPPRODUCTICON" Value="AppIcon"/>
+    <Icon Id="AppIcon" SourceFile="$(var.IconPath)"/>
+  </Product>
+</Wix>

@@ -1,8 +1,12 @@
 name: Release
 
-# Pushing tag v<revision> builds and publishes the GitHub Release with the
+# Pushing tag v<version.txt> builds and publishes the GitHub Release with the
 # three artifacts the in-app updater expects (ZIP + MSI + SHA256SUMS.txt).
 # workflow_dispatch builds and verifies the assets without publishing.
+#
+# The artifact contract is load-bearing: internal/update scores assets by name
+# (.zip preferred when the install dir is writable, .msi otherwise) and refuses
+# to install anything not listed in SHA256SUMS.txt. Do not rename the files.
 
 on:
   push:
@@ -16,37 +20,64 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+env:
+  GO_VERSION: '1.24'
+  NODE_VERSION: '22'
+
 jobs:
   release:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
 
-      - name: Verify tag matches canonical revision
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Verify tag matches canonical version
         shell: pwsh
         run: |
-          $rev = (Get-Content .mvn/maven.config |
-            Where-Object { $_ -like '-Drevision=*' }) -replace '-Drevision=', ''
+          $rev = (Get-Content version.txt -Raw).Trim()
           if (-not $rev) {
-            Write-Error "revision missing from .mvn/maven.config"
+            Write-Error "version.txt is empty"
             exit 1
           }
           $tag = "${{ github.ref_name }}"
-          if ("v$rev" -ne $tag) {
-            Write-Error "tag '$tag' does not match revision '$rev' (.mvn/maven.config requires tag v$rev)"
+          if ("${{ github.ref_type }}" -eq "tag") {
+            if ($tag -ne "v$rev") {
+              Write-Error "tag '$tag' does not match version.txt (requires tag v$rev)"
+              exit 1
+            }
+          } else {
+            $tag = "v$rev"
+          }
+          Add-Content $env:GITHUB_ENV "APP_VERSION=$rev"
+          Add-Content $env:GITHUB_ENV "TAG=$tag"
+          Write-Host "Canonical version: $rev -> tag $tag"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Run unit tests
+        run: go test ./... -count=1
+
+      - name: Build executable (wails)
+        shell: pwsh
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          wails build -platform windows/amd64 -clean
+          if (-not (Test-Path build/bin/PPoEDialer.exe)) {
+            Write-Error "build/bin/PPoEDialer.exe missing"
             exit 1
           }
-          Add-Content $env:GITHUB_ENV "TAG=$tag"
 
-      - name: Set up JDK 26
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '26'
-          cache: maven
-
-      - name: Ensure WiX toolset (required by jpackage --type msi)
+      - name: Ensure WiX toolset v3 (candle/light for the MSI)
         shell: pwsh
         run: |
           $wixBin = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
@@ -63,26 +94,41 @@ jobs:
             }
           }
 
-      - name: Run unit tests
-        run: mvn -B test
-
-      - name: Build release assets (ZIP + MSI + SHA256SUMS)
-        shell: cmd
-        env:
-          CI: "true"
-          GITHUB_ACTIONS: "true"
+      - name: Package ZIP + MSI + SHA256SUMS
+        shell: pwsh
         run: |
-          call prepare_release.bat
-          if errorlevel 1 (
-            echo prepare_release.bat failed
-            exit /b 1
-          )
+          $rev = $env:APP_VERSION
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          $zip = "release/PPoEDialer-$rev-windows.zip"
+          $msi = "release/PPoEDialer-$rev-windows.msi"
+
+          Compress-Archive -Path build/bin/PPoEDialer.exe -DestinationPath $zip -Force
+
+          $wixSrc = "build/windows/installer/Product.wxs"
+          & candle.exe -nologo -out release\ `
+            -dVersion="$rev" `
+            -dSrcDir="build/bin" `
+            -dIconPath="build/windows/icon.ico" `
+            $wixSrc
+          if ($LASTEXITCODE -ne 0) { Write-Error "candle.exe failed"; exit 1 }
+
+          & light.exe -nologo -out $msi -ext WixUIExtension release\Product.wixobj
+          if ($LASTEXITCODE -ne 0) { Write-Error "light.exe failed"; exit 1 }
+
+          # SHA256SUMS.txt: "<hash>  <filename>" — parsed strictly by internal/update.
+          $zipName = [System.IO.Path]::GetFileName($zip)
+          $msiName = [System.IO.Path]::GetFileName($msi)
+          $lines = @()
+          foreach ($name in @($zipName, $msiName)) {
+            $h = (Get-FileHash -Algorithm SHA256 (Join-Path release $name)).Hash.ToLowerInvariant()
+            $lines += "$h  $name"
+          }
+          Set-Content -Path release/SHA256SUMS.txt -Value $lines -Encoding ascii
 
       - name: Verify release assets
         shell: pwsh
         run: |
-          $rev = (Get-Content .mvn/maven.config |
-            Where-Object { $_ -like '-Drevision=*' }) -replace '-Drevision=', ''
+          $rev = $env:APP_VERSION
           foreach ($f in @(
               "release/PPoEDialer-$rev-windows.zip",
               "release/PPoEDialer-$rev-windows.msi",
@@ -118,7 +164,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = $env:TAG
-          $rev = $tag.Substring(1)
+          $rev = $env:APP_VERSION
           $files = @(
             "release/PPoEDialer-$rev-windows.zip",
             "release/PPoEDialer-$rev-windows.msi",
@@ -134,3 +180,19 @@ jobs:
               --verify-tag --title "PPoEDialer $tag" --generate-notes
           }
           Write-Host "Release $tag published"
+
+      - name: Mirror release to Gitee
+        if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_REPO: ${{ vars.GITEE_REPO }}
+          TAG: ${{ env.TAG }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (-not $env:GITEE_TOKEN -or -not $env:GITEE_REPO) {
+            Write-Host "GITEE_TOKEN / GITEE_REPO not configured - skipping mirror"
+            exit 0
+          }
+          ./scripts/sync_release_to_gitee.ps1
