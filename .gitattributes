@@ -1,0 +1,19 @@
+# gofmt 规范要求 Go 源码为 LF。Windows 上 core.autocrlf=true 会在检出时把
+# 文件写成 CRLF，导致 `gofmt -l .` 把全部源文件判为「未格式化」——CI 因此
+# 全量失败，而仓库里存的其实一直是 LF。这里显式锁定行尾，杜绝环境差异。
+*.go   text eol=lf
+*.js   text eol=lf
+*.vue  text eol=lf
+*.ts   text eol=lf
+*.css  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.wxs  text eol=lf
+*.nsi  text eol=lf
+*.nsh  text eol=lf
+
+# 二进制资源不做任何转换
+*.ico  binary
+*.png  binary
+*.exe  binary
