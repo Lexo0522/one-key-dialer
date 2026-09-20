@@ -70,17 +70,6 @@ gofmt -l . && go vet ./... && go test ./...
 
 `version.txt` 是版本号的唯一来源（裸 semver，如 `1.1.11`），构建时经 `-ldflags` 注入。发布标签必须是 `v<version.txt>`，例如 `v1.1.11`——CI 会校验一致性。
 
-## 发布
-
-推送 tag `v*` 触发 `.github/workflows/release.yml`，产出更新器依赖的三件套并发布 Release：
-
-- `PPoEDialer-<version>-windows.zip`
-- `PPoEDialer-<version>-windows.msi`
-- `SHA256SUMS.txt`（严格格式 `<hash>  <filename>`）
-
-**产物契约不可随意更改**：`internal/update` 按文件名打分选包（安装目录可写时优先 ZIP，否则 MSI），且拒绝安装未出现在 `SHA256SUMS.txt` 中的文件。
-
-配置了 `GITEE_TOKEN` / `GITEE_REPO` 时，`scripts/sync_release_to_gitee.ps1` 会把 Release 镜像到 Gitee（`continue-on-error`，失败不阻断发布）。
 
 ## 在线更新验证
 
