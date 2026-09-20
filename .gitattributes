@@ -1,6 +1,19 @@
 # gofmt 规范要求 Go 源码为 LF。Windows 上 core.autocrlf=true 会在检出时把
 # 文件写成 CRLF，导致 `gofmt -l .` 把全部源文件判为「未格式化」——CI 因此
 # 全量失败，而仓库里存的其实一直是 LF。这里显式锁定行尾，杜绝环境差异。
+#
+# 策略分两层：
+#   1) 基线：所有文件按内容自动识别文本，文本一律 LF。这样 go.sum、LICENSE、
+#      version.txt、*.properties、*.manifest、index.html 等未逐一枚举的类型
+#      也不会因本地 autocrlf 设置而漂移成 CRLF（"CRLF will be replaced by LF"
+#      告警即源于此）。
+#   2) 覆盖：显式列出文本类型（意图自证）与二进制类型（防止 sniff 误判）。
+#
+# 注意：同一属性上后出现的规则优先，故基线必须写在最前面。
+
+* text=auto eol=lf
+
+# ---------------------------------------------------------- 明确锁定为 LF 的文本
 *.go   text eol=lf
 *.js   text eol=lf
 *.vue  text eol=lf
@@ -13,7 +26,10 @@
 *.nsi  text eol=lf
 *.nsh  text eol=lf
 
-# 二进制资源不做任何转换
+# ------------------------------------------------------------ 二进制资源不转换
 *.ico  binary
 *.png  binary
 *.exe  binary
+*.dll  binary
+*.msi  binary
+*.jar  binary
