@@ -77,14 +77,14 @@ func (a *App) probeConfig() model.ProbeConfig {
 }
 
 func (a *App) accountDTOs() []AccountDTO {
-	accounts := a.accounts.Accounts()
-	out := make([]AccountDTO, 0, len(accounts))
-	for _, acc := range accounts {
+	views := a.accounts.Views()
+	out := make([]AccountDTO, 0, len(views))
+	for _, v := range views {
 		out = append(out, AccountDTO{
-			Name:        acc.Name,
-			Username:    acc.Username,
-			Remark:      acc.Remark,
-			HasPassword: !acc.IsPasswordEmpty(),
+			Name:        v.Name,
+			Username:    v.Username,
+			Remark:      v.Remark,
+			HasPassword: v.HasPassword,
 		})
 	}
 	return out

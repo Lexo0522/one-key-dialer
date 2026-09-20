@@ -338,10 +338,18 @@ func (a *App) SetAutoStart(enabled bool) bool {
 func (a *App) GetAccounts() []AccountDTO { return a.accountDTOs() }
 
 // SaveAccounts 用前端提供的完整列表替换账号并落盘。
+// 前端快照不含明文密码：某行未填新密码但声明"已保存"（hasPassword）时，
+// 按账号名从旧账号继承密码，避免整列替换把已存密码抹掉。
 func (a *App) SaveAccounts(rows []AccountDTO) {
 	list := make([]*model.Account, 0, len(rows))
-	for _, r := range rows {
+	for i, r := range rows {
 		acc := model.NewAccount(r.Name, r.Username, r.Password, r.Remark)
+		if r.Password == "" && r.HasPassword {
+			if pw := a.accounts.PasswordForAccount(r.Username, i); len(pw) > 0 {
+				acc.SetPasswordBytes(pw)
+				model.ClearBytes(pw)
+			}
+		}
 		list = append(list, acc)
 	}
 	a.accounts.ApplyEdits(list)
@@ -364,9 +372,13 @@ func (a *App) SwitchAccount(index int) {
 	}
 }
 
-// UpdateHomeFields 把主页输入回填到当前账号（不落盘，退出/切换时保存）。
-func (a *App) UpdateHomeFields(name, username, password string) {
-	a.accounts.PullFromUi(name, username, password)
+// DialCurrentAccount 用当前账号已保存的凭据拨号（密码全程不出后端）。
+// 账号未设置密码时交由预检层提示，返回 false 表示拨号未受理。
+func (a *App) DialCurrentAccount() bool {
+	if acc := a.accounts.CurrentOrNil(); acc != nil {
+		a.setPending(acc.Username, acc.Password())
+	}
+	return a.orch.DialUser()
 }
 
 // ExportAccounts 导出账号 CSV；withPassword 为 true 时含明文密码。
@@ -380,7 +392,21 @@ func (a *App) ExportAccounts(withPassword bool) string {
 	if err != nil || path == "" {
 		return ""
 	}
-	if err := storage.SaveCsv(path, a.accounts.Accounts(), withPassword); err != nil {
+	var accounts []*model.Account
+	if withPassword {
+		// 含密码导出必须取带密码快照，用后立即清零
+		accounts = a.accounts.SnapshotWithPasswords()
+		defer func() {
+			for _, acc := range accounts {
+				if acc != nil {
+					acc.ClearPassword()
+				}
+			}
+		}()
+	} else {
+		accounts = a.accounts.Accounts()
+	}
+	if err := storage.SaveCsv(path, accounts, withPassword); err != nil {
 		a.logSvc.Error(i18n.Tf("export.failed", err.Error()))
 		return ""
 	}
@@ -402,7 +428,9 @@ func (a *App) ImportAccounts() int {
 		a.logSvc.Error(i18n.Tf("import.failed", err.Error()))
 		return 0
 	}
-	list := a.accounts.Accounts()
+	// 导入前必须取带密码快照：Accounts() 是无密码快照，
+	// 直接整列 ApplyEdits 会把所有已存密码抹掉。
+	list := a.accounts.SnapshotWithPasswords()
 	list = append(list, imported...)
 	a.accounts.ApplyEdits(list)
 	a.accounts.SaveInBackground()

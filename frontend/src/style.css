@@ -3,7 +3,7 @@
   --c-error: #dc3545;
   --c-info: #007bff;
   --c-warning: #ffc107;
-  --c-bg: #f8f9fa;
+  --c-bg: #f3f5f9;
   --c-card: #ffffff;
   --c-border: #d1d5db;
   --c-border-light: #dadce0;
@@ -19,6 +19,26 @@
   --c-console-fg: #ffffff;
   --c-status-online: #16a34a;
   --c-titled-border: #646464;
+  --c-sidebar: #ffffff;
+  --c-sidebar-sub: #6b7280;
+  --c-sidebar-active: #007bff;
+  --c-sidebar-active-bg: rgba(0, 123, 255, .10);
+  --c-hover: rgba(0, 0, 0, .045);
+  --c-accent-soft: rgba(0, 123, 255, .10);
+  --c-shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 4px 16px rgba(16, 24, 40, .07);
+  --c-sidebar-shadow: 4px 0 16px rgba(16, 24, 40, .05);
+  --c-log-bg: #f6f8fa;
+  --c-switch-off: #cbd2d9;
+  --c-chart-up: #f97316;
+  --c-chart-down: #3b82f6;
+  --c-chart-grid: rgba(0, 0, 0, .07);
+  --c-chart-axis: #9aa3af;
+
+  --radius-lg: 12px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+  --sidebar-w: 208px;
+  --ease: cubic-bezier(.4, 0, .2, 1);
 }
 
 * {
@@ -46,14 +66,42 @@ body {
   height: 100%;
 }
 
-/* ---------------- 通用控件 ---------------- */
+i[class^="fas"], i[class^="far"], i[class^="fab"] {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* ---------------- 无边框卡片 ---------------- */
 
 .card {
   background: var(--c-card);
-  border: 1px solid var(--c-border);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--c-shadow);
+  padding: 14px 16px;
 }
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.card-title i {
+  color: var(--c-info);
+}
+
+/* ---------------- 通用控件 ---------------- */
 
 .field-label {
   color: var(--c-text);
@@ -63,6 +111,7 @@ body {
 .hint {
   color: var(--c-hint);
   font-size: 11px;
+  line-height: 1.6;
 }
 
 input[type="text"],
@@ -72,7 +121,7 @@ select {
   background: var(--c-card);
   color: var(--c-text);
   border: 1px solid var(--c-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 5px 8px;
   font-family: inherit;
   font-size: 13px;
@@ -85,24 +134,28 @@ select:focus {
 }
 
 input[type="number"] {
-  width: 62px;
+  width: 68px;
 }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   background: var(--c-card);
   color: var(--c-text);
   border: 1px solid var(--c-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 5px 14px;
   font-family: inherit;
   font-size: 13px;
   cursor: pointer;
-  transition: background .15s, border-color .15s;
+  transition: background .15s, border-color .15s, opacity .15s;
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--c-bg);
   border-color: var(--c-info);
+  color: var(--c-info);
 }
 
 .btn:disabled {
@@ -119,6 +172,8 @@ input[type="number"] {
 .btn-primary:hover:not(:disabled) {
   filter: brightness(.92);
   background: var(--c-info);
+  border-color: var(--c-info);
+  color: #fff;
 }
 
 .btn-danger {
@@ -130,6 +185,12 @@ input[type="number"] {
 .btn-danger:hover:not(:disabled) {
   filter: brightness(.92);
   background: var(--c-error);
+  border-color: var(--c-error);
+  color: #fff;
+}
+
+.btn.icon-btn {
+  padding: 5px 10px;
 }
 
 /* 复选框 */
@@ -148,18 +209,77 @@ input[type="number"] {
   cursor: pointer;
 }
 
-/* 控制台风格文本区 */
-.console {
-  background: var(--c-console-bg);
-  color: var(--c-console-fg);
-  font-family: Consolas, "Microsoft YaHei", monospace;
-  font-size: 12px;
-  border-radius: 6px;
-  padding: 8px 10px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-  user-select: text;
+/* 开关（iOS 风格） */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch .track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--c-switch-off);
+  transition: background .18s var(--ease);
+  cursor: pointer;
+}
+
+.switch .track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+  transition: transform .18s var(--ease);
+}
+
+.switch input:checked + .track {
+  background: var(--c-info);
+}
+
+.switch input:checked + .track::after {
+  transform: translateX(16px);
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+}
+
+.switch-row + .switch-row {
+  border-top: 1px dashed var(--c-table-grid);
+}
+
+.switch-row .label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.switch-row .label .t {
+  font-weight: 600;
+}
+
+.switch-row .label .d {
+  color: var(--c-hint);
+  font-size: 11px;
 }
 
 /* 表格 */
@@ -189,6 +309,10 @@ table.grid td {
   text-overflow: ellipsis;
 }
 
+table.grid tbody tr {
+  cursor: pointer;
+}
+
 table.grid tbody tr:hover td {
   background: var(--c-table-sel);
   color: var(--c-table-sel-fg);
@@ -204,6 +328,7 @@ table.grid tbody tr.selected td {
   width: 10px;
   height: 10px;
 }
+
 ::-webkit-scrollbar-thumb {
   background: var(--c-border);
   border-radius: 5px;
@@ -227,14 +352,14 @@ table.grid tbody tr.selected td {
 .dialog {
   background: var(--c-card);
   color: var(--c-text);
-  border: 1px solid var(--c-border);
-  border-radius: 8px;
+  border: none;
+  border-radius: var(--radius-lg);
   min-width: 340px;
   max-width: 560px;
   max-height: 78vh;
   overflow: auto;
-  padding: 14px 16px 12px;
-  box-shadow: 0 12px 34px rgba(0, 0, 0, .28);
+  padding: 16px 18px 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .30);
 }
 
 .dialog-title {
@@ -271,7 +396,7 @@ table.grid tbody tr.selected td {
   max-height: 220px;
   overflow: auto;
   border: 1px solid var(--c-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .pick-item {
@@ -290,4 +415,15 @@ table.grid tbody tr.selected td {
 .pick-item.sel {
   background: var(--c-table-sel);
   color: var(--c-table-sel-fg);
+}
+
+/* ---------------- 轻量化模式：收敛动画与阴影 ---------------- */
+html[data-lite="on"] * {
+  transition: none !important;
+  animation: none !important;
+}
+
+html[data-lite="on"] .card {
+  box-shadow: none;
+  border: 1px solid var(--c-border-light);
 }

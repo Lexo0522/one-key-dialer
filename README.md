@@ -4,7 +4,7 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey.svg)](https://github.com/Lexo0522/one-key-dialer)
 [![CI](https://github.com/Lexo0522/one-key-dialer/actions/workflows/ci.yml/badge.svg)](https://github.com/Lexo0522/one-key-dialer/actions/workflows/ci.yml)
 
-Windows 校园网 PPPoE 图形拨号工具：**Go + Wails v2 + Vue 3**。一键拨号/断开、自动重连、定时任务、多账号、托盘、网络诊断与在线更新。拨号走原生 Win32 `RasDialW`（密码只存在于进程内存，不落到命令行）。
+Windows 校园网 PPPoE 图形拨号工具：**Go + Wails v2 + Vue 3**。左右布局（侧栏导航 + 主内容区）、一键拨号/断开、自动重连、定时任务、多账号、托盘、近 10 分钟流量曲线与在线更新。拨号走原生 Win32 `RasDialW`（密码只存在于进程内存，不落到命令行）。
 
 仓库：<https://github.com/Lexo0522/one-key-dialer>
 
@@ -23,7 +23,7 @@ internal/
   update/          双线路在线更新（Gitee 主 / GitHub 备）
   i18n/            中英文案表
   util/            格式化、脱敏、进程 IO
-frontend/          Vue 3 + Vite；wailsjs/ 为自动生成的 Go 绑定
+frontend/          Vue 3 + Vite；左右布局（侧栏：首页/账号配置/日志/设置），wailsjs/ 为自动生成的 Go 绑定
 ```
 
 前端只做展示与输入采集，**全部业务逻辑在 Go 侧**：账号密码经 DPAPI 加密落盘、拨号凭据一次性使用后立即清零、更新包强制 HTTPS + SHA-256 校验。
@@ -32,10 +32,12 @@ frontend/          Vue 3 + Vite；wailsjs/ 为自动生成的 Go 绑定
 
 - 拨号/断开，固定 RAS 连接名 `pppoe_native_java`（界面「昵称」仅为显示名）
 - 断网自动重连、定时拨号/断开（分钟对齐）
-- **统一网络探测**：自动重连 / 拨号后确认 / 网络探测页共用一套配置（icmp / http / auto）
+- **统一网络探测**：自动重连 / 拨号后确认共用一套探测配置（icmp / http / auto）
 - 多账号管理；密码以 **Windows DPAPI**（CurrentUser）保护后存入 `accounts.json`，界面列表永不回传明文
 - 拨号成功后外网确认；可选「无外网时自动断开宽带」；历史可记 `RAS成功无外网`
-- 历史记录（可导出 CSV）、统计、网络诊断（Ping/IPConfig/Tracert/FlushDNS/连接状态/电话簿/选择 PPPoE 设备/重写电话簿）
+- 首页流量统计：近 10 分钟上传/下载速率折线图，以及本次连接的上传/下载速度与流量卡片
+- 界面四个页面：首页（账号选择 + 连接 + 流量图表）、账号配置、日志（级别过滤/搜索/自动滚动）、设置（主题、语言、开机自启、选择设备、流量嗅探、断网自动重连、轻量化、无外网自动断开、定时任务、代理、检查更新）
+- 拨号历史与统计由后端继续记录维护（界面入口收敛到上述四个页面）
 - 系统托盘：显示窗口、拨号、断开、切换账号、检查更新、退出；关闭窗口仅隐藏到托盘
 - 开机自启动（`HKCU\...\Run`，以注册表为准，设置项仅用于启动时修复）
 - **主备双线路在线更新**：主线路 Gitee Release，备用线路 GitHub Release；串行执行、主线路失败自动降级、按线路熔断。仅下载带 `SHA256SUMS.txt` 且哈希校验通过的包到 `%APPDATA%\PPoEDialer\updates\`，支持断点续传与停滞看门狗；安装进程确认启动后才退出，全程失败保留当前版本

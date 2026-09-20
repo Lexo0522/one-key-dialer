@@ -5,7 +5,7 @@ export const PALETTES = {
     error: '#dc3545',
     info: '#007bff',
     warning: '#ffc107',
-    bg: '#f8f9fa',
+    bg: '#f3f5f9',
     card: '#ffffff',
     border: '#d1d5db',
     borderLight: '#dadce0',
@@ -20,7 +20,23 @@ export const PALETTES = {
     consoleBg: '#282c34',
     consoleFg: '#ffffff',
     statusOnline: '#16a34a',
-    titledBorder: '#646464'
+    titledBorder: '#646464',
+
+    // —— 新版左右布局扩展 ——
+    sidebar: '#ffffff',
+    sidebarSub: '#6b7280',
+    sidebarActive: '#007bff',
+    sidebarActiveBg: 'rgba(0, 123, 255, .10)',
+    hover: 'rgba(0, 0, 0, .045)',
+    accentSoft: 'rgba(0, 123, 255, .10)',
+    shadow: '0 1px 2px rgba(16, 24, 40, .05), 0 4px 16px rgba(16, 24, 40, .07)',
+    sidebarShadow: '4px 0 16px rgba(16, 24, 40, .05)',
+    logBg: '#f6f8fa',
+    switchOff: '#cbd2d9',
+    chartUp: '#f97316',
+    chartDown: '#3b82f6',
+    chartGrid: 'rgba(0, 0, 0, .07)',
+    chartAxis: '#9aa3af'
   },
   dark: {
     success: '#34c77b',
@@ -42,7 +58,23 @@ export const PALETTES = {
     consoleBg: '#18191c',
     consoleFg: '#d4d7dd',
     statusOnline: '#22c55e',
-    titledBorder: '#8a8f98'
+    titledBorder: '#8a8f98',
+
+    // —— 新版左右布局扩展 ——
+    sidebar: '#26282c',
+    sidebarSub: '#9aa0aa',
+    sidebarActive: '#4da3ff',
+    sidebarActiveBg: 'rgba(77, 163, 255, .16)',
+    hover: 'rgba(255, 255, 255, .06)',
+    accentSoft: 'rgba(77, 163, 255, .14)',
+    shadow: '0 1px 2px rgba(0, 0, 0, .35), 0 4px 16px rgba(0, 0, 0, .30)',
+    sidebarShadow: '4px 0 16px rgba(0, 0, 0, .30)',
+    logBg: '#18191c',
+    switchOff: '#4a4f57',
+    chartUp: '#fb923c',
+    chartDown: '#60a5fa',
+    chartGrid: 'rgba(255, 255, 255, .08)',
+    chartAxis: '#6b7280'
   }
 }
 
@@ -66,7 +98,21 @@ const VAR_MAP = {
   consoleBg: '--c-console-bg',
   consoleFg: '--c-console-fg',
   statusOnline: '--c-status-online',
-  titledBorder: '--c-titled-border'
+  titledBorder: '--c-titled-border',
+  sidebar: '--c-sidebar',
+  sidebarSub: '--c-sidebar-sub',
+  sidebarActive: '--c-sidebar-active',
+  sidebarActiveBg: '--c-sidebar-active-bg',
+  hover: '--c-hover',
+  accentSoft: '--c-accent-soft',
+  shadow: '--c-shadow',
+  sidebarShadow: '--c-sidebar-shadow',
+  logBg: '--c-log-bg',
+  switchOff: '--c-switch-off',
+  chartUp: '--c-chart-up',
+  chartDown: '--c-chart-down',
+  chartGrid: '--c-chart-grid',
+  chartAxis: '--c-chart-axis'
 }
 
 /** 把色板写到 :root CSS 变量，并同步 <html data-theme>。 */

@@ -191,7 +191,72 @@ func clearSnapshot(snapshot []*model.Account) {
 	}
 }
 
-// ApplyEdits 用 UI 提供的完整列表替换内存账号（账号管理对话框保存）。
+// AccountView 账号行的 UI 视图：不含明文密码，但带"是否已设置密码"标志。
+type AccountView struct {
+	Name        string
+	Username    string
+	Remark      string
+	HasPassword bool
+}
+
+// Views 返回 UI 视图快照。密码标志必须在持锁状态下对真实账号计算——
+// Accounts() 返回的是不含密码的副本，在副本上判空会永远得到 false。
+func (s *AccountSession) Views() []AccountView {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]AccountView, 0, len(s.accounts))
+	for _, a := range s.accounts {
+		if a == nil {
+			out = append(out, AccountView{})
+			continue
+		}
+		out = append(out, AccountView{
+			Name:        a.Name,
+			Username:    a.Username,
+			Remark:      a.Remark,
+			HasPassword: !a.IsPasswordEmpty(),
+		})
+	}
+	return out
+}
+
+// SnapshotWithPasswords 返回含密码的深拷贝（仅供导入/导出等内部链路使用，
+// 调用方必须通过 clearSnapshot 或 ClearPassword 清零）。
+func (s *AccountSession) SnapshotWithPasswords() []*model.Account {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*model.Account, 0, len(s.accounts))
+	for _, a := range s.accounts {
+		out = append(out, a.Clone())
+	}
+	return out
+}
+
+// PasswordForAccount 返回已保存密码的副本（优先按索引处的同名账号匹配，
+// 再按账号名全局匹配），无匹配返回 nil。调用方负责清零。
+// 用于 UI 整列替换时继承"未重新输入"的密码：前端快照不含明文，
+// 编辑/删除/排序后必须按账号名把旧密码带回来，否则会被空密码覆盖。
+func (s *AccountSession) PasswordForAccount(username string, index int) []byte {
+	key := strings.TrimSpace(username)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if index >= 0 && index < len(s.accounts) {
+		if old := s.accounts[index]; old != nil && strings.TrimSpace(old.Username) == key {
+			return old.CopyPassword()
+		}
+	}
+	if key == "" {
+		return nil
+	}
+	for _, a := range s.accounts {
+		if a != nil && strings.TrimSpace(a.Username) == key {
+			return a.CopyPassword()
+		}
+	}
+	return nil
+}
+
+// ApplyEdits 用 UI 提供的完整列表替换内存账号（账号管理页保存）。
 func (s *AccountSession) ApplyEdits(accounts []*model.Account) {
 	s.mu.Lock()
 	s.accounts = accounts
@@ -206,44 +271,6 @@ func (s *AccountSession) ApplyEdits(accounts []*model.Account) {
 	}
 	s.dirty = true
 	s.mu.Unlock()
-}
-
-// PullFromUi 把主页输入回填到当前账号；返回是否有变化。
-func (s *AccountSession) PullFromUi(name, username, password string) bool {
-	a := s.CurrentOrNil()
-	if a == nil {
-		return false
-	}
-	newName := strings.TrimSpace(name)
-	newUser := strings.TrimSpace(username)
-	newPass := strings.TrimSpace(password)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	changed := a.Name != newName || a.Username != newUser || !a.PasswordEquals(newPass)
-	if !changed {
-		return false
-	}
-	a.Name = newName
-	a.Username = newUser
-	a.SetPassword(newPass)
-	s.dirty = true
-	return true
-}
-
-// SaveCurrentIfNeeded 回填并按需保存。
-func (s *AccountSession) SaveCurrentIfNeeded(name, username, password string) {
-	changed := s.PullFromUi(name, username, password)
-	s.mu.Lock()
-	dirty := s.dirty
-	s.mu.Unlock()
-	if changed || dirty {
-		if s.Save() {
-			s.mu.Lock()
-			s.dirty = false
-			s.mu.Unlock()
-		}
-	}
 }
 
 // ClampIndexAfterListChange 列表变短后收敛索引。

@@ -24,6 +24,8 @@ export function DiagSelectDevice(arg1:string,arg2:string,arg3:boolean):Promise<s
 
 export function Dial(arg1:string,arg2:string):Promise<boolean>;
 
+export function DialCurrentAccount():Promise<boolean>;
+
 export function Disconnect():Promise<boolean>;
 
 export function DownloadUpdate():Promise<void>;
@@ -65,5 +67,3 @@ export function SwitchAccount(arg1:number):Promise<void>;
 export function TestConnectivity():Promise<main.ProbeResult>;
 
 export function UpdateBusy():Promise<boolean>;
-
-export function UpdateHomeFields(arg1:string,arg2:string,arg3:string):Promise<void>;

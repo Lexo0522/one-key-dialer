@@ -11,10 +11,8 @@ export const EV = {
   status: 'app:status',
   speed: 'app:speed',
   uptime: 'app:uptime',
-  history: 'app:history',
   accounts: 'app:accounts',
   settings: 'app:settings',
-  diag: 'app:diag',
   update: 'app:update',
   notify: 'app:notify'
 }
@@ -46,11 +44,6 @@ const MOCK_STATE = {
     scheduledDisconnect: false,
     scheduledDisconnectHour: 23,
     scheduledDisconnectMinute: 0,
-    probeMode: 'auto',
-    probeHost: '223.5.5.5',
-    probeHttpUrl: 'http://connectivitycheck.gstatic.com/generate_204',
-    probeAttempts: 3,
-    probeDelayMs: 1000,
     disconnectOnNoInternet: false,
     updateCheckEnabled: true,
     uiTheme: 'system'
@@ -61,24 +54,6 @@ const MOCK_STATE = {
   ],
   currentIndex: 0,
   online: false,
-  history: [
-    {
-      time: '2026-09-19 20:41:02',
-      operation: '拨号',
-      account: '20210001',
-      result: '成功',
-      duration: '01:23:45',
-      traffic: '1.2 GB'
-    },
-    {
-      time: '2026-09-19 18:02:11',
-      operation: '断开',
-      account: '20210001',
-      result: '完成',
-      duration: '—',
-      traffic: '—'
-    }
-  ],
   logs: [
     { time: '20:41:02', level: 'info', message: 'PPPoE校园网拨号工具 V1.1.11 已启动' },
     { time: '20:41:03', level: 'success', message: '拨号成功！' }
@@ -114,7 +89,12 @@ class Bus {
 const mockBus = new Bus()
 let mockSettings = { ...MOCK_STATE.settings }
 let mockAccounts = MOCK_STATE.accounts.map((a) => ({ ...a }))
+// mock 侧按账号名保存的密码（真实后端永不把明文密码发给前端）
+let mockPasswords = new Map()
+if (MOCK_STATE.accounts[1]) mockPasswords.set(MOCK_STATE.accounts[1].username, '123456')
 let mockOnline = false
+let mockConnectedAt = 0
+let mockSpeedTimer = null
 
 function mockLog(message, level = 'info') {
   const d = new Date()
@@ -124,6 +104,24 @@ function mockLog(message, level = 'info') {
     level,
     message
   })
+}
+
+/** 连接期间以 1s 节流模拟后端速率事件，供首页折线图/统计卡联调。 */
+function startMockSpeed() {
+  stopMockSpeed()
+  mockSpeedTimer = setInterval(() => {
+    if (!mockOnline) return
+    const wave = (base, amp) => Math.max(0, Math.round(base + (Math.random() - 0.5) * amp))
+    mockBus.emit(EV.speed, { down: wave(3 * 1024 * 1024, 5 * 1024 * 1024), up: wave(512 * 1024, 700 * 1024) })
+    mockBus.emit(EV.uptime, Math.floor((Date.now() - mockConnectedAt) / 1000))
+  }, 1000)
+}
+
+function stopMockSpeed() {
+  if (mockSpeedTimer) {
+    clearInterval(mockSpeedTimer)
+    mockSpeedTimer = null
+  }
 }
 
 const mockApi = {
@@ -143,7 +141,21 @@ const mockApi = {
     return mockAccounts.map((a) => ({ ...a }))
   },
   SaveAccounts(rows) {
-    mockAccounts = rows.map((r) => ({ ...r }))
+    // 复现后端语义：快照不含明文；空密码 + hasPassword 时按账号名继承
+    const next = rows.map((r) => {
+      const key = (r.username || '').trim()
+      let pw = (r.password || '').trim()
+      if (!pw && r.hasPassword) pw = mockPasswords.get(key) || ''
+      if (pw) mockPasswords.set(key, pw)
+      else mockPasswords.delete(key)
+      return {
+        name: r.name || '',
+        username: r.username || '',
+        remark: r.remark || '',
+        hasPassword: !!pw
+      }
+    })
+    mockAccounts = next
     mockBus.emit(EV.accounts, { accounts: mockAccounts.map((a) => ({ ...a })), currentIndex: mockSettings.accountIndex })
   },
   SwitchAccount(index) {
@@ -151,7 +163,6 @@ const mockApi = {
     mockLog(`已切换账号: ${mockAccounts[index]?.name || ''}`)
     mockBus.emit(EV.accounts, { accounts: mockAccounts.map((a) => ({ ...a })), currentIndex: index })
   },
-  UpdateHomeFields() {},
   async ExportAccounts() {
     mockLog('导出成功！', 'success')
     return 'pppoe_accounts_export.csv'
@@ -159,65 +170,29 @@ const mockApi = {
   async ImportAccounts() {
     return 0
   },
-  Dial() {
+  DialCurrentAccount() {
+    const acc = mockAccounts[mockSettings.accountIndex]
+    if (acc && !acc.hasPassword) {
+      mockLog('当前账号未设置密码，请先在账号配置中保存密码', 'warn')
+      return false
+    }
     mockLog('连接中…')
+    mockConnectedAt = Date.now()
     setTimeout(() => {
       mockOnline = true
       mockBus.emit(EV.status, { online: true, phase: 'connected' })
       mockLog('拨号成功！', 'success')
-      mockBus.emit(EV.speed, { down: 1048576, up: 131072 })
-      mockBus.emit(EV.uptime, 0)
+      startMockSpeed()
     }, 900)
     return true
   },
   Disconnect() {
     mockOnline = false
+    stopMockSpeed()
     mockBus.emit(EV.status, { online: false, phase: 'disconnected' })
     mockBus.emit(EV.speed, { down: 0, up: 0 })
+    mockBus.emit(EV.uptime, 0)
     mockLog('网络已断开')
-    return true
-  },
-  async GetHistory() {
-    return MOCK_STATE.history.slice()
-  },
-  ClearHistory() {
-    mockBus.emit(EV.history, null)
-  },
-  async ExportHistory() {
-    mockLog('历史记录已导出: pppoe_history_export.csv', 'success')
-    return 'pppoe_history_export.csv'
-  },
-  async GetStats() {
-    return {
-      TotalOps: 12,
-      DialAttempts: 8,
-      DialSuccess: 6,
-      DialFail: 2,
-      Disconnects: 4,
-      TopErrors: [{ Result: '691', Count: 2 }],
-      ReportText:
-        '拨号次数: 8\n成功: 6\n失败: 2\n断开: 4\n成功率: 75.0%\n\n常见失败:\n  691 × 2'
-    }
-  },
-  async TestConnectivity() {
-    mockLog('外网探测…')
-    return { ok: true, line: 'auto: ping 223.5.5.5 ok (12ms)', mode: 'auto', error: '' }
-  },
-  async GetProbeSummary() {
-    return `mode=auto host=${mockSettings.probeHost} attempts=${mockSettings.probeAttempts} delay=${mockSettings.probeDelayMs}ms`
-  },
-  async DiagAction(action) {
-    mockLog(`执行命令: ${action}`)
-    const lines = ['═══════════════════════════════════════', '执行命令: ' + action, '']
-    let i = 0
-    const timer = setInterval(() => {
-      if (i >= lines.length) {
-        mockBus.emit(EV.diag, '\n═══════════════════════════════════════\n执行完毕\n')
-        clearInterval(timer)
-        return
-      }
-      mockBus.emit(EV.diag, lines[i++] + '\n')
-    }, 220)
     return true
   },
   async DiagListDevices() {
@@ -226,13 +201,9 @@ const mockApi = {
       { port: 'PPPoE1-0', device: 'Realtek PCIe GbE', existing: false, default: true }
     ]
   },
-  async DiagSelectDevice(port, device, rewrite) {
-    return `已记住设备 ${device} / ${port}（下次创建条目时使用）`
+  async DiagSelectDevice(port, device) {
+    return `已记住设备 ${device} / ${port}`
   },
-  async DiagRewritePhonebook() {
-    return '电话簿条目已重写 → WAN Miniport (PPPOE) / PPPoE5-0'
-  },
-  DiagClear() {},
   CheckUpdate() {
     mockBus.emit(EV.update, { kind: 'checking', message: '正在检查更新…' })
     setTimeout(() => {

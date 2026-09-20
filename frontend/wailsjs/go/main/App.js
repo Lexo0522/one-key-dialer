@@ -42,6 +42,10 @@ export function Dial(arg1, arg2) {
   return window['go']['main']['App']['Dial'](arg1, arg2);
 }
 
+export function DialCurrentAccount() {
+  return window['go']['main']['App']['DialCurrentAccount']();
+}
+
 export function Disconnect() {
   return window['go']['main']['App']['Disconnect']();
 }
@@ -124,8 +128,4 @@ export function TestConnectivity() {
 
 export function UpdateBusy() {
   return window['go']['main']['App']['UpdateBusy']();
-}
-
-export function UpdateHomeFields(arg1, arg2, arg3) {
-  return window['go']['main']['App']['UpdateHomeFields'](arg1, arg2, arg3);
 }

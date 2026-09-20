@@ -101,7 +101,7 @@ func onTrayReady() {
 			a := trayApp
 			trayMu.Unlock()
 			if a != nil && !a.isOnline() && !a.lifecycle.IsBusy() {
-				a.Dial("", "")
+				a.DialCurrentAccount()
 			}
 		}
 	}()
