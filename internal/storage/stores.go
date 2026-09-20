@@ -132,7 +132,18 @@ type HistoryStore struct {
 // SchemaVersionHistory history.json 的文档版本。
 const SchemaVersionHistory = 1
 
+// historyRow history.json 的单条记录行。
+type historyRow struct {
+	Time      string `json:"time"`
+	Operation string `json:"operation"`
+	Account   string `json:"account"`
+	Result    string `json:"result"`
+	Duration  string `json:"duration"`
+	Traffic   string `json:"traffic"`
+}
+
 // Load 加载历史；文件不存在返回 nil。
+// data 节点必须是裸数组；其他形态视为数据损坏，返回解析错误。
 func (s *HistoryStore) Load() ([]model.HistoryRecord, error) {
 	raw, err := ReadEnvelope(s.File, SchemaVersionHistory)
 	if err != nil {
@@ -141,14 +152,7 @@ func (s *HistoryStore) Load() ([]model.HistoryRecord, error) {
 	if raw == nil {
 		return nil, nil
 	}
-	var rows []struct {
-		Time      string `json:"time"`
-		Operation string `json:"operation"`
-		Account   string `json:"account"`
-		Result    string `json:"result"`
-		Duration  string `json:"duration"`
-		Traffic   string `json:"traffic"`
-	}
+	var rows []historyRow
 	if err := DecodeInto(raw, &rows); err != nil {
 		return nil, err
 	}
@@ -169,17 +173,9 @@ func (s *HistoryStore) Load() ([]model.HistoryRecord, error) {
 // Save 保存历史。
 func (s *HistoryStore) Save(records []model.HistoryRecord) error {
 	EnsureDir(s.File)
-	type row struct {
-		Time      string `json:"time"`
-		Operation string `json:"operation"`
-		Account   string `json:"account"`
-		Result    string `json:"result"`
-		Duration  string `json:"duration"`
-		Traffic   string `json:"traffic"`
-	}
-	rows := make([]row, 0, len(records))
+	rows := make([]historyRow, 0, len(records))
 	for _, r := range records {
-		rows = append(rows, row{Time: r.Time, Operation: r.Operation, Account: r.Account,
+		rows = append(rows, historyRow{Time: r.Time, Operation: r.Operation, Account: r.Account,
 			Result: r.Result, Duration: r.Duration, Traffic: r.Traffic})
 	}
 	return WriteEnvelope(s.File, SchemaVersionHistory, rows)

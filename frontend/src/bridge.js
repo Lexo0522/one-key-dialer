@@ -168,12 +168,14 @@ const mockApi = {
       mockBus.emit(EV.speed, { down: 1048576, up: 131072 })
       mockBus.emit(EV.uptime, 0)
     }, 900)
+    return true
   },
   Disconnect() {
     mockOnline = false
     mockBus.emit(EV.status, { online: false, phase: 'disconnected' })
     mockBus.emit(EV.speed, { down: 0, up: 0 })
     mockLog('网络已断开')
+    return true
   },
   async GetHistory() {
     return MOCK_STATE.history.slice()

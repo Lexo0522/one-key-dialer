@@ -254,7 +254,12 @@ export async function doDial() {
   setDialBusy('连接中…')
   api.UpdateHomeFields(state.home.name, state.home.username, state.home.password)
   try {
-    await api.Dial(state.home.username, state.home.password)
+    const accepted = await api.Dial(state.home.username, state.home.password)
+    // 后端拒绝（忙/预检失败）时不进入拨号队列、不发阶段事件，立即复位按钮
+    if (accepted === false) {
+      state.dialBusy = false
+      state.dialLabel = ''
+    }
   } finally {
     // 密码只使用一次，立即从内存清除
     state.home.password = ''
@@ -264,7 +269,11 @@ export async function doDial() {
 export async function doDisconnect() {
   if (state.dialBusy) return
   setDialBusy('断开中…')
-  await api.Disconnect()
+  const accepted = await api.Disconnect()
+  if (accepted === false) {
+    state.dialBusy = false
+    state.dialLabel = ''
+  }
 }
 
 export function statusBarText() {

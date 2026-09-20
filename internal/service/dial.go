@@ -150,30 +150,33 @@ func (o *DialOrchestrator) enqueue(work func()) {
 	}
 }
 
-// DialUser 用户手动拨号。
-func (o *DialOrchestrator) DialUser() {
+// DialUser 用户手动拨号。返回 false 表示未受理（忙/预检失败/凭据缺失），
+// 前端据此刻复位按钮的 busy 状态——此路径不会发出任何拨号阶段事件。
+func (o *DialOrchestrator) DialUser() bool {
 	if o.lifecycle.IsBusy() {
 		o.view.Log(LevelWarning, i18n.T("dial.busy"))
-		return
+		return false
 	}
 	if !o.view.ValidateInput(true) {
-		return
+		return false
 	}
 	creds := o.view.CaptureCredentials()
 	if creds == nil {
-		return
+		return false
 	}
 	o.enqueue(func() { o.runDial(creds, model.OpUserDial, true, true) })
+	return true
 }
 
-// DisconnectUser 用户手动断开。
-func (o *DialOrchestrator) DisconnectUser() {
+// DisconnectUser 用户手动断开。返回 false 表示未受理（忙）。
+func (o *DialOrchestrator) DisconnectUser() bool {
 	if o.lifecycle.IsBusy() {
 		o.view.Log(LevelWarning, i18n.T("dial.busy"))
-		return
+		return false
 	}
 	o.view.Log(LevelInfo, i18n.T("dial.disconnecting"))
 	o.enqueue(o.runDisconnectUser)
+	return true
 }
 
 // DialAuto 自动/定时拨号：不阻塞调度线程，失败不重试（由重连策略决定下一次）。
@@ -295,6 +298,8 @@ func (o *DialOrchestrator) runDial(creds *model.DialCredentials, operation strin
 	if !o.lifecycle.TryBeginDial() {
 		creds.Clear()
 		o.view.Log(LevelWarning, i18n.T("dial.busy"))
+		// 竞态兜底：前端已进入 busy 态但拨号被拒，补发复位事件
+		o.view.OnDialPhase("")
 		return
 	}
 	o.stats.incTotal()
@@ -318,6 +323,8 @@ func (o *DialOrchestrator) runDial(creds *model.DialCredentials, operation strin
 
 func (o *DialOrchestrator) runDisconnectUser() {
 	if !o.lifecycle.TryBeginDisconnect() {
+		// 竞态兜底：前端已进入 busy 态但断开被拒，补发复位事件
+		o.view.OnDialPhase("")
 		return
 	}
 	defer func() {

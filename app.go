@@ -414,13 +414,14 @@ func (a *App) ImportAccounts() int {
 // ============================ 拨号 ============================
 
 // Dial 用户拨号（密码由前端一次性传入，用完即清零）。
-func (a *App) Dial(username, password string) {
+// 返回 false 表示拨号未受理（忙/预检失败），前端据此复位按钮状态。
+func (a *App) Dial(username, password string) bool {
 	a.setPending(username, password)
-	a.orch.DialUser()
+	return a.orch.DialUser()
 }
 
-// Disconnect 用户断开。
-func (a *App) Disconnect() { a.orch.DisconnectUser() }
+// Disconnect 用户断开。返回 false 表示未受理（忙）。
+func (a *App) Disconnect() bool { return a.orch.DisconnectUser() }
 
 // ============================ 历史 / 统计 ============================
 

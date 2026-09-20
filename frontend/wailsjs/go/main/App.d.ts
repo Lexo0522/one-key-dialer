@@ -22,9 +22,9 @@ export function DiagRewritePhonebook():Promise<string>;
 
 export function DiagSelectDevice(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
-export function Dial(arg1:string,arg2:string):Promise<void>;
+export function Dial(arg1:string,arg2:string):Promise<boolean>;
 
-export function Disconnect():Promise<void>;
+export function Disconnect():Promise<boolean>;
 
 export function DownloadUpdate():Promise<void>;
 
