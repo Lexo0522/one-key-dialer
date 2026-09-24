@@ -103,7 +103,6 @@ type App struct {
 	stats     *service.DialStats
 
 	reconnect *service.AutoReconnectService
-	schedule  *service.ScheduleService
 	monitor   *service.NetworkMonitorService
 	diag      *service.Diagnostics
 	sampler   *service.TrafficSampler
@@ -170,6 +169,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// 1) 设置 → 2) 账号 → 3) 服务 → 4) 自检
 	loaded := a.settings.LoadFromDisk()
+	a.applyProxySettings(loaded)
 	a.accounts.Load(loaded.AccountIndex)
 
 	a.orch = service.NewDialOrchestrator(a.ras, dialView{a}, dialEnv{a}, a.lifecycle, a.stats)
@@ -180,19 +180,6 @@ func (a *App) startup(ctx context.Context) {
 		func() { a.orch.DialAuto() },
 		func() { a.logSvc.Success(i18n.T("reconnect.detected") + " -> " + i18n.T("notify.recovered.body")) },
 		func() {},
-		a.logSvc)
-
-	a.schedule = service.NewScheduleService(
-		func() bool { return a.settings.Current().ScheduledDial },
-		func() bool { return a.settings.Current().ScheduledDisconnect },
-		func() int { return a.settings.Current().ScheduledDialHour },
-		func() int { return a.settings.Current().ScheduledDialMinute },
-		func() int { return a.settings.Current().ScheduledDisconnectHour },
-		func() int { return a.settings.Current().ScheduledDisconnectMinute },
-		func() bool { return a.isOnline() },
-		func() bool { return a.lifecycle.IsBusy() },
-		func() { a.orch.DialAuto() },
-		func() { a.orch.DisconnectScheduled() },
 		a.logSvc)
 
 	a.monitor = service.NewNetworkMonitorService(
@@ -214,7 +201,8 @@ func (a *App) startup(ctx context.Context) {
 	a.diag = service.NewDiagnostics(a.ras, a.diagContext, func(line string) { a.emit(EvtDiag, line) }, a.logSvc)
 
 	cfg := update.Load(filepath.Join(a.dataDir, update.OverrideFileName), warn)
-	a.updater = update.NewModule(platform.UpdatesDir(), cfg, func(msg string) { a.logSvc.Info(msg) })
+	a.updater = update.NewModule(platform.UpdatesDir(), cfg, func(msg string) { a.logSvc.Info(msg) },
+		func() model.ProxyConfig { return a.settings.Current().ProxyConfig() })
 
 	// 启动横幅
 	a.logSvc.Success(i18n.Tf("log.appStarted", model.Display()))
@@ -234,7 +222,6 @@ func (a *App) startup(ctx context.Context) {
 	})
 
 	a.monitor.Start()
-	a.schedule.Restart()
 	if a.settings.Current().AutoReconnect {
 		a.reconnect.Start(a.settings.Current().IntervalSeconds, true)
 	}
@@ -256,7 +243,6 @@ func (a *App) shutdown(ctx context.Context) {
 	a.logSvc.Flush()
 
 	a.reconnect.Stop()
-	a.schedule.Stop()
 	a.monitor.Stop()
 	a.orch.Shutdown(3 * time.Second)
 	a.exec.Shutdown(2 * time.Second)
@@ -304,17 +290,32 @@ func (a *App) SaveSettings(next model.Settings) {
 		// 主题热切换由前端完成，这里仅提示
 		a.logSvc.Info(i18n.T("theme.liveHint"))
 	}
-	if next.ScheduledDial != prev.ScheduledDial ||
-		next.ScheduledDisconnect != prev.ScheduledDisconnect ||
-		next.ScheduledDialHour != prev.ScheduledDialHour ||
-		next.ScheduledDialMinute != prev.ScheduledDialMinute ||
-		next.ScheduledDisconnectHour != prev.ScheduledDisconnectHour ||
-		next.ScheduledDisconnectMinute != prev.ScheduledDisconnectMinute {
-		a.schedule.Restart()
-	}
 	if next.AutoReconnect != prev.AutoReconnect || next.IntervalSeconds != prev.IntervalSeconds {
 		a.applyAutoReconnect()
 	}
+	if proxySectionChanged(prev, next) {
+		a.applyProxySettings(next)
+	}
+}
+
+// applyProxySettings 记录代理出口状态（仅本应用 HTTP 请求生效，
+// 不改系统设置）；后续探测/更新在发起请求时按当前设置实时取用。
+func (a *App) applyProxySettings(s model.Settings) {
+	pc := s.ProxyConfig()
+	if pc.Enabled {
+		a.logSvc.Info(i18n.Tf("proxy.enabled", pc.Summary()))
+	} else {
+		a.logSvc.Info(i18n.T("proxy.disabled"))
+	}
+}
+
+// proxySectionChanged 判断两份设置的代理段是否发生变化。
+func proxySectionChanged(a, b model.Settings) bool {
+	return a.ProxyEnabled != b.ProxyEnabled ||
+		a.ProxyType != b.ProxyType ||
+		a.ProxyHost != b.ProxyHost ||
+		a.ProxyPort != b.ProxyPort ||
+		a.ProxyBypass != b.ProxyBypass
 }
 
 // SetAutoStart 注册 / 注销开机自启（以注册表为准）。
@@ -415,18 +416,19 @@ func (a *App) ExportAccounts(withPassword bool) string {
 }
 
 // ImportAccounts 从 CSV 追加导入账号。
+// 返回 -1 表示用户取消或读取失败（前端静默不提示），>=0 为实际导入条数。
 func (a *App) ImportAccounts() int {
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title:   i18n.T("import.title"),
 		Filters: []runtime.FileFilter{{DisplayName: "CSV", Pattern: "*.csv"}},
 	})
 	if err != nil || path == "" {
-		return 0
+		return -1
 	}
 	imported, err := storage.LoadCsv(path)
 	if err != nil {
 		a.logSvc.Error(i18n.Tf("import.failed", err.Error()))
-		return 0
+		return -1
 	}
 	// 导入前必须取带密码快照：Accounts() 是无密码快照，
 	// 直接整列 ApplyEdits 会把所有已存密码抹掉。
@@ -713,6 +715,7 @@ func (a *App) OpenReleasePage(url string) {
 
 // ShowWindow 显示主窗口。
 func (a *App) ShowWindow() {
+	windowShown = true
 	if a.ctx == nil {
 		return
 	}
@@ -722,6 +725,7 @@ func (a *App) ShowWindow() {
 
 // HideWindow 隐藏主窗口（最小化到托盘）。
 func (a *App) HideWindow() {
+	windowShown = false
 	if a.ctx == nil {
 		return
 	}

@@ -91,7 +91,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { state, doDial, doDisconnect, formatSpeed, formatBytes, formatDuration } from '../store'
+import { state, doDial, doDisconnect, showToast, formatSpeed, formatBytes, formatDuration } from '../store'
 import { api } from '../bridge'
 import { t } from '../i18n'
 
@@ -123,7 +123,11 @@ function onDialToggle() {
 }
 
 function onAccountChange() {
+  const acc = state.accounts[state.currentIndex]
+  const name = (acc && (acc.name || acc.username)) || t('account.unset')
   api.SwitchAccount(state.currentIndex)
+  // 在线时后端会先断开再用新账号重拨，随后的连接系列 Toast 会接续呈现
+  showToast(`${t('account.switchTitle')}：${name}`, 'info')
 }
 
 // ------------------------------------------------------------ 折线图 ----
@@ -311,6 +315,7 @@ const statCards = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   flex: 0 0 auto;
   padding: 12px 16px;
@@ -319,8 +324,15 @@ const statCards = computed(() => {
 .home-header .h {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   min-width: 0;
+}
+
+/* 右侧连接按钮不参与压缩，宽度不足时整体换行 */
+.home-header .h.right {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .status-dot {
@@ -421,11 +433,11 @@ const statCards = computed(() => {
   fill: var(--c-hint);
 }
 
-/* 状态卡片 */
+/* 状态卡片：列数随宽度自适应（4 → 2 → 1），窄窗口换行而非挤压 */
 .stat-grid {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 14px;
 }
 

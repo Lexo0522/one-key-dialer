@@ -17,6 +17,7 @@ import (
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
 	"github.com/Lexo0522/one-key-dialer/internal/model"
 	"github.com/Lexo0522/one-key-dialer/internal/platform"
+	"github.com/Lexo0522/one-key-dialer/internal/proxy"
 )
 
 // 常量（与旧版 UpdateModule 一一对应）
@@ -290,9 +291,12 @@ type Module struct {
 	log        func(message string)
 	now        func() int64
 
+	// proxyProvider 提供当前代理配置（应用自身 HTTP 出口）；
+	// 为 nil 时回退系统环境变量代理，与旧行为一致。
+	proxyProvider func() model.ProxyConfig
+
 	mu      sync.Mutex
 	breaker map[string]*breakerState
-	client  *http.Client
 }
 
 type breakerState struct {
@@ -300,23 +304,28 @@ type breakerState struct {
 	consecutiveFails int
 }
 
-// NewModule 构造更新引擎。
-func NewModule(updatesDir string, cfg *Config, log func(string)) *Module {
+// NewModule 构造更新引擎。proxyProvider 返回运行时的代理配置，
+// 传 nil 表示仅使用系统环境变量代理。
+func NewModule(updatesDir string, cfg *Config, log func(string), proxyProvider func() model.ProxyConfig) *Module {
 	return &Module{
-		updatesDir: updatesDir,
-		cfg:        cfg,
-		log:        log,
-		now:        func() int64 { return time.Now().UnixMilli() },
-		breaker:    map[string]*breakerState{},
-		client:     newHTTPClient(),
+		updatesDir:    updatesDir,
+		cfg:           cfg,
+		log:           log,
+		now:           func() int64 { return time.Now().UnixMilli() },
+		breaker:       map[string]*breakerState{},
+		proxyProvider: proxyProvider,
 	}
 }
 
-func newHTTPClient() *http.Client {
+// httpClient 按当前代理配置构造客户端；Transport 经 proxy 包缓存，
+// 相同配置复用连接池，CheckRedirect 规则保持不变。
+func (m *Module) httpClient() *http.Client {
+	var cfg model.ProxyConfig
+	if m.proxyProvider != nil {
+		cfg = m.proxyProvider()
+	}
 	return &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-		},
+		Transport: proxy.TransportFor(cfg),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// 禁止 HTTPS → HTTP 降级
 			if len(via) > 0 && strings.EqualFold(via[0].URL.Scheme, "https") &&
@@ -566,7 +575,7 @@ func (m *Module) get(rawURL string, timeoutMs int) (string, int, error) {
 		return "", 0, err
 	}
 	req.Header.Set("User-Agent", model.UserAgent())
-	resp, err := m.client.Do(req)
+	resp, err := m.httpClient().Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", 0, errors.New(i18n.T("update.hardTimeout"))

@@ -1,10 +1,12 @@
-// 界面文案：新版左右布局（首页 / 账号配置 / 日志 / 设置）。
+// 界面文案：新版左右布局（首页 / 账号 / 日志 / 设置）。
+import { ref } from 'vue'
+
 const zh = {
   'app.title': 'PPPoE校园网拨号工具',
 
   // 侧栏导航
   'nav.home': '首页',
-  'nav.accounts': '账号配置',
+  'nav.accounts': '账号',
   'nav.log': '日志',
   'nav.settings': '设置',
   'nav.brand': '一键拨号',
@@ -32,6 +34,12 @@ const zh = {
   'home.card.session': '本次嗅探累计',
   'home.card.waiting': '未开始嗅探',
 
+  // 灵动岛 Toast（拨号 Promise 回调的兜底文案，正文以后端事件为准）
+  'toast.dial.success': '连接成功',
+  'toast.dial.failed': '连接失败',
+  'toast.disconnect.done': '已断开',
+  'toast.disconnect.failed': '断开失败',
+
   // 日志
   'log.title': '运行日志',
   'log.filter.all': '全部',
@@ -47,15 +55,7 @@ const zh = {
 
   // 设置
   'settings.title': '设置',
-  'settings.group.appearance': '外观',
-  'settings.group.language': '语言',
-  'settings.group.startup': '启动',
-  'settings.group.device': '拨号设备',
-  'settings.group.sniffing': '流量嗅探',
-  'settings.group.reconnect': '断网重连',
-  'settings.group.lite': '界面体验',
-  'settings.group.disconnect': '断开策略',
-  'settings.group.schedule': '定时任务',
+  'settings.group.basic': '基本设置',
   'settings.group.proxy': '代理',
   'settings.group.update': '更新',
 
@@ -64,20 +64,35 @@ const zh = {
   'settings.theme.light': '浅色',
   'settings.theme.dark': '深色',
   'settings.theme.hint': '切换后立即生效',
+  'settings.theme.changed': '主题已切换',
   'settings.lang': '界面语言',
+  'settings.lang.changed': '界面语言已切换',
   'settings.lang.zh': '简体中文',
   'settings.lang.en': 'English',
   'settings.lang.hint': '本地保存，暂不写入配置文件',
   'settings.autostart': '开机自启',
   'settings.autostart.hint': '以注册表为准（非仅配置文件）',
+  'settings.autostart.enabled': '已开启开机自启',
+  'settings.autostart.disabled': '已关闭开机自启',
   'settings.autostart.fail': '设置失败，请使用打包后的 PPoEDialer.exe 运行',
   'settings.startMinimized': '启动时最小化到托盘',
-  'settings.device': '选择设备',
-  'settings.device.action': '选择 PPPoE 设备',
-  'settings.device.hint': '选择用于写入电话簿的 PPPoE 设备，下次创建条目时生效',
+  'settings.startMinimized.enabled': '启动时最小化已开启',
+  'settings.startMinimized.disabled': '启动时最小化已关闭',
+  'settings.sniffing.enabled': '流量嗅探已开启',
+  'settings.sniffing.disabled': '流量嗅探已关闭',
+  'settings.reconnect.enabled': '断网自动重连已开启',
+  'settings.reconnect.disabled': '断网自动重连已关闭',
+  'settings.lite.enabled': '轻量化已开启',
+  'settings.lite.disabled': '轻量化已关闭',
+  'settings.noInternet.enabled': '无外网自动断开已开启',
+  'settings.noInternet.disabled': '无外网自动断开已关闭',
+  'settings.device': '拨号设备',
+  'settings.device.hint': '选择用于写入电话簿的 PPPoE 设备，选中后立即重写电话簿条目',
   'settings.device.none': '未找到可用 PPPoE 设备',
   'settings.device.done': '设备已记住',
-  'settings.device.rewriteConfirm': '是否立即重写电话簿连接条目？\n（否则仅记住选择，下次自动创建时生效）',
+  'settings.device.switched': '拨号设备已切换',
+  'settings.device.switchFail': '拨号设备切换失败',
+  'settings.device.refresh': '刷新设备列表',
   'settings.sniffing': '流量嗅探',
   'settings.sniffing.hint': '开启后首页绘制近 10 分钟流量曲线并统计本次会话流量',
   'settings.reconnect': '断网自动重连',
@@ -85,25 +100,27 @@ const zh = {
   'settings.interval': '检测间隔',
   'settings.interval.unit': '秒',
   'settings.lite': '轻量化',
-  'settings.lite.hint': '降低界面刷新频率、关闭动画与阴影，减少资源占用',
+  // 轻量化实际效果：仅图表重绘节拍 1s→4s（store.js renderIntervalMs）、
+  // 全局关闭动画过渡、移除 .card 阴影；速度数字由后端事件驱动仍实时刷新。
+  'settings.lite.hint': '图表重绘降为每 4 秒一次，并关闭界面动画与卡片阴影（速度数字仍实时刷新）',
   'settings.noInternet': '无外网自动断开',
   'settings.noInternet.hint': 'RAS 拨号成功但外网探测失败时自动断开；默认关闭以保留校园内网',
-  'settings.schedule.dial': '定时自动拨号',
-  'settings.schedule.disconnect': '定时自动断开',
-  'settings.schedule.everyDay': '每天',
-  'settings.schedule.hour': '时',
-  'settings.schedule.minute': '分',
   'settings.proxy.enable': '启用代理',
+  'settings.proxy.enabled': '代理已启用',
+  'settings.proxy.disabled': '代理已关闭',
   'settings.proxy.type': '类型',
   'settings.proxy.host': '地址',
   'settings.proxy.port': '端口',
-  'settings.proxy.bypass': '绕过（逗号分隔）',
-  'settings.proxy.hint': '本地保存；当前版本未接入代理转发，配置暂不生效',
+  'settings.proxy.bypass': '绕过（分号或逗号分隔）',
+  'settings.proxy.hint': '启用后，本应用的 HTTP 请求（更新检查、HTTP 外网探测）经此代理转发；不影响系统与其他程序',
+  'settings.proxy.needHost': '请先填写代理地址',
+  'settings.proxy.portInvalid': '端口需为 1-65535 的数字',
   'settings.update.enabled': '启动时检查更新',
+  'settings.update.current': '当前版本',
   'settings.update.now': '立即检查',
   'settings.update.checking': '正在检查更新…',
   'settings.update.upToDate': '已是最新版本',
-  'settings.saved': '已保存',
+  'settings.saveFail': '保存失败，请重试',
 
   // 账号
   'account.managerTitle': '账号配置',
@@ -148,9 +165,13 @@ const zh = {
   'account.warnTitle': '安全警告',
   'account.warnMsg': '导出文件将包含明文密码，确定继续？',
   'account.importOk': '导入成功！',
+  'account.importOkN': '导入成功，共 {0} 个账号',
   'account.importFail': '导入失败: ',
+  'account.importFailTitle': '导入失败',
   'account.exportOk': '导出成功！',
   'account.exportFail': '导出失败: ',
+  'account.exportFailTitle': '导出失败',
+  'account.switchTitle': '已切换账号',
   'account.empty': '暂无账号，点击「新增」添加',
 
   // 更新
@@ -164,6 +185,9 @@ const zh = {
   'update.keepOnly': '仅保留文件',
   'update.exitNote': '安装时程序会退出并由脚本覆盖/启动安装包。',
   'update.downloading': '下载中',
+  'update.doneTitle': '下载完成',
+  'update.installing': '正在安装…',
+  'update.error': '操作失败',
 
   'common.confirm': '确认',
   'common.ok': '确定',
@@ -202,6 +226,12 @@ const en = {
   'home.card.session': 'This session',
   'home.card.waiting': 'Not started',
 
+  // Island toast (fallback copy for the dial promise callback; body comes from backend events)
+  'toast.dial.success': 'Connected',
+  'toast.dial.failed': 'Connection failed',
+  'toast.disconnect.done': 'Disconnected',
+  'toast.disconnect.failed': 'Disconnect failed',
+
   'log.title': 'Logs',
   'log.filter.all': 'All',
   'log.level.info': 'Info',
@@ -215,15 +245,7 @@ const en = {
   'log.count': '{0} entries',
 
   'settings.title': 'Settings',
-  'settings.group.appearance': 'Appearance',
-  'settings.group.language': 'Language',
-  'settings.group.startup': 'Startup',
-  'settings.group.device': 'Dial Device',
-  'settings.group.sniffing': 'Traffic Sniffing',
-  'settings.group.reconnect': 'Reconnect',
-  'settings.group.lite': 'Experience',
-  'settings.group.disconnect': 'Hang-up Policy',
-  'settings.group.schedule': 'Schedule',
+  'settings.group.basic': 'Basic',
   'settings.group.proxy': 'Proxy',
   'settings.group.update': 'Updates',
 
@@ -232,20 +254,35 @@ const en = {
   'settings.theme.light': 'Light',
   'settings.theme.dark': 'Dark',
   'settings.theme.hint': 'Applied immediately',
+  'settings.theme.changed': 'Theme changed',
   'settings.lang': 'Language',
+  'settings.lang.changed': 'Interface language changed',
   'settings.lang.zh': '简体中文',
   'settings.lang.en': 'English',
   'settings.lang.hint': 'Saved locally; not written to config file',
   'settings.autostart': 'Launch at startup',
   'settings.autostart.hint': 'Registry-based (not config-file only)',
+  'settings.autostart.enabled': 'Launch at startup enabled',
+  'settings.autostart.disabled': 'Launch at startup disabled',
   'settings.autostart.fail': 'Failed. Run the packaged PPoEDialer.exe',
   'settings.startMinimized': 'Start minimized to tray',
-  'settings.device': 'Select Device',
-  'settings.device.action': 'Select PPPoE Device',
-  'settings.device.hint': 'Device used when writing the phone book entry',
+  'settings.startMinimized.enabled': 'Start minimized enabled',
+  'settings.startMinimized.disabled': 'Start minimized disabled',
+  'settings.sniffing.enabled': 'Traffic sniffing enabled',
+  'settings.sniffing.disabled': 'Traffic sniffing disabled',
+  'settings.reconnect.enabled': 'Auto reconnect enabled',
+  'settings.reconnect.disabled': 'Auto reconnect disabled',
+  'settings.lite.enabled': 'Lightweight mode enabled',
+  'settings.lite.disabled': 'Lightweight mode disabled',
+  'settings.noInternet.enabled': 'Auto hang-up without Internet enabled',
+  'settings.noInternet.disabled': 'Auto hang-up without Internet disabled',
+  'settings.device': 'Dial Device',
+  'settings.device.hint': 'Device used when writing the phone book entry; applied immediately on selection',
   'settings.device.none': 'No available PPPoE device',
   'settings.device.done': 'Device remembered',
-  'settings.device.rewriteConfirm': 'Rewrite the phone book entry now?\n(Otherwise it applies on next auto-creation)',
+  'settings.device.switched': 'Dial device switched',
+  'settings.device.switchFail': 'Failed to switch dial device',
+  'settings.device.refresh': 'Refresh device list',
   'settings.sniffing': 'Traffic sniffing',
   'settings.sniffing.hint': 'Draws the 10-minute traffic curve and session stats on Home',
   'settings.reconnect': 'Auto reconnect',
@@ -253,25 +290,28 @@ const en = {
   'settings.interval': 'Interval',
   'settings.interval.unit': 's',
   'settings.lite': 'Lightweight',
-  'settings.lite.hint': 'Lower refresh rate, no animation or shadow',
+  // Lightweight actually does: chart redraw 1s->4s (store.js renderIntervalMs),
+  // global animation/transition off, .card shadow removed; speed figures are
+  // event-driven and still update live.
+  'settings.lite.hint': 'Redraws the traffic chart every 4s instead of 1s and disables UI animations and card shadows; speed figures still update live',
   'settings.noInternet': 'Hang up when no Internet',
   'settings.noInternet.hint': 'Hang up when RAS is up but the Internet check fails',
-  'settings.schedule.dial': 'Scheduled dial',
-  'settings.schedule.disconnect': 'Scheduled disconnect',
-  'settings.schedule.everyDay': 'Every day',
-  'settings.schedule.hour': 'h',
-  'settings.schedule.minute': 'm',
   'settings.proxy.enable': 'Enable proxy',
+  'settings.proxy.enabled': 'Proxy enabled',
+  'settings.proxy.disabled': 'Proxy disabled',
   'settings.proxy.type': 'Type',
   'settings.proxy.host': 'Host',
   'settings.proxy.port': 'Port',
-  'settings.proxy.bypass': 'Bypass (comma separated)',
-  'settings.proxy.hint': 'Saved locally; proxy forwarding is not wired up yet',
+  'settings.proxy.bypass': 'Bypass (semicolon or comma separated)',
+  'settings.proxy.hint': "When enabled, this app's HTTP requests (update checks, HTTP connectivity probes) go through this proxy; system and other apps are unaffected",
+  'settings.proxy.needHost': 'Proxy host is required',
+  'settings.proxy.portInvalid': 'Port must be a number between 1 and 65535',
   'settings.update.enabled': 'Check updates on startup',
+  'settings.update.current': 'Current version',
   'settings.update.now': 'Check now',
   'settings.update.checking': 'Checking for updates…',
   'settings.update.upToDate': 'Up to date',
-  'settings.saved': 'Saved',
+  'settings.saveFail': 'Failed to save, please try again',
 
   'account.managerTitle': 'Accounts',
   'account.unset': 'Unset',
@@ -316,9 +356,13 @@ const en = {
   'account.warnTitle': 'Security warning',
   'account.warnMsg': 'The file will contain plain-text passwords. Continue?',
   'account.importOk': 'Imported!',
+  'account.importOkN': 'Imported {0} accounts',
   'account.importFail': 'Import failed: ',
+  'account.importFailTitle': 'Import failed',
   'account.exportOk': 'Exported!',
   'account.exportFail': 'Export failed: ',
+  'account.exportFailTitle': 'Export failed',
+  'account.switchTitle': 'Account switched',
   'account.empty': 'No accounts yet — click Add',
 
   'update.title': 'Update',
@@ -331,6 +375,9 @@ const en = {
   'update.keepOnly': 'Keep file only',
   'update.exitNote': 'The app exits during install; a script replaces/starts the installer.',
   'update.downloading': 'Downloading',
+  'update.doneTitle': 'Download complete',
+  'update.installing': 'Installing…',
+  'update.error': 'Operation failed',
 
   'common.confirm': 'Confirm',
   'common.ok': 'OK',
@@ -338,18 +385,18 @@ const en = {
   'common.close': 'Close'
 }
 
-let current = 'zh'
+const current = ref('zh')
 
 export function setLang(lang) {
-  current = lang === 'en' ? 'en' : 'zh'
+  current.value = lang === 'en' ? 'en' : 'zh'
 }
 
 export function lang() {
-  return current
+  return current.value
 }
 
 export function t(key) {
-  if (current === 'en' && en[key] !== undefined) return en[key]
+  if (current.value === 'en' && en[key] !== undefined) return en[key]
   return zh[key] !== undefined ? zh[key] : key
 }
 

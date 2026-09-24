@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,10 +86,17 @@ func WriteRunValue(valueName, value string) error {
 func DeleteRunValue(valueName string) error {
 	key, err := registry.OpenKey(registry.CURRENT_USER, RunKeyPath, registry.WRITE)
 	if err != nil {
+		// 未注册时视为删除成功，避免首次关闭开机自启被误报失败。
+		if errors.Is(err, registry.ErrNotExist) {
+			return nil
+		}
 		return err
 	}
 	defer key.Close()
-	return key.DeleteValue(valueName)
+	if err := key.DeleteValue(valueName); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // CurrentExePath 返回当前进程的可执行文件绝对路径。

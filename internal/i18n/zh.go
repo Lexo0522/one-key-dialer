@@ -66,11 +66,6 @@ var zh = map[string]string{
 	"dial.credError":               "拨号凭据获取失败: {0}",
 	"dial.queueClosed":             "拨号队列已关闭，忽略本次自动操作",
 	"dial.switchBusy":              "正在处理连接操作，暂无法切换账号",
-	"dial.scheduleSkip":            "定时断开跳过：当前有其它连接操作",
-	"dial.scheduleFailed":          "定时断开命令执行失败，退出码: {0}",
-	"dial.scheduleError":           "定时断开失败: {0}: {1}",
-	"dial.scheduleDialTrigger":     "定时拨号触发",
-	"dial.scheduleDiscTrigger":     "定时断开触发",
 	"dial.historyNoInternetSuffix": "/已断开",
 
 	// 通知
@@ -78,6 +73,7 @@ var zh = map[string]string{
 	"notify.connected.body":     "已连接到校园网",
 	"notify.disconnected.title": "已断开",
 	"notify.disconnected.body":  "网络连接已断开",
+
 	"notify.failed.title":       "连接失败",
 	"notify.noNet.title":        "已拨通但无外网",
 	"notify.noNet.policyDone":   "外网不可达，已断开宽带（可在设置中关闭该策略）",
@@ -135,6 +131,10 @@ var zh = map[string]string{
 	"selfcheck.deleteFailed": "启动自检: {0} 测试文件删除失败",
 	"selfcheck.notWritable":  "启动自检: {0} 不可写: {1}",
 	"selfcheck.probeConfig":  "探测配置: {0}",
+
+	// 代理（仅本应用 HTTP 出口）
+	"proxy.enabled":  "代理已启用: {0}（仅本应用的 HTTP 请求：更新检查、外网探测）",
+	"proxy.disabled": "代理已关闭（本应用的 HTTP 请求直连，或回退系统环境变量代理）",
 
 	// 流量
 	"traffic.parseFailed": "netstat -e 输出解析失败，流量速度不可用",

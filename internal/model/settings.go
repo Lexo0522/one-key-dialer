@@ -31,49 +31,46 @@ const (
 // Settings 是不可变设置快照的 Go 版载体；JSON 字段名与旧版完全一致，
 // 以保证已有 settings.json 可直接读取。
 type Settings struct {
-	IntervalSeconds           int    `json:"intervalSeconds"`
-	AutoReconnect             bool   `json:"autoReconnect"`
-	AutoStart                 bool   `json:"autoStart"`
-	StartMinimized            bool   `json:"startMinimized"`
-	AccountIndex              int    `json:"accountIndex"`
-	ScheduledDial             bool   `json:"scheduledDial"`
-	ScheduledDialHour         int    `json:"scheduledDialHour"`
-	ScheduledDialMinute       int    `json:"scheduledDialMinute"`
-	ScheduledDisconnect       bool   `json:"scheduledDisconnect"`
-	ScheduledDisconnectHour   int    `json:"scheduledDisconnectHour"`
-	ScheduledDisconnectMinute int    `json:"scheduledDisconnectMinute"`
-	ProbeMode                 string `json:"probeMode"`
-	ProbeHost                 string `json:"probeHost"`
-	ProbeHttpUrl              string `json:"probeHttpUrl"`
-	ProbeAttempts             int    `json:"probeAttempts"`
-	ProbeDelayMs              int    `json:"probeDelayMs"`
-	DisconnectOnNoInternet    bool   `json:"disconnectOnNoInternet"`
-	UpdateCheckEnabled        bool   `json:"updateCheckEnabled"`
-	UITheme                   string `json:"uiTheme"`
+	IntervalSeconds        int    `json:"intervalSeconds"`
+	AutoReconnect          bool   `json:"autoReconnect"`
+	AutoStart              bool   `json:"autoStart"`
+	StartMinimized         bool   `json:"startMinimized"`
+	AccountIndex           int    `json:"accountIndex"`
+	ProbeMode              string `json:"probeMode"`
+	ProbeHost              string `json:"probeHost"`
+	ProbeHttpUrl           string `json:"probeHttpUrl"`
+	ProbeAttempts          int    `json:"probeAttempts"`
+	ProbeDelayMs           int    `json:"probeDelayMs"`
+	DisconnectOnNoInternet bool   `json:"disconnectOnNoInternet"`
+	UpdateCheckEnabled     bool   `json:"updateCheckEnabled"`
+	UITheme                string `json:"uiTheme"`
+
+	// 代理（仅本应用自身 HTTP 出口：更新检查/下载、HTTP 模式外网探测）。
+	// 旧版 settings.json 无这些字段，零值即"未启用"，向后兼容。
+	ProxyEnabled bool   `json:"proxyEnabled"`
+	ProxyType    string `json:"proxyType"`
+	ProxyHost    string `json:"proxyHost"`
+	ProxyPort    string `json:"proxyPort"`
+	ProxyBypass  string `json:"proxyBypass"`
 }
 
 // DefaultSettings 返回全部默认值（与旧版 Builder 默认值一致）。
 func DefaultSettings() Settings {
 	return Settings{
-		IntervalSeconds:           30,
-		AutoReconnect:             false,
-		AutoStart:                 false,
-		StartMinimized:            false,
-		AccountIndex:              0,
-		ScheduledDial:             false,
-		ScheduledDialHour:         8,
-		ScheduledDialMinute:       0,
-		ScheduledDisconnect:       false,
-		ScheduledDisconnectHour:   23,
-		ScheduledDisconnectMinute: 0,
-		ProbeMode:                 ProbeModeAuto,
-		ProbeHost:                 DefaultProbeHost,
-		ProbeHttpUrl:              DefaultProbeHTTPURL,
-		ProbeAttempts:             DefaultProbeAttempts,
-		ProbeDelayMs:              DefaultProbeDelayMs,
-		DisconnectOnNoInternet:    false,
-		UpdateCheckEnabled:        true,
-		UITheme:                   ThemeSystem,
+		IntervalSeconds:        30,
+		AutoReconnect:          false,
+		AutoStart:              false,
+		StartMinimized:         false,
+		AccountIndex:           0,
+		ProbeMode:              ProbeModeAuto,
+		ProbeHost:              DefaultProbeHost,
+		ProbeHttpUrl:           DefaultProbeHTTPURL,
+		ProbeAttempts:          DefaultProbeAttempts,
+		ProbeDelayMs:           DefaultProbeDelayMs,
+		DisconnectOnNoInternet: false,
+		UpdateCheckEnabled:     true,
+		UITheme:                ThemeSystem,
+		ProxyType:              ProxyTypeHTTP,
 	}
 }
 
@@ -85,10 +82,6 @@ func (s Settings) Normalize() Settings {
 	if s.AccountIndex < 0 {
 		s.AccountIndex = 0
 	}
-	s.ScheduledDialHour = clamp(s.ScheduledDialHour, 0, 23)
-	s.ScheduledDialMinute = clamp(s.ScheduledDialMinute, 0, 59)
-	s.ScheduledDisconnectHour = clamp(s.ScheduledDisconnectHour, 0, 23)
-	s.ScheduledDisconnectMinute = clamp(s.ScheduledDisconnectMinute, 0, 59)
 	s.ProbeMode = NormalizeProbeMode(s.ProbeMode)
 	if strings.TrimSpace(s.ProbeHost) == "" {
 		s.ProbeHost = DefaultProbeHost
@@ -107,6 +100,11 @@ func (s Settings) Normalize() Settings {
 		s.ProbeDelayMs = 0
 	}
 	s.UITheme = NormalizeTheme(s.UITheme)
+	host, port := splitProxyEndpoint(s.ProxyHost, s.ProxyPort)
+	s.ProxyType = NormalizeProxyType(s.ProxyType)
+	s.ProxyHost = host
+	s.ProxyPort = normalizeProxyPort(port, s.ProxyType)
+	s.ProxyBypass = joinProxyBypass(splitProxyBypass(s.ProxyBypass))
 	return s
 }
 
@@ -141,14 +139,4 @@ func NormalizeTheme(theme string) string {
 		return ThemeDark
 	}
 	return ThemeSystem
-}
-
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }

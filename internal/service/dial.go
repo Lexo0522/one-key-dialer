@@ -18,6 +18,14 @@ const (
 	PhaseDisconnecting = "disconnecting"
 )
 
+// 通知语气（透传给前端灵动岛 Toast 的 tone 字段）
+const (
+	ToneInfo    = "info"
+	ToneSuccess = "success"
+	ToneWarning = "warning"
+	ToneError   = "error"
+)
+
 // DialPort RAS 边界（由 platform.RasModule 实现）。阻塞调用，勿在 UI 回调中直接调用。
 type DialPort interface {
 	ConnectionName() string
@@ -37,7 +45,7 @@ func (r DialResult) IsSuccess() bool { return r.Code == 0 }
 // DialView 编排器面向 UI 的回调集合。
 type DialView interface {
 	Log(level Level, message string)
-	Notify(title, message string)
+	Notify(title, message, tone string)
 	OnDialPhase(phase string)
 	OnConnectionState(online bool)
 	CaptureCredentials() *model.DialCredentials
@@ -202,11 +210,6 @@ func (o *DialOrchestrator) DialAuto() {
 	})
 }
 
-// DisconnectScheduled 定时断开。
-func (o *DialOrchestrator) DisconnectScheduled() {
-	o.enqueue(o.runDisconnectScheduled)
-}
-
 // RedialAfterDisconnect 在线切换账号：先断开，成功后用新账号重拨。
 func (o *DialOrchestrator) RedialAfterDisconnect() {
 	if o.lifecycle.IsBusy() {
@@ -356,33 +359,7 @@ func (o *DialOrchestrator) runDisconnectUser() {
 	} else {
 		o.view.Log(LevelWarning, i18n.T("dial.disconnectDone"))
 	}
-	o.view.Notify(i18n.T("notify.disconnected.title"), i18n.T("notify.disconnected.body"))
-}
-
-func (o *DialOrchestrator) runDisconnectScheduled() {
-	if o.shuttingDown.Load() {
-		return
-	}
-	if !o.lifecycle.TryBeginDisconnect() {
-		o.view.Log(LevelWarning, i18n.T("dial.scheduleSkip"))
-		return
-	}
-	defer o.lifecycle.End()
-	code, err := o.port.Disconnect()
-	traffic := util.FormatBytes(o.env.SessionTrafficBytes())
-	if err == nil && code == 0 {
-		o.view.OnConnectionState(false)
-		o.env.AddHistory(model.OpScheduleDisconnect, o.env.CurrentAccountName(),
-			model.OutcomeSuccess(), "--", traffic)
-		return
-	}
-	if err != nil {
-		o.view.Log(LevelWarning, i18n.Tf("dial.scheduleError", "exec", err.Error()))
-	} else {
-		o.view.Log(LevelWarning, i18n.Tf("dial.scheduleFailed", code))
-	}
-	o.env.AddHistory(model.OpScheduleDisconnect, o.env.CurrentAccountName(),
-		model.OutcomeFailure(), "--", traffic)
+	o.view.Notify(i18n.T("notify.disconnected.title"), i18n.T("notify.disconnected.body"), ToneInfo)
 }
 
 // handleDialResult 通知顺序：状态 → 计数 → 日志 → 通知 → 历史 → 持久化。
@@ -411,7 +388,7 @@ func (o *DialOrchestrator) handleDialResult(result DialResult, operation string,
 			o.view.OnConnectionState(true)
 			o.stats.incSuccess()
 			o.view.Log(LevelSuccess, i18n.T("dial.success"))
-			o.view.Notify(i18n.T("notify.connected.title"), i18n.T("notify.connected.body"))
+			o.view.Notify(i18n.T("notify.connected.title"), i18n.T("notify.connected.body"), ToneSuccess)
 			o.env.AddHistory(operation, o.env.CurrentAccountName(), model.OutcomeSuccess(), "--", "--")
 			if saveAfterSuccess {
 				o.env.PersistAfterSuccess()
@@ -427,16 +404,16 @@ func (o *DialOrchestrator) handleDialResult(result DialResult, operation string,
 			switch {
 			case err == nil && code == 0:
 				disconnected = true
-				o.view.Notify(i18n.T("notify.noNet.title"), i18n.T("notify.noNet.policyDone"))
+				o.view.Notify(i18n.T("notify.noNet.title"), i18n.T("notify.noNet.policyDone"), ToneWarning)
 			case err != nil:
 				o.view.Log(LevelWarning, i18n.Tf("dial.policyDisconnectError", "exec", err.Error()))
-				o.view.Notify(i18n.T("notify.noNet.title"), i18n.T("notify.noNet.policyError"))
+				o.view.Notify(i18n.T("notify.noNet.title"), i18n.T("notify.noNet.policyError"), ToneWarning)
 			default:
 				o.view.Log(LevelWarning, i18n.Tf("dial.policyDisconnectFailed", code))
-				o.view.Notify(i18n.T("notify.noNet.title"), i18n.T("notify.noNet.policyFailed"))
+				o.view.Notify(i18n.T("notify.noNet.title"), i18n.T("notify.noNet.policyFailed"), ToneWarning)
 			}
 		} else {
-			o.view.Notify(i18n.T("notify.noNet.title"), i18n.T("notify.noNet.retry"))
+			o.view.Notify(i18n.T("notify.noNet.title"), i18n.T("notify.noNet.retry"), ToneWarning)
 		}
 		resultText := model.OutcomeRasNoInternet()
 		if disconnected {
@@ -450,7 +427,7 @@ func (o *DialOrchestrator) handleDialResult(result DialResult, operation string,
 	detail := DescribeFailure(&result)
 	o.view.Log(LevelError, i18n.Tf("dial.failed", result.Code))
 	o.view.Log(LevelWarning, "  "+detail)
-	o.view.Notify(i18n.T("notify.failed.title"), detail)
+	o.view.Notify(i18n.T("notify.failed.title"), detail, ToneError)
 	o.env.AddHistory(operation, o.env.CurrentAccountName(), model.FailureResult(result.Code), "--", "--")
 }
 

@@ -290,7 +290,7 @@ func (m *Module) downloadAttempt(asset *Asset, part string, src *Source,
 	if onDisk > 0 {
 		req.Header.Set("Range", "bytes="+strconv.FormatInt(onDisk, 10)+"-")
 	}
-	resp, err := m.client.Do(req)
+	resp, err := m.httpClient().Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return errors.New(i18n.T("update.hardTimeout"))

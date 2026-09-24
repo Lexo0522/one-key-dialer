@@ -12,7 +12,6 @@ const ModalHost = {
       queue.value.map((d, i) => {
         if (d.type === 'confirm') return h(ConfirmView, { key: i, data: d })
         if (d.type === 'pick') return h(PickView, { key: i, data: d })
-        if (d.type === 'form') return h(FormView, { key: i, data: d })
         return null
       })
   }
@@ -87,58 +86,6 @@ const PickView = {
   }
 }
 
-// ------------------------------------------------------------ 输入框 ----
-
-const FormView = {
-  props: ['data'],
-  setup(props) {
-    const draft = ref(props.data.fields.map((f) => ({ ...f })))
-    const close = (v) => {
-      const idx = queue.value.indexOf(props.data)
-      if (idx >= 0) queue.value.splice(idx, 1)
-      props.data.resolve(v)
-    }
-    const submit = () => {
-      const out = {}
-      for (const f of draft.value) out[f.key] = f.value || ''
-      close(out)
-    }
-    return () =>
-      h('div', { class: 'mask' }, [
-        h('div', { class: 'dialog' }, [
-          h('div', { class: 'dialog-title' }, props.data.title),
-          h(
-            'div',
-            { class: 'form-grid' },
-            draft.value.map((f, i) => [
-              h('label', { class: 'field-label' }, f.label),
-              f.type === 'password'
-                ? h('input', {
-                    type: 'password',
-                    value: f.value,
-                    onInput: (e) => {
-                      draft.value[i].value = e.target.value
-                    }
-                  })
-                : h('input', {
-                    type: 'text',
-                    value: f.value,
-                    onInput: (e) => {
-                      draft.value[i].value = e.target.value
-                    }
-                  })
-            ])
-          ),
-          props.data.hint ? h('div', { class: 'hint' }, props.data.hint) : null,
-          h('div', { class: 'dialog-actions' }, [
-            h('button', { class: 'btn', onClick: () => close(null) }, '取消'),
-            h('button', { class: 'btn btn-primary', onClick: submit }, '确定')
-          ])
-        ])
-      ])
-  }
-}
-
 createApp(ModalHost).mount(hostEl)
 
 function push(type, payload) {
@@ -155,9 +102,4 @@ export function confirmDialog(title, message, withCancel = false) {
 /** 单选列表；返回选中下标，取消返回 -1。 */
 export function pickDialog(title, message, options) {
   return push('pick', { title, message, options })
-}
-
-/** 多字段表单；取消返回 null。 */
-export function formDialog(title, fields, hint = '') {
-  return push('form', { title, fields, hint })
 }

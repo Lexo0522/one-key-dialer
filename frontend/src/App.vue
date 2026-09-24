@@ -43,23 +43,32 @@
 
     <UpdateDialog v-if="state.update.visible" @close="state.update.visible = false"/>
 
-    <transition name="fade">
-      <div v-if="state.toast.visible" class="toast" :class="'tone-' + state.toast.tone">
-        <div class="toast-title">{{ state.toast.title }}</div>
-        <div class="toast-body">{{ state.toast.body }}</div>
-      </div>
-    </transition>
+    <!-- 灵动岛 Toast：顶部居中小圆角胶囊堆叠排队，hover 暂停倒计时 -->
+    <GooeyToaster
+      position="top-center"
+      :theme="state.theme"
+      :duration="TOAST_DURATION"
+      :gap="10"
+      offset="16px"
+      :max-queue="3"
+      queue-overflow="drop-oldest"
+      preset="smooth"
+      close-button="top-right"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { GooeyToaster } from 'vue-goey-toast'
 import HomeTab from './components/HomeTab.vue'
 import AccountsTab from './components/AccountsTab.vue'
 import LogTab from './components/LogTab.vue'
 import SettingsTab from './components/SettingsTab.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import { state, bootstrap, bindEvents } from './store'
+import { TOAST_DURATION } from './toast'
+import { installToastFoldAnimator } from './toast-fold'
 import { t } from './i18n'
 
 const active = ref('home')
@@ -73,6 +82,7 @@ const navItems = computed(() => [
 
 onMounted(async () => {
   bindEvents()
+  installToastFoldAnimator()
   await bootstrap()
 })
 </script>
@@ -247,35 +257,42 @@ onMounted(async () => {
   flex-direction: column;
 }
 
-/* ---------------- 提示条 ---------------- */
-.toast {
-  position: fixed;
-  right: 14px;
-  bottom: 14px;
-  max-width: 320px;
-  background: var(--c-card);
-  border: none;
-  border-left: 4px solid var(--c-info);
-  border-radius: var(--radius-md);
-  padding: 10px 14px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
-  z-index: 800;
+/* 窗口较窄时侧栏收敛为纯图标栏，把宽度让给主内容区，
+   避免主区被固定 208px 侧栏挤到无法正常展示 */
+@media (max-width: 720px) {
+  .sidebar {
+    width: 56px;
+    flex-basis: 56px;
+    padding: 16px 8px 12px;
+  }
+
+  .brand {
+    justify-content: center;
+    padding: 0 0 14px;
+  }
+
+  .brand-text,
+  .nav-label {
+    display: none;
+  }
+
+  .nav-item {
+    justify-content: center;
+    padding: 9px 0;
+  }
+
+  /* 图标栏下隐藏激活指示条，保持图标居中 */
+  .nav-item.active::before {
+    display: none;
+  }
+
+  .conn {
+    justify-content: center;
+  }
+
+  .conn span:last-child,
+  .ver {
+    display: none;
+  }
 }
-
-.toast.tone-success { border-left-color: var(--c-success); }
-.toast.tone-error { border-left-color: var(--c-error); }
-
-.toast-title {
-  font-weight: 700;
-  margin-bottom: 3px;
-}
-
-.toast-body {
-  font-size: 12px;
-  color: var(--c-text-sub);
-  white-space: pre-wrap;
-}
-
-.fade-enter-active, .fade-leave-active { transition: opacity .2s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>

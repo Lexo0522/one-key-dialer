@@ -14,17 +14,19 @@ type ProbeConfig struct {
 	Attempts      int
 	DelayMs       int
 	HTTPTimeoutMs int
+	Proxy         ProxyConfig
 }
 
-// ProbeConfigFromSettings 由设置快照构造探测配置。
-func ProbeConfigFromSettings(mode, host, httpURL string, attempts, delayMs int) ProbeConfig {
+// ProbeConfigFromSettings 由设置快照构造探测配置（含代理出口）。
+func ProbeConfigFromSettings(s Settings) ProbeConfig {
 	return ProbeConfig{
-		Mode:          NormalizeProbeMode(mode),
-		Host:          orDefault(host, DefaultProbeHost),
-		HTTPUrl:       orDefault(httpURL, DefaultProbeHTTPURL),
-		Attempts:      maxInt(1, attempts),
-		DelayMs:       maxInt(0, delayMs),
+		Mode:          NormalizeProbeMode(s.ProbeMode),
+		Host:          orDefault(s.ProbeHost, DefaultProbeHost),
+		HTTPUrl:       orDefault(s.ProbeHttpUrl, DefaultProbeHTTPURL),
+		Attempts:      maxInt(1, s.ProbeAttempts),
+		DelayMs:       maxInt(0, s.ProbeDelayMs),
 		HTTPTimeoutMs: DefaultHTTPTimeoutMs,
+		Proxy:         s.ProxyConfig(),
 	}
 }
 
@@ -77,10 +79,15 @@ func (o ProbeOutcome) DetailLine() string {
 		o.ShortLine(), o.Mode, o.Host, o.HTTPUrl, o.Attempts)
 }
 
-// ProbeSummary 返回 "mode=%s host=%s http=%s attempts=%d delayMs=%d" 摘要。
+// ProbeSummary 返回 "mode=%s host=%s http=%s attempts=%d delayMs=%d" 摘要；
+// 启用代理时追加 "proxy=<type host:port>"，便于确认探测实际走的口子。
 func (c ProbeConfig) Summary() string {
-	return fmt.Sprintf("mode=%s host=%s http=%s attempts=%d delayMs=%d",
+	base := fmt.Sprintf("mode=%s host=%s http=%s attempts=%d delayMs=%d",
 		c.Mode, c.Host, c.HTTPUrl, c.Attempts, c.DelayMs)
+	if c.Proxy.Enabled && c.Proxy.Host != "" {
+		base += " proxy=" + c.Proxy.Summary()
+	}
+	return base
 }
 
 func orDefault(v, def string) string {

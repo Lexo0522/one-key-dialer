@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Lexo0522/one-key-dialer/internal/model"
+	"github.com/Lexo0522/one-key-dialer/internal/proxy"
 	"github.com/Lexo0522/one-key-dialer/internal/util"
 )
 
@@ -30,15 +31,18 @@ func QuickCheck(cfg model.ProbeConfig) bool {
 }
 
 func confirm(cfg model.ProbeConfig) bool {
+	// HTTP 出口按设置内的代理配置构造（未启用时回退系统环境变量），
+	// Transport 经 proxy 包缓存，同一配置重复探测复用连接池。
+	client := proxy.ClientFor(cfg.Proxy)
 	for i := 0; i < cfg.Attempts; i++ {
 		var ok bool
 		switch cfg.Mode {
 		case model.ProbeModeICMP:
 			ok = icmpReachable(cfg.Host)
 		case model.ProbeModeHTTP:
-			ok = httpReachable(cfg.HTTPUrl, cfg.HTTPTimeoutMs)
+			ok = httpReachable(client, cfg.HTTPUrl, cfg.HTTPTimeoutMs)
 		default:
-			ok = icmpReachable(cfg.Host) || httpReachable(cfg.HTTPUrl, cfg.HTTPTimeoutMs)
+			ok = icmpReachable(cfg.Host) || httpReachable(client, cfg.HTTPUrl, cfg.HTTPTimeoutMs)
 		}
 		if ok {
 			return true
@@ -63,7 +67,8 @@ func icmpReachable(host string) bool {
 }
 
 // httpReachable 轻量 HTTP(S) 检查：优先 HEAD，被拒则 GET；2xx/3xx 视为可达。
-func httpReachable(target string, timeoutMs int) bool {
+// client 由探测配置中的代理设置构造，请求按绕过列表决定直连或经代理。
+func httpReachable(client *http.Client, target string, timeoutMs int) bool {
 	if target == "" {
 		return false
 	}
@@ -78,7 +83,7 @@ func httpReachable(target string, timeoutMs int) bool {
 		return false
 	}
 	req.Header.Set("User-Agent", model.UserAgent())
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err == nil {
 		code := resp.StatusCode
 		resp.Body.Close()
@@ -96,7 +101,7 @@ func httpReachable(target string, timeoutMs int) bool {
 		return false
 	}
 	req2.Header.Set("User-Agent", model.UserAgent())
-	resp2, err := http.DefaultClient.Do(req2)
+	resp2, err := client.Do(req2)
 	if err != nil {
 		return false
 	}

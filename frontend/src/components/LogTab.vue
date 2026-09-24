@@ -162,6 +162,9 @@ watch(
   border-radius: var(--radius-sm);
   padding: 0 8px;
   height: 28px;
+  flex: 1 1 140px;
+  min-width: 0;
+  max-width: 260px;
 }
 
 .search i {
@@ -174,7 +177,9 @@ watch(
   background: transparent;
   padding: 0;
   height: 100%;
-  width: 150px;
+  flex: 1;
+  min-width: 60px;
+  width: auto;
   outline: none;
 }
 
@@ -182,6 +187,7 @@ watch(
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 10px 14px;
 }

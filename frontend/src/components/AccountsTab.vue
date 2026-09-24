@@ -104,7 +104,7 @@
 import { computed, ref, watch } from 'vue'
 import { state, showToast } from '../store'
 import { api } from '../bridge'
-import { t } from '../i18n'
+import { t, tf } from '../i18n'
 import { confirmDialog, pickDialog } from '../dialog'
 
 const rows = ref([])
@@ -164,7 +164,7 @@ function onAdd() {
 
 function onEdit() {
   if (sel.value < 0) {
-    showToast(t('account.managerTitle'), t('account.selectFirst'), 'error')
+    showToast(t('account.selectFirst'), 'error')
     return
   }
   const cur = rows.value[sel.value]
@@ -224,15 +224,15 @@ async function submitForm() {
 
 async function onDelete() {
   if (sel.value < 0) {
-    showToast(t('account.managerTitle'), t('account.selectFirst'), 'error')
+    showToast(t('account.selectFirst'), 'error')
     return
   }
   if (sel.value === state.currentIndex) {
-    showToast(t('account.managerTitle'), t('account.inUse'), 'error')
+    showToast(t('account.inUse'), 'error')
     return
   }
   if (rows.value.length <= 1) {
-    showToast(t('account.managerTitle'), t('account.keepOne'), 'error')
+    showToast(t('account.keepOne'), 'error')
     return
   }
   const ok = await confirmDialog(t('common.confirm'), t('account.confirmDelete'))
@@ -273,12 +273,15 @@ async function onExport() {
     if (!ok) return
   }
   const path = await api.ExportAccounts(withPassword)
-  if (!path) showToast(t('account.exportTitle'), t('account.exportFail'), 'error')
+  if (!path) showToast(t('account.exportFailTitle'), 'error')
+  else showToast(t('account.exportOk'), 'success')
 }
 
 async function onImport() {
   const n = await api.ImportAccounts()
-  if (!n) showToast(t('account.import'), t('account.importFail'), 'error')
+  if (n < 0) return // 用户取消文件选择：静默
+  if (!n) showToast(t('account.importFailTitle'), 'error')
+  else showToast(tf('account.importOkN', n), 'success')
 }
 </script>
 
@@ -351,6 +354,12 @@ async function onImport() {
   flex: 1;
   overflow: auto;
   border-radius: var(--radius-lg);
+}
+
+/* 固定列宽合计 464px：容器更窄时整表横向滚动，
+   避免各列被压扁后昵称/账号名挤出省略号 */
+.table-box table.grid {
+  min-width: 560px;
 }
 
 .empty {

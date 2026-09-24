@@ -23,8 +23,9 @@ func (a *App) emit(name string, payload any) {
 }
 
 // notify 托盘气泡 + 前端提示（窗口可见时只走日志/前端）。
-func (a *App) notify(title, message string) {
-	a.emit(EvtNotify, map[string]string{"title": title, "body": message})
+// tone 透传给前端灵动岛 Toast：info / success / warning / error。
+func (a *App) notify(title, message, tone string) {
+	a.emit(EvtNotify, map[string]string{"title": title, "body": message, "tone": tone})
 	showTrayNotification(title, message)
 }
 
@@ -72,8 +73,7 @@ func (a *App) setOnline(online bool) {
 }
 
 func (a *App) probeConfig() model.ProbeConfig {
-	s := a.settings.Current()
-	return model.ProbeConfigFromSettings(s.ProbeMode, s.ProbeHost, s.ProbeHttpUrl, s.ProbeAttempts, s.ProbeDelayMs)
+	return model.ProbeConfigFromSettings(a.settings.Current())
 }
 
 func (a *App) accountDTOs() []AccountDTO {
@@ -160,12 +160,12 @@ type dialView struct{ a *App }
 
 func (v dialView) Log(level service.Level, message string) { v.a.logSvc.Log(level, message) }
 
-func (v dialView) Notify(title, message string) {
+func (v dialView) Notify(title, message, tone string) {
 	if v.a.windowVisible() {
-		v.a.emit(EvtNotify, map[string]string{"title": title, "body": message})
+		v.a.emit(EvtNotify, map[string]string{"title": title, "body": message, "tone": tone})
 		return
 	}
-	v.a.notify(title, message)
+	v.a.notify(title, message, tone)
 }
 
 func (v dialView) OnDialPhase(phase string) {
@@ -202,7 +202,7 @@ func (v dialView) ValidateInput(interactive bool) bool {
 	}
 	v.a.logSvc.Log(service.LevelWarning, failure)
 	if interactive {
-		v.a.emit(EvtNotify, map[string]string{"title": i18n.T("precheck.dialog.default"), "body": dialogMessage(failure)})
+		v.a.emit(EvtNotify, map[string]string{"title": i18n.T("precheck.dialog.default"), "body": dialogMessage(failure), "tone": service.ToneError})
 	}
 	return false
 }

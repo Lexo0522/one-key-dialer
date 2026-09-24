@@ -219,9 +219,14 @@ input[type="number"] {
 }
 
 .switch input {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
   opacity: 0;
-  width: 0;
-  height: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
 }
 
 .switch .track {
@@ -381,17 +386,7 @@ table.grid tbody tr.selected td {
   margin-top: 10px;
 }
 
-.form-grid {
-  display: grid;
-  grid-template-columns: 68px 1fr;
-  align-items: center;
-  gap: 8px 10px;
-}
-
-.form-grid input {
-  width: 100%;
-}
-
+/* 单选列表 */
 .pick-list {
   max-height: 220px;
   overflow: auto;
@@ -427,3 +422,115 @@ html[data-lite="on"] .card {
   box-shadow: none;
   border: 1px solid var(--c-border-light);
 }
+
+/* ---------------- 灵动岛 Toast：关闭按钮脱出 + 悬停热区 ---------------- */
+/* 按钮常态藏在胶囊内右缘（不可见、不占交互）；hover / focus 时向右脱出到胶囊
+   外侧 6px 间隙处，scale + right 过渡形成"从胶囊中脱离出来"的动画。
+   特异性均高于库自带规则（.gooey-closeButton 为 0,1,0；其 hover 规则为 0,2,0），
+   保证 right / transform / opacity 覆盖生效。 */
+.gooey-wrapper .gooey-closeButtonRight {
+  right: 4px;
+  transform: scale(.5);
+  opacity: 0;
+  transition:
+    opacity .16s ease,
+    right .26s cubic-bezier(.25, 1, .5, 1),
+    transform .3s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+.gooey-wrapper:hover .gooey-closeButtonRight,
+.gooey-wrapper:focus-within .gooey-closeButtonRight {
+  right: -26px;
+  transform: scale(1);
+  opacity: 1;
+}
+
+/* 按钮自身的微交互（再提特异性，覆盖上面的 scale(1)） */
+.gooey-wrapper:hover .gooey-closeButtonRight:hover {
+  transform: scale(1.15);
+}
+
+.gooey-wrapper:hover .gooey-closeButtonRight:active {
+  transform: scale(.95);
+}
+
+/* 悬停热区延伸：按钮脱出后，鼠标从胶囊移向按钮需穿过间隙——穿过时 wrapper 失去
+   :hover，按钮会立即收回且 pointer-events 归零，用户点不住。这里给 wrapper 追加
+   一条不可见的右侧热区（绝对定位，不影响布局与居中），把 hover 区连续覆盖到按钮
+   位置，鼠标在间隙中移动时按钮保持展开可点。 */
+.gooey-wrapper::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: 26px;
+  pointer-events: auto;
+}
+
+/* ---------------- 灵动岛 Toast：排队胶囊向上折叠 ---------------- */
+/* 库沿用 sonner 的默认方向：data-y-position=top 时，折叠中的排队 Toast 按
+   --lift-amount（= +gap）逐条向下偏移，于是整摞排队胶囊溢出到可视胶囊下方，
+   压住页面内容。而展开（hover）时库的方向恰好相反——越新的越靠下、最旧的贴住
+   容器上沿。把折叠方向翻转为 -gap 后两态方向一致：排队胶囊收在可视胶囊上方，
+   悬停展开时自上而下逐条铺开。
+   style.css 在 main.js 中先于库样式引入，故用属性选择器叠加一层提升特异性。 */
+[data-sonner-toaster] [data-sonner-toast][data-y-position='top'][data-expanded='false'][data-front='false'] {
+  --y: translateY(calc(-1 * var(--lift-amount) * var(--toasts-before)))
+    scale(calc(-1 * var(--toasts-before) * .05 + 1));
+}
+
+/* 折叠中的排队胶囊只露出胶囊边缘（提示「后面还有消息」），不露出里面的
+   图标与标题——否则相邻胶囊错开 10px 时，上一条的图标/文字会从缝隙里透出来。
+   库自带的同类规则挂在 [data-styled='true'] 上，而本库以 unstyled 渲染，故不生效；
+   这里只作用于内容层 .gooey-content，胶囊本体（.gooey-blobSvg）保持可见。
+   内容层自身补一条 opacity 过渡：谁成为可视胶囊，内容淡入而不是瞬现。 */
+[data-sonner-toaster] [data-sonner-toast] .gooey-content {
+  transition:
+    opacity .24s ease,
+    padding .35s cubic-bezier(.4, 0, .2, 1);
+}
+
+[data-sonner-toaster] [data-sonner-toast][data-expanded='false'][data-front='false'] .gooey-content {
+  opacity: 0;
+}
+
+/* 展开时内容与自身位移同拍：--unfold-delay 由 toast-fold.js 在展开瞬间写死成内联变量，
+   会继承到内容层，于是第 n 条的内容淡入与它自己的 animation-delay 对齐，不会出现
+   「胶囊还没滑出来、文字先浮在原位」。收起方向不加延迟——收队时内容应当立刻让位。 */
+[data-sonner-toaster] [data-sonner-toast][data-expanded='true'] .gooey-content {
+  transition-delay: var(--unfold-delay, 0ms), 0s;
+}
+
+/* ---------------- 灵动岛 Toast：展开逐条铺开，不整摞瞬跳 ---------------- */
+/* 库在展开的同一帧会往胶囊写内联 `transition: none !important` 并改写 --offset，
+   过渡被就地掐断——实测最新胶囊 88px 的位移在单帧内到位（60fps 采样无中间帧），
+   所以调 transition 无效。展开改由 @keyframes 驱动：动画不受 transition 抑制，
+   且首尾值与库自带表达式逐字一致（起点=折叠态表达式，终点=库的 --lift * --offset），
+   动画结束交接给库的规则时不会二次跳变。
+   data-unfolding 只在展开期间挂着，animationend 后由 toast-fold.js 摘除——否则动画的
+   fill 会一直压住胶囊自己的 transform，收起时过渡无法接手，同样变成单帧瞬跳
+   （实测 82.9px/帧）。animation-delay 取挂载瞬间写死的内联变量，避免动画期间队列
+   序号变化改写延迟、把已完成的动画倒带回起点。 */
+@keyframes toast-unfold-top {
+  from {
+    transform: translateY(calc(-1 * var(--lift-amount) * var(--toasts-before)))
+      scale(calc(-1 * var(--toasts-before) * .05 + 1));
+  }
+
+  to {
+    transform: translateY(calc(var(--lift) * var(--offset)));
+  }
+}
+
+[data-sonner-toaster] [data-sonner-toast][data-y-position='top'][data-unfolding] {
+  animation: toast-unfold-top .34s cubic-bezier(.22, 1, .36, 1) both;
+  animation-delay: var(--unfold-delay, 0ms);
+}
+
+/* 收起（移出 hover、或关闭后重新排队）走库自己的 transform 过渡：实测本身是平滑的
+   （约 1.8px/帧），不需要再插一手。这里刻意不加 transition-delay 做“逐条收队”——
+   库在收起时同样会做一次带 `transition: none !important` 的测量，处于延迟等待中的
+   过渡会被它直接取消、退化成瞬跳（实测 82.9px/帧）。 */
+
+

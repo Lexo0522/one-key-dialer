@@ -57,8 +57,7 @@ func HistoryFromSlice(row []string) HistoryRecord {
 
 // 操作名常量（与旧版 DialOrchestrator 一致）。
 const (
-	OpUserDial           = "拨号"
-	OpAutoDial           = "自动拨号"
-	OpUserDisconnect     = "断开"
-	OpScheduleDisconnect = "定时断开"
+	OpUserDial       = "拨号"
+	OpAutoDial       = "自动拨号"
+	OpUserDisconnect = "断开"
 )

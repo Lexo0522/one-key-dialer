@@ -143,12 +143,6 @@ export namespace model {
 	    autoStart: boolean;
 	    startMinimized: boolean;
 	    accountIndex: number;
-	    scheduledDial: boolean;
-	    scheduledDialHour: number;
-	    scheduledDialMinute: number;
-	    scheduledDisconnect: boolean;
-	    scheduledDisconnectHour: number;
-	    scheduledDisconnectMinute: number;
 	    probeMode: string;
 	    probeHost: string;
 	    probeHttpUrl: string;
@@ -157,6 +151,11 @@ export namespace model {
 	    disconnectOnNoInternet: boolean;
 	    updateCheckEnabled: boolean;
 	    uiTheme: string;
+	    proxyEnabled: boolean;
+	    proxyType: string;
+	    proxyHost: string;
+	    proxyPort: string;
+	    proxyBypass: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -169,12 +168,6 @@ export namespace model {
 	        this.autoStart = source["autoStart"];
 	        this.startMinimized = source["startMinimized"];
 	        this.accountIndex = source["accountIndex"];
-	        this.scheduledDial = source["scheduledDial"];
-	        this.scheduledDialHour = source["scheduledDialHour"];
-	        this.scheduledDialMinute = source["scheduledDialMinute"];
-	        this.scheduledDisconnect = source["scheduledDisconnect"];
-	        this.scheduledDisconnectHour = source["scheduledDisconnectHour"];
-	        this.scheduledDisconnectMinute = source["scheduledDisconnectMinute"];
 	        this.probeMode = source["probeMode"];
 	        this.probeHost = source["probeHost"];
 	        this.probeHttpUrl = source["probeHttpUrl"];
@@ -183,6 +176,11 @@ export namespace model {
 	        this.disconnectOnNoInternet = source["disconnectOnNoInternet"];
 	        this.updateCheckEnabled = source["updateCheckEnabled"];
 	        this.uiTheme = source["uiTheme"];
+	        this.proxyEnabled = source["proxyEnabled"];
+	        this.proxyType = source["proxyType"];
+	        this.proxyHost = source["proxyHost"];
+	        this.proxyPort = source["proxyPort"];
+	        this.proxyBypass = source["proxyBypass"];
 	    }
 	}
 

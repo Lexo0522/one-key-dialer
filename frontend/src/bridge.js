@@ -38,12 +38,6 @@ const MOCK_STATE = {
     autoStart: false,
     startMinimized: false,
     accountIndex: 0,
-    scheduledDial: false,
-    scheduledDialHour: 8,
-    scheduledDialMinute: 0,
-    scheduledDisconnect: false,
-    scheduledDisconnectHour: 23,
-    scheduledDisconnectMinute: 0,
     disconnectOnNoInternet: false,
     updateCheckEnabled: true,
     uiTheme: 'system'
@@ -168,12 +162,19 @@ const mockApi = {
     return 'pppoe_accounts_export.csv'
   },
   async ImportAccounts() {
-    return 0
+    // 复现后端语义：成功返回导入条数（-1 为用户取消），并推送账号变更
+    mockAccounts = mockAccounts.concat([
+      { name: '导入账号', username: '20220002', remark: 'CSV', hasPassword: false }
+    ])
+    mockBus.emit(EV.accounts, { accounts: mockAccounts.map((a) => ({ ...a })), currentIndex: mockSettings.accountIndex })
+    mockLog('导入成功！', 'success')
+    return 1
   },
   DialCurrentAccount() {
     const acc = mockAccounts[mockSettings.accountIndex]
     if (acc && !acc.hasPassword) {
       mockLog('当前账号未设置密码，请先在账号配置中保存密码', 'warn')
+      mockBus.emit(EV.notify, { title: '拨号失败', body: '当前账号未设置密码，请先在账号配置中保存密码', tone: 'error' })
       return false
     }
     mockLog('连接中…')
@@ -182,6 +183,7 @@ const mockApi = {
       mockOnline = true
       mockBus.emit(EV.status, { online: true, phase: 'connected' })
       mockLog('拨号成功！', 'success')
+      mockBus.emit(EV.notify, { title: '连接成功', body: '已连接到校园网', tone: 'success' })
       startMockSpeed()
     }, 900)
     return true
@@ -193,6 +195,7 @@ const mockApi = {
     mockBus.emit(EV.speed, { down: 0, up: 0 })
     mockBus.emit(EV.uptime, 0)
     mockLog('网络已断开')
+    mockBus.emit(EV.notify, { title: '已断开', body: '网络连接已断开', tone: 'info' })
     return true
   },
   async DiagListDevices() {
@@ -201,8 +204,10 @@ const mockApi = {
       { port: 'PPPoE1-0', device: 'Realtek PCIe GbE', existing: false, default: true }
     ]
   },
-  async DiagSelectDevice(port, device) {
-    return `已记住设备 ${device} / ${port}`
+  async DiagSelectDevice(port, device, rewrite) {
+    return rewrite
+      ? `电话簿条目已重写 → ${device} / ${port}`
+      : `已记住设备 ${device} / ${port}（下次创建条目时使用）`
   },
   CheckUpdate() {
     mockBus.emit(EV.update, { kind: 'checking', message: '正在检查更新…' })

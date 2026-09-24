@@ -62,17 +62,13 @@ var en = map[string]string{
 	"dial.credError":               "Failed to obtain dial credentials: {0}",
 	"dial.queueClosed":             "Dial queue is closed, ignoring this automatic operation",
 	"dial.switchBusy":              "A connection operation is running, cannot switch account",
-	"dial.scheduleSkip":            "Scheduled disconnect skipped: another connection operation is running",
-	"dial.scheduleFailed":          "Scheduled disconnect command failed, exit code: {0}",
-	"dial.scheduleError":           "Scheduled disconnect failed: {0}: {1}",
-	"dial.scheduleDialTrigger":     "Scheduled dial triggered",
-	"dial.scheduleDiscTrigger":     "Scheduled disconnect triggered",
 	"dial.historyNoInternetSuffix": "/disconnected",
 
 	"notify.connected.title":    "Connected",
 	"notify.connected.body":     "Connected to the campus network",
 	"notify.disconnected.title": "Disconnected",
 	"notify.disconnected.body":  "Network connection closed",
+
 	"notify.failed.title":       "Connection failed",
 	"notify.noNet.title":        "Dialed but no internet",
 	"notify.noNet.policyDone":   "Internet unreachable, broadband disconnected (disable the policy in settings)",
@@ -126,6 +122,10 @@ var en = map[string]string{
 	"selfcheck.deleteFailed": "Startup self-check: failed to delete the {0} probe file",
 	"selfcheck.notWritable":  "Startup self-check: {0} is not writable: {1}",
 	"selfcheck.probeConfig":  "Probe config: {0}",
+
+	// Proxy (this app's HTTP egress only)
+	"proxy.enabled":  "Proxy enabled: {0} (this app's HTTP requests only: update checks, connectivity probes)",
+	"proxy.disabled": "Proxy disabled (this app's HTTP requests connect directly, or fall back to system environment proxy)",
 
 	"traffic.parseFailed": "Failed to parse netstat -e output, traffic speed unavailable",
 	"traffic.readFailed":  "Failed to read interface traffic: {0}",
