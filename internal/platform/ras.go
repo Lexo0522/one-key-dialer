@@ -328,6 +328,55 @@ func FindPppoeDeviceHint(content string) *DeviceHint {
 	return nil
 }
 
+// FindSectionDevice 提取指定连接段内的端口/设备，优先 Preferred* 字段。
+// 找不到该段或段内无端口信息时返回 nil。
+func FindSectionDevice(content, connName string) *DeviceHint {
+	if content == "" || connName == "" {
+		return nil
+	}
+	target := "[" + connName + "]"
+	var port, prefPort, device, prefDevice string
+	inSection := false
+	for _, line := range splitLines(content) {
+		t := strings.TrimSpace(line)
+		if len(t) >= 2 && t[0] == '[' && t[len(t)-1] == ']' {
+			if inSection {
+				break // 目标段已结束
+			}
+			inSection = t == target
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(t, "PreferredPort="):
+			prefPort = strings.TrimSpace(strings.TrimPrefix(t, "PreferredPort="))
+		case strings.HasPrefix(t, "PreferredDevice="):
+			prefDevice = strings.TrimSpace(strings.TrimPrefix(t, "PreferredDevice="))
+		case strings.HasPrefix(t, "Port=") && port == "":
+			port = strings.TrimSpace(strings.TrimPrefix(t, "Port="))
+		case strings.HasPrefix(t, "Device=") && device == "":
+			device = strings.TrimSpace(strings.TrimPrefix(t, "Device="))
+		}
+	}
+	p := prefPort
+	if p == "" {
+		p = port
+	}
+	d := prefDevice
+	if d == "" {
+		d = device
+	}
+	if p == "" {
+		return nil
+	}
+	if d == "" {
+		d = "WAN Miniport (PPPOE)"
+	}
+	return &DeviceHint{Port: p, Device: d, FromExisting: true}
+}
+
 // CollectPppoeDevices 收集电话簿中所有形似 PPPoE 的 Port/Device 组合（去重）。
 func CollectPppoeDevices(content string) []DeviceHint {
 	var out []DeviceHint

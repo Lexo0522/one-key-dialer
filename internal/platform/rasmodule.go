@@ -204,27 +204,65 @@ func (m *RasModule) SnapshotStatus() *PbkStatus {
 	return st
 }
 
-// ListDeviceOptions 列出可选的 PPPoE 设备（含兜底默认值）。
+// CurrentDevice 返回当前生效设备，优先级：显式偏好 → 本连接段 → 电话簿首个 PPPoE → 兜底默认。
+// 永不返回 nil，保证上层始终有可展示的默认值。
+func (m *RasModule) CurrentDevice() *DeviceHint {
+	if h := m.PreferredDevice(); h != nil && h.Port != "" {
+		return h
+	}
+	if content := m.readPbkContent(); content != "" {
+		if h := FindSectionDevice(content, m.connectionName); h != nil {
+			return h
+		}
+		if h := FindPppoeDeviceHint(content); h != nil {
+			return h
+		}
+	}
+	d := DefaultDevice
+	return &d
+}
+
+// readPbkContent 读取电话簿文本；任意失败返回 ""。
+func (m *RasModule) readPbkContent() string {
+	if m.phonebookFile == "" {
+		return ""
+	}
+	if _, err := os.Stat(m.phonebookFile); err != nil {
+		return ""
+	}
+	content, _, err := ReadPbk(m.phonebookFile)
+	if err != nil {
+		return ""
+	}
+	return content
+}
+
+// ListDeviceOptions 列出可选的 PPPoE 设备。
+// 列表必定包含「当前生效设备」与「兜底默认设备」，避免下拉框出现空选。
 func (m *RasModule) ListDeviceOptions() []DeviceHint {
 	seen := map[string]bool{}
 	var out []DeviceHint
-	if m.phonebookFile != "" {
-		if _, err := os.Stat(m.phonebookFile); err == nil {
-			if content, _, err := ReadPbk(m.phonebookFile); err == nil {
-				for _, h := range CollectPppoeDevices(content) {
-					key := h.Port + "|" + h.Device
-					if !seen[key] {
-						seen[key] = true
-						out = append(out, h)
-					}
-				}
+	if content := m.readPbkContent(); content != "" {
+		for _, h := range CollectPppoeDevices(content) {
+			key := h.Port + "|" + h.Device
+			if !seen[key] {
+				seen[key] = true
+				out = append(out, h)
 			}
 		}
 	}
-	key := DefaultDevice.Port + "|" + DefaultDevice.Device
-	if !seen[key] {
-		out = append(out, DefaultDevice)
+	appendHint := func(h DeviceHint) {
+		key := h.Port + "|" + h.Device
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, h)
+		}
 	}
+	// 当前生效设备优先入列，保证下拉框有固定选中项
+	if cur := m.CurrentDevice(); cur != nil {
+		appendHint(*cur)
+	}
+	appendHint(DefaultDevice)
 	return out
 }
 

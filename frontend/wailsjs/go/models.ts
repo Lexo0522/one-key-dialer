@@ -79,6 +79,7 @@ export namespace main {
 	    device: string;
 	    existing: boolean;
 	    default: boolean;
+	    current: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new DeviceOption(source);
@@ -90,6 +91,7 @@ export namespace main {
 	        this.device = source["device"];
 	        this.existing = source["existing"];
 	        this.default = source["default"];
+	        this.current = source["current"];
 	    }
 	}
 	export class LangPayload {
@@ -167,6 +169,8 @@ export namespace model {
 	    disconnectOnNoInternet: boolean;
 	    updateCheckEnabled: boolean;
 	    uiTheme: string;
+	    pppoePort: string;
+	    pppoeDevice: string;
 	    proxyEnabled: boolean;
 	    proxyType: string;
 	    proxyHost: string;
@@ -192,6 +196,8 @@ export namespace model {
 	        this.disconnectOnNoInternet = source["disconnectOnNoInternet"];
 	        this.updateCheckEnabled = source["updateCheckEnabled"];
 	        this.uiTheme = source["uiTheme"];
+	        this.pppoePort = source["pppoePort"];
+	        this.pppoeDevice = source["pppoeDevice"];
 	        this.proxyEnabled = source["proxyEnabled"];
 	        this.proxyType = source["proxyType"];
 	        this.proxyHost = source["proxyHost"];

@@ -202,6 +202,14 @@ func (d *Diagnostics) ListDevices() []platform.DeviceHint {
 	return d.ras.ListDeviceOptions()
 }
 
+// CurrentDevice 返回当前生效的 PPPoE 设备（永不为空，供界面回显）。
+func (d *Diagnostics) CurrentDevice() *platform.DeviceHint {
+	if d.ras == nil {
+		return nil
+	}
+	return d.ras.CurrentDevice()
+}
+
 // ApplyDevice 记住设备选择；rewrite 为 true 时立即重写电话簿。
 // 返回给用户的提示文本。
 func (d *Diagnostics) ApplyDevice(hint *platform.DeviceHint, rewrite bool) string {

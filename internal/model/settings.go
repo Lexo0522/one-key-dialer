@@ -45,6 +45,11 @@ type Settings struct {
 	UpdateCheckEnabled     bool   `json:"updateCheckEnabled"`
 	UITheme                string `json:"uiTheme"`
 
+	// PPPoE 拨号设备（写入 RAS 电话簿的 PreferredPort / PreferredDevice）。
+	// 旧版 settings.json 无这两个字段，空串即"自动探测"，向后兼容。
+	PppoePort   string `json:"pppoePort"`
+	PppoeDevice string `json:"pppoeDevice"`
+
 	// 代理（仅本应用自身 HTTP 出口：更新检查/下载、HTTP 模式外网探测）。
 	// 旧版 settings.json 无这些字段，零值即"未启用"，向后兼容。
 	ProxyEnabled bool   `json:"proxyEnabled"`
@@ -100,12 +105,20 @@ func (s Settings) Normalize() Settings {
 		s.ProbeDelayMs = 0
 	}
 	s.UITheme = NormalizeTheme(s.UITheme)
+	s.PppoePort = strings.TrimSpace(s.PppoePort)
+	s.PppoeDevice = strings.TrimSpace(s.PppoeDevice)
 	host, port := splitProxyEndpoint(s.ProxyHost, s.ProxyPort)
 	s.ProxyType = NormalizeProxyType(s.ProxyType)
 	s.ProxyHost = host
 	s.ProxyPort = normalizeProxyPort(port, s.ProxyType)
 	s.ProxyBypass = joinProxyBypass(splitProxyBypass(s.ProxyBypass))
 	return s
+}
+
+// PppoeDeviceSet 判断是否保存了显式的 PPPoE 设备选择（端口与设备名都非空）。
+// 未设置时由后端自动探测，行为与旧版本一致。
+func (s Settings) PppoeDeviceSet() bool {
+	return s.PppoePort != "" && s.PppoeDevice != ""
 }
 
 // WithAccountIndex 返回修改了账号索引的副本。

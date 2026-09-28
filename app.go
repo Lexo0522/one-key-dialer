@@ -183,6 +183,15 @@ func (a *App) startup(ctx context.Context) {
 	a.applyProxySettings(loaded)
 	a.accounts.Load(loaded.AccountIndex)
 
+	// 恢复上次选中的 PPPoE 设备；未保存过则保持自动探测
+	if loaded.PppoeDeviceSet() {
+		a.ras.SetPreferredDevice(&platform.DeviceHint{
+			Port:         loaded.PppoePort,
+			Device:       loaded.PppoeDevice,
+			FromExisting: true,
+		})
+	}
+
 	a.orch = service.NewDialOrchestrator(a.ras, dialView{a}, dialEnv{a}, a.lifecycle, a.stats)
 
 	a.reconnect = service.NewAutoReconnectService(
@@ -609,27 +618,49 @@ type DeviceOption struct {
 	Device   string `json:"device"`
 	Existing bool   `json:"existing"`
 	Default  bool   `json:"default"`
+	Current  bool   `json:"current"`
 }
 
-// DiagListDevices 列出可选 PPPoE 设备。
+// DiagListDevices 列出可选 PPPoE 设备，并标出当前生效项（current），
+// 供设置页下拉框回显固定值。
 func (a *App) DiagListDevices() []DeviceOption {
 	hints := a.diag.ListDevices()
+	cur := a.diag.CurrentDevice()
 	out := make([]DeviceOption, 0, len(hints))
 	for _, h := range hints {
 		out = append(out, DeviceOption{
 			Port:     h.Port,
 			Device:   h.Device,
 			Existing: h.FromExisting,
-			Default:  !h.FromExisting,
+			Default:  h.Port == platform.DefaultDevice.Port && h.Device == platform.DefaultDevice.Device,
+			Current:  cur != nil && h.Port == cur.Port && h.Device == cur.Device,
 		})
+	}
+	// 兜底：极端情况下列表为空时给出内置默认设备并标记为当前项
+	if len(out) == 0 {
+		d := platform.DefaultDevice
+		out = append(out, DeviceOption{Port: d.Port, Device: d.Device, Default: true, Current: true})
 	}
 	return out
 }
 
 // DiagSelectDevice 选择 PPPoE 设备；rewrite 为 true 时立即重写电话簿。
+// 选择结果持久化到 settings.json，重启后仍是同一个值。
 func (a *App) DiagSelectDevice(port, device string, rewrite bool) string {
+	port = strings.TrimSpace(port)
+	device = strings.TrimSpace(device)
 	hint := &platform.DeviceHint{Port: port, Device: device, FromExisting: true}
-	return a.diag.ApplyDevice(hint, rewrite)
+	msg := a.diag.ApplyDevice(hint, rewrite)
+
+	s := a.settings.Current()
+	if s.PppoePort != port || s.PppoeDevice != device {
+		a.logSvc.Info(i18n.Tf("device.saved", device, port))
+		s.PppoePort = port
+		s.PppoeDevice = device
+		a.settings.Update(s)
+		a.emit(EvtSettings, a.settings.Current())
+	}
+	return msg
 }
 
 // DiagRewritePhonebook 强制重写 RAS 电话簿条目。

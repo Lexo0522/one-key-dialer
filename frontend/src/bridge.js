@@ -200,12 +200,19 @@ const mockApi = {
     return true
   },
   async DiagListDevices() {
-    return [
-      { port: 'PPPoE5-0', device: 'WAN Miniport (PPPOE)', existing: true, default: false },
-      { port: 'PPPoE1-0', device: 'Realtek PCIe GbE', existing: false, default: true }
+    const cur = mockSettings.pppoePort || 'PPPoE5-0'
+    const curDev = mockSettings.pppoeDevice || 'WAN Miniport (PPPOE)'
+    const list = [
+      { port: 'PPPoE5-0', device: 'WAN Miniport (PPPOE)', existing: true, default: true },
+      { port: 'PPPoE1-0', device: 'Realtek PCIe GbE', existing: true, default: false }
     ]
+    if (!list.some((x) => x.port === cur)) list.push({ port: cur, device: curDev, existing: true, default: false })
+    return list.map((x) => ({ ...x, current: x.port === cur && x.device === curDev }))
   },
   async DiagSelectDevice(port, device, rewrite) {
+    mockSettings.pppoePort = port
+    mockSettings.pppoeDevice = device
+    mockBus.emit(EV.settings, { ...mockSettings })
     return rewrite
       ? `电话簿条目已重写 → ${device} / ${port}`
       : `已记住设备 ${device} / ${port}（下次创建条目时使用）`
