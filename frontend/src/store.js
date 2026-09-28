@@ -73,11 +73,15 @@ export const state = reactive({
   renderTick: 0,
 
   // 更新
+  // downloading = 传输阶段（可取消）；installing = 准备/安装阶段（不可取消）。
+  // 两者不能同时为真，否则解压进度会被当成下载进度渲染。
+  // stage 记录当前阶段，用于判断是否允许进度回退。
   update: {
     visible: false,
     checking: false,
     available: false,
     canInstall: false,
+    busy: false,
     title: '',
     body: '',
     assetName: '',
@@ -88,7 +92,9 @@ export const state = reactive({
     total: 0,
     status: '',
     path: '',
-    downloading: false
+    stage: '',
+    downloading: false,
+    installing: false
   }
 })
 
@@ -312,19 +318,86 @@ export function bindEvents() {
 
 // ------------------------------------------------------------ 更新事件 ----
 
+// 更新阶段标识，与后端 app.go 的 UpdateStage* 一一对应
+const STAGE_DOWNLOAD = 'download'
+const STAGE_PREPARE = 'prepare'
+const STAGE_INSTALL = 'install'
+
+/** 清空上一次的进度数值，避免重试或再次打开时残留旧百分比。 */
+export function resetUpdateProgress() {
+  const u = state.update
+  u.progress = 0
+  u.downloaded = 0
+  u.total = 0
+  lastProgressStage = ''
+  lastDownloaded = 0
+}
+
+// 进度单调保护：同一阶段内字节数不应该变小。续传遇到 HTTP 416 时服务端会清空本地
+// 分片重来，否则界面会出现「80% → 0%」的倒退。
+let lastProgressStage = ''
+let lastDownloaded = 0
+
+/** 点击「下载并安装」后的乐观状态：后端要等第一个 progress 事件才会有反馈，
+ *  这中间可能隔着一次清单下载和一次握手，必须先给界面一个确定的下载态。 */
+export function beginUpdateDownload() {
+  const u = state.update
+  resetUpdateProgress()
+  u.busy = true
+  u.checking = false
+  u.installing = false
+  u.downloading = true
+  u.stage = STAGE_DOWNLOAD
+  u.status = t('update.preparing')
+  u.visible = true
+}
+
+/** RPC 请求本身没送达后端时的收尾：后续不会有事件回来，必须在本地方复位，
+ *  否则按钮会永久停留在禁用态。 */
+export function abortUpdateRequest(toastMessage) {
+  const u = state.update
+  u.checking = false
+  u.busy = false
+  u.downloading = false
+  u.installing = false
+  u.status = ''
+  resetUpdateProgress()
+  if (toastMessage) showToast(toastMessage, 'error')
+}
+
+/** 点击「立即安装」后的乐观状态：解压/安装期间不可再点，也不可取消。 */
+export function beginUpdateInstall() {
+  const u = state.update
+  u.busy = true
+  u.checking = false
+  u.downloading = false
+  u.installing = true
+  u.stage = STAGE_PREPARE
+  u.status = t('update.installing')
+  u.visible = true
+}
+
 /**
- * 应用后端 app:update 事件负载（全 kind：checking/result/status/progress/error/done/installing）。
- * 对话框是更新流程的主界面；无可用更新、检查/下载失败等瞬时结果走 Toast，不占对话框。
+ * 应用后端 app:update 事件负载（全 kind：checking/result/status/progress/canceled/error/done/installing）。
+ * 对话框是更新流程的主界面；无可用更新、取消等瞬时结果走 Toast，不占对话框。
+ * stage 决定 landed 的阶段：下载阶段可取消，准备/安装阶段不可取消。
  */
 function applyUpdatePayload(p) {
   const u = state.update
+  const stage = p.stage || ''
   switch (p.kind) {
     case 'checking':
       u.checking = true
+      u.stage = stage
       u.status = p.message || ''
       break
     case 'result':
       u.checking = false
+      u.busy = false
+      u.downloading = false
+      u.installing = false
+      u.stage = stage
+      resetUpdateProgress()
       u.available = !!p.updateAvailable
       u.canInstall = !!p.canInstall
       u.title = p.title || ''
@@ -332,6 +405,8 @@ function applyUpdatePayload(p) {
       u.assetName = p.assetName || ''
       u.assetSize = p.assetSize || 0
       u.releaseUrl = p.releaseUrl || ''
+      u.path = ''
+      u.status = ''
       if (p.updateAvailable) {
         u.visible = true
       } else {
@@ -340,29 +415,69 @@ function applyUpdatePayload(p) {
       }
       break
     case 'status':
+      u.busy = false
       u.status = p.message || ''
+      // 解压/安装阶段的状态文本要显示出来，必须在同一分支里切到安装态
+      if (stage === STAGE_PREPARE || stage === STAGE_INSTALL) {
+        u.downloading = false
+        u.installing = true
+        u.stage = stage
+      }
       break
-    case 'progress':
-      u.downloading = true
-      u.downloaded = p.downloaded || 0
+    case 'progress': {
+      u.busy = false
+      const preparing = stage === STAGE_PREPARE
+      u.downloading = !preparing
+      u.installing = preparing
+      u.stage = stage
+      let downloaded = p.downloaded || 0
+      if (stage !== lastProgressStage) {
+        lastProgressStage = stage
+        lastDownloaded = 0
+      }
+      if (downloaded < lastDownloaded) downloaded = lastDownloaded
+      lastDownloaded = downloaded
+      u.downloaded = downloaded
       u.total = p.total || 0
-      u.progress = u.total > 0 ? Math.min(100, Math.round((u.downloaded / u.total) * 100)) : 0
+      u.progress = u.total > 0 ? Math.min(100, Math.max(0, Math.round((downloaded / u.total) * 100))) : 0
+      break
+    }
+    case 'canceled':
+      // 用户主动取消不是失败：复位到可操作态，用中性语气提示
+      u.checking = false
+      u.busy = false
+      u.downloading = false
+      u.installing = false
+      resetUpdateProgress()
+      showToast(p.message || t('update.canceled'), 'info')
       break
     case 'error':
-      // 检查/下载/安装各阶段失败：Toast 明示，并把对话框从下载中态复位到可操作态
+      // 检查/下载/安装各阶段失败：Toast 明示，并把对话框从进行中态复位到可操作态
       u.checking = false
+      u.busy = false
       u.downloading = false
+      u.installing = false
+      resetUpdateProgress()
       showToast(p.message || t('update.error'), 'error')
       break
     case 'done':
+      u.checking = false
+      u.busy = false
       u.downloading = false
+      u.installing = false
+      u.status = ''
+      resetUpdateProgress()
       u.path = p.path || ''
       u.visible = true
       // 对话框提供安装入口；此处仅作完成提示（胶囊形态不嵌按钮）
       showToast(t('update.doneTitle'), 'success')
       break
     case 'installing':
-      u.status = t('update.installing')
+      u.busy = false
+      u.downloading = false
+      u.installing = true
+      u.stage = STAGE_INSTALL
+      u.status = p.message || t('update.installing')
       break
     default:
       break

@@ -1,6 +1,10 @@
 package i18n
 
-import "testing"
+import (
+	"regexp"
+	"sort"
+	"testing"
+)
 
 // 语言优先级：显式覆盖 > 系统探测；"" / auto / system 与非法值均回到跟随系统。
 func TestLangOverrideAndAuto(t *testing.T) {
@@ -52,5 +56,81 @@ func TestTMissingKey(t *testing.T) {
 	const key = "no.such.key"
 	if got := T(key); got != key {
 		t.Fatalf("T(%q) = %q, want the key itself", key, got)
+	}
+}
+
+var placeholderPattern = regexp.MustCompile(`\{(\d+)\}`)
+
+func placeholderIndexes(s string) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, m := range placeholderPattern.FindAllStringSubmatch(s, -1) {
+		var idx int
+		for i := 0; i < len(m[1]); i++ {
+			idx = idx*10 + int(m[1][i]-'0')
+		}
+		if !seen[idx] {
+			seen[idx] = true
+			out = append(out, idx)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+func sameIndexes(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// 英文表必须与中文表同键。缺 key 时 T 会静默回退到中文，
+// 结果就是英文界面上按钮是英文、状态与错误提示是中文。
+func TestEnHasEveryZhKey(t *testing.T) {
+	var missing []string
+	for k, v := range zh {
+		if ev, ok := en[k]; !ok || ev == "" || v == "" {
+			missing = append(missing, k)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("en is missing %d key(s) defined in zh: %v", len(missing), missing)
+	}
+
+	var extra []string
+	for k := range en {
+		if _, ok := zh[k]; !ok {
+			extra = append(extra, k)
+		}
+	}
+	sort.Strings(extra)
+	if len(extra) > 0 {
+		t.Fatalf("en has %d key(s) with no zh counterpart: %v", len(extra), extra)
+	}
+}
+
+// 两种语言的占位符下标必须一致，否则 Tf 在某一侧会漏参数或抛错。
+func TestPlaceholderParity(t *testing.T) {
+	var bad []string
+	for k, zv := range zh {
+		ev, ok := en[k]
+		if !ok {
+			continue
+		}
+		zi, ei := placeholderIndexes(zv), placeholderIndexes(ev)
+		if !sameIndexes(zi, ei) {
+			bad = append(bad, k)
+		}
+	}
+	sort.Strings(bad)
+	if len(bad) > 0 {
+		t.Fatalf("placeholder mismatch between zh and en for %d key(s): %v", len(bad), bad)
 	}
 }

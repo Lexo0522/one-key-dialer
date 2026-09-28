@@ -303,6 +303,10 @@ func (m *Module) downloadAttempt(asset *Asset, part string, src *Source,
 		if asset.SizeBytes > 0 && onDisk == asset.SizeBytes {
 			return nil
 		}
+		// 断点失效会让进度条从高位瞬间归零，必须先告知用户，否则界面像是卡死或回退 bug
+		if progress != nil {
+			progress.OnStatus(i18n.T("update.rangeReset"))
+		}
 		_ = os.Remove(part)
 		return errors.New(i18n.T("update.rangeReset"))
 	}

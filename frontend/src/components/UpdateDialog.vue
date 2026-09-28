@@ -1,16 +1,19 @@
 <template>
-  <div class="mask" @click.self="close">
+  <div class="mask" @click.self="onMaskClick">
     <div class="dialog">
       <div class="dialog-title">{{ u.title || t('update.title') }}</div>
 
       <div class="dialog-body">
-        <template v-if="u.downloading">
-          <div class="status">{{ u.status || t('update.downloading') }}</div>
-          <div class="bar">
-            <div class="bar-fill" :style="{ width: progressWidth }"></div>
+        <template v-if="active">
+          <div class="status">{{ u.status || stageStatus }}</div>
+          <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+               :aria-valuenow="indeterminate ? null : u.progress"
+               :aria-label="t('update.title')">
+            <div v-if="indeterminate" class="bar-fill bar-indeterminate"></div>
+            <div v-else class="bar-fill" :style="{ width: progressWidth }"></div>
           </div>
           <div class="progress-text">{{ progressText }}</div>
-          <div class="hint">{{ t('update.exitNote') }}</div>
+          <div v-if="hint" class="hint">{{ hint }}</div>
         </template>
         <template v-else>
           <div>{{ u.body }}</div>
@@ -23,14 +26,17 @@
 
       <div class="dialog-actions">
         <template v-if="u.downloading">
-          <button class="btn" @click="cancelDownload">{{ t('update.cancel') }}</button>
+          <button class="btn" :disabled="u.busy" @click="cancelDownload">{{ t('update.cancel') }}</button>
+        </template>
+        <template v-else-if="u.installing">
+          <button class="btn" disabled>{{ t('update.installing') }}</button>
         </template>
         <template v-else-if="u.path">
-          <button class="btn btn-primary" @click="install">{{ t('update.install') }}</button>
+          <button class="btn btn-primary" :disabled="u.busy" @click="install">{{ t('update.install') }}</button>
           <button class="btn" @click="close">{{ t('update.keepOnly') }}</button>
         </template>
         <template v-else>
-          <button v-if="u.canInstall" class="btn btn-primary" @click="download">{{ t('update.download') }}</button>
+          <button v-if="u.canInstall" class="btn btn-primary" :disabled="u.busy" @click="download">{{ t('update.download') }}</button>
           <button v-if="u.releaseUrl" class="btn" @click="openPage">{{ t('update.openPage') }}</button>
           <button class="btn" @click="close">{{ u.available ? t('update.later') : t('update.close') }}</button>
         </template>
@@ -41,7 +47,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { state } from '../store'
+import { state, beginUpdateDownload, beginUpdateInstall, abortUpdateRequest } from '../store'
 import { api } from '../bridge'
 import { t } from '../i18n'
 import { formatBytes } from '../format'
@@ -49,16 +55,39 @@ import { formatBytes } from '../format'
 const emit = defineEmits(['close'])
 const u = computed(() => state.update)
 
+// 下载与解压都处在「进行中」：区别只在于能否取消、以及提示文案
+const active = computed(() => u.value.downloading || u.value.installing)
+
+// 服务端未给出总大小（chunked / 资产 size 缺失）时无法算百分比，
+// 用不确定态动画代替停在 0% 的假进度。
+const indeterminate = computed(() => u.value.total <= 0)
+
 const progressWidth = computed(() => `${u.value.progress || 0}%`)
 const assetName = computed(() => u.value.assetName || '')
 const assetSize = computed(() => (u.value.assetSize > 0 ? formatBytes(u.value.assetSize) : ''))
+
+const stageStatus = computed(() =>
+  u.value.installing ? t('update.installing') : t('update.downloading'))
+
+const hint = computed(() => {
+  // 「安装时会退出程序」属于安装阶段的提示，放在下载阶段是文案错位
+  if (u.value.installing) return t('update.exitNote')
+  return ''
+})
+
 const progressText = computed(() => {
   const p = u.value
-  if (p.total > 0) {
-    return `${formatBytes(p.downloaded)} / ${formatBytes(p.total)} (${p.progress}%)`
+  if (indeterminate.value) {
+    return `${formatBytes(p.downloaded)} · ${t('update.unknownSize')}`
   }
-  return formatBytes(p.downloaded)
+  return `${formatBytes(p.downloaded)} / ${formatBytes(p.total)} (${p.progress}%)`
 })
+
+// 进行中的更新不能被遮罩点掉：关掉后后台仍在跑，用户却失去了返回入口
+function onMaskClick() {
+  if (active.value) return
+  close()
+}
 
 function close() {
   u.value.visible = false
@@ -66,16 +95,33 @@ function close() {
 }
 
 async function download() {
-  await api.DownloadUpdate()
+  // 先本地进入下载态再发请求：后端要等清单下载完成才会推送第一个 progress
+  beginUpdateDownload()
+  try {
+    await api.DownloadUpdate()
+  } catch (e) {
+    // 请求没到后端就不会有任何回程事件，只能在这里复位
+    abortUpdateRequest(t('update.error'))
+  }
 }
 
 async function cancelDownload() {
-  await api.CancelUpdateDownload()
-  u.value.downloading = false
+  u.value.status = t('update.cancelling')
+  try {
+    await api.CancelUpdateDownload()
+  } catch (e) {
+    abortUpdateRequest()
+  }
+  // 状态收敛交给后端的 canceled / error 事件，前端不再自行断言结果
 }
 
 async function install() {
-  await api.InstallUpdate()
+  beginUpdateInstall()
+  try {
+    await api.InstallUpdate()
+  } catch (e) {
+    abortUpdateRequest(t('update.error'))
+  }
 }
 
 function openPage() {
@@ -100,6 +146,24 @@ function openPage() {
   height: 100%;
   background: var(--c-info);
   transition: width .2s;
+}
+
+/* 总大小未知时的不确定进度：流动的色块不断前进，而不是卡在 0% */
+.bar-indeterminate {
+  width: 40%;
+  transition: none;
+  animation: bar-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes bar-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar-indeterminate {
+    animation-duration: 2.4s;
+  }
 }
 
 .progress-text {

@@ -189,6 +189,10 @@ const zh = {
   'update.doneTitle': '下载完成',
   'update.installing': '正在安装…',
   'update.error': '操作失败',
+  'update.preparing': '正在准备…',
+  'update.cancelling': '正在取消…',
+  'update.canceled': '下载已取消',
+  'update.unknownSize': '总大小未知',
 
   'common.confirm': '确认',
   'common.ok': '确定',
@@ -380,6 +384,10 @@ const en = {
   'update.doneTitle': 'Download complete',
   'update.installing': 'Installing…',
   'update.error': 'Operation failed',
+  'update.preparing': 'Preparing…',
+  'update.cancelling': 'Cancelling…',
+  'update.canceled': 'Download cancelled',
+  'update.unknownSize': 'Total size unknown',
 
   'common.confirm': 'Confirm',
   'common.ok': 'OK',

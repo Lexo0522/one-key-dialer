@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -29,6 +30,15 @@ const (
 	EvtUpdate   = "app:update"
 	EvtNotify   = "app:notify"
 	EvtLang     = "app:lang"
+)
+
+// 更新阶段标识：随 app:update 事件下发，前端据此决定弹窗形态与可用操作。
+// 没有阶段号时，前端无法区分「下载」与「解压安装」，会把后者的进度当成下载进度渲染。
+const (
+	UpdateStageCheck    = "check"
+	UpdateStageDownload = "download"
+	UpdateStagePrepare  = "prepare"
+	UpdateStageInstall  = "install"
 )
 
 // AccountDTO 前端账号视图（密码仅在用户刚输入或显式导出时回传）。
@@ -77,8 +87,11 @@ type LangPayload struct {
 }
 
 // UpdatePayload 更新流程事件负载。
+// Kind: checking | result | status | progress | canceled | error | done | installing。
+// Stage: UpdateStage* 之一，用于区分同一条进度通道上的不同阶段。
 type UpdatePayload struct {
-	Kind            string `json:"kind"` // checking | result | status | progress | error | done
+	Kind            string `json:"kind"`
+	Stage           string `json:"stage,omitempty"`
 	Message         string `json:"message"`
 	Title           string `json:"title"`
 	Body            string `json:"body"`
@@ -678,11 +691,11 @@ func (a *App) CheckUpdate(interactive bool) {
 
 func (a *App) doCheckUpdate(interactive bool) {
 	if !a.updateMu.TryLock() {
-		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Message: i18n.T("update.busy")})
+		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStageCheck, Message: i18n.T("update.busy")})
 		return
 	}
 	defer a.updateMu.Unlock()
-	a.emit(EvtUpdate, UpdatePayload{Kind: "checking", Message: i18n.T("update.checking")})
+	a.emit(EvtUpdate, UpdatePayload{Kind: "checking", Stage: UpdateStageCheck, Message: i18n.T("update.checking")})
 
 	result := a.updater.Check(model.Version())
 	a.lastCheck = &result
@@ -699,6 +712,7 @@ func (a *App) doCheckUpdate(interactive bool) {
 	}
 	payload := UpdatePayload{
 		Kind:            "result",
+		Stage:           UpdateStageCheck,
 		Message:         result.Message,
 		UpdateAvailable: result.UpdateAvailable,
 		CanInstall:      canInstall,
@@ -727,16 +741,22 @@ func (a *App) DownloadUpdate() {
 	a.updateMu.Lock()
 	if a.updateBusy {
 		a.updateMu.Unlock()
-		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Message: i18n.T("update.downloadBusy")})
+		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStageDownload, Message: i18n.T("update.downloadBusy")})
+		return
+	}
+	// 检查结果缺失时不能解引用：宁可拒绝下载也不能让 goroutine panic。
+	result := a.lastCheck
+	if result == nil || !result.UpdateAvailable || result.Release == nil {
+		a.updateMu.Unlock()
+		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStageDownload, Message: i18n.T("update.noPackage")})
 		return
 	}
 	a.updateBusy = true
-	result := a.lastCheck
 	cancel := update.NewCancel()
 	a.cancelDl = cancel
 	a.updateMu.Unlock()
 
-	progress := updateProgress{a}
+	progress := updateProgress{a: a, stage: UpdateStageDownload}
 	a.exec.SubmitLong(func() {
 		pkg, err := a.updater.DownloadWithFailover(*result, progress, cancel)
 		a.updateMu.Lock()
@@ -744,15 +764,23 @@ func (a *App) DownloadUpdate() {
 		a.cancelDl = nil
 		a.updateMu.Unlock()
 		if err != nil {
+			// 用户主动取消不是失败，不能套用「下载失败」的错误文案与红色语气
+			if errors.Is(err, update.ErrCancelled) {
+				a.logSvc.Info(i18n.T("update.downloadCanceled"))
+				a.emit(EvtUpdate, UpdatePayload{Kind: "canceled", Stage: UpdateStageDownload,
+					Message: i18n.T("update.downloadCanceled")})
+				return
+			}
 			a.logSvc.Error(i18n.Tf("update.downloadFailed", err.Error()))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Message: i18n.Tf("update.downloadErrDlg", err.Error())})
+			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStageDownload,
+				Message: i18n.Tf("update.downloadErrDlg", err.Error())})
 			return
 		}
 		a.updateMu.Lock()
 		a.pendingPkg = pkg
 		a.updateMu.Unlock()
 		a.logSvc.Success(i18n.Tf("update.verified", pkg.File))
-		a.emit(EvtUpdate, UpdatePayload{Kind: "done", Path: pkg.File})
+		a.emit(EvtUpdate, UpdatePayload{Kind: "done", Stage: UpdateStageDownload, Path: pkg.File})
 	})
 }
 
@@ -769,17 +797,23 @@ func (a *App) CancelUpdateDownload() {
 // InstallUpdate 准备并启动安装；成功启动后退出程序。
 func (a *App) InstallUpdate() {
 	a.updateMu.Lock()
-	pkg := a.pendingPkg
-	a.updateBusy = true
-	a.updateMu.Unlock()
-	if pkg == nil {
-		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Message: i18n.T("update.noPackageFile")})
-		a.updateMu.Lock()
-		a.updateBusy = false
+	// 准备/安装阶段同样要占位：否则连点两次会生成两个 staged 目录、
+	// 覆盖同一个 apply_update.bat 并并行启动两个安装脚本。
+	if a.updateBusy {
 		a.updateMu.Unlock()
+		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare, Message: i18n.T("update.installBusy")})
 		return
 	}
-	progress := updateProgress{a}
+	pkg := a.pendingPkg
+	if pkg == nil {
+		a.updateMu.Unlock()
+		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare, Message: i18n.T("update.noPackageFile")})
+		return
+	}
+	a.updateBusy = true
+	a.updateMu.Unlock()
+
+	progress := updateProgress{a: a, stage: UpdateStagePrepare}
 	a.exec.SubmitLong(func() {
 		prepared, err := a.updater.Prepare(pkg, progress)
 		a.updateMu.Lock()
@@ -787,17 +821,19 @@ func (a *App) InstallUpdate() {
 		a.updateMu.Unlock()
 		if err != nil {
 			a.logSvc.Error(i18n.Tf("update.prepareFailed", err.Error()))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Message: i18n.Tf("update.prepareFailed", err.Error())})
+			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
+				Message: i18n.Tf("update.prepareFailed", err.Error())})
 			return
 		}
 		a.logSvc.Info(i18n.Tf("update.applying", prepared.ApplyScript))
 		a.flushBeforeUpdate()
 		if !a.updater.LaunchInstall(prepared) {
 			a.logSvc.Error(i18n.T("update.launchFailed"))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Message: i18n.T("update.launchFailedDlg")})
+			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
+				Message: i18n.T("update.launchFailedDlg")})
 			return
 		}
-		a.emit(EvtUpdate, UpdatePayload{Kind: "installing"})
+		a.emit(EvtUpdate, UpdatePayload{Kind: "installing", Stage: UpdateStageInstall})
 		a.ExitProgram()
 	})
 }

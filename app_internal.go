@@ -299,15 +299,20 @@ func (e dialEnv) RecordProbeOutcome(outcome model.ProbeOutcome) {
 
 // ---------- 更新进度回调 ----------
 
-type updateProgress struct{ a *App }
+// updateProgress 把阶段标识附加到每条状态/进度事件上：下载与解压走的是同一条
+// update.Progress 通道，没有阶段号前端就无法分辨，只能一律当下载处理。
+type updateProgress struct {
+	a     *App
+	stage string
+}
 
 func (p updateProgress) OnProgress(downloaded, total int64) {
-	p.a.emit(EvtUpdate, UpdatePayload{Kind: "progress", Downloaded: downloaded, Total: total})
+	p.a.emit(EvtUpdate, UpdatePayload{Kind: "progress", Stage: p.stage, Downloaded: downloaded, Total: total})
 }
 
 func (p updateProgress) OnStatus(message string) {
 	p.a.logSvc.Info(message)
-	p.a.emit(EvtUpdate, UpdatePayload{Kind: "status", Message: message})
+	p.a.emit(EvtUpdate, UpdatePayload{Kind: "status", Stage: p.stage, Message: message})
 }
 
 // ---------- 其它 ----------
