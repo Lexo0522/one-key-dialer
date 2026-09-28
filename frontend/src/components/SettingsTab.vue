@@ -4,7 +4,7 @@
       <div class="page-title">
         <i class="fas fa-cog"></i>{{ t('settings.title') }}
       </div>
-      <span class="hint">V{{ state.displayVersion || state.version }}</span>
+      <span class="hint">{{ versionLabel() }}</span>
     </div>
 
     <div class="settings-grid">
@@ -24,7 +24,7 @@
         <div class="row">
           <label class="field-label">{{ t('settings.lang') }}</label>
           <select v-model="langPref" @change="onLangChange">
-            <option value="">{{ t('settings.theme.system') }}</option>
+            <option value="">{{ t('settings.lang.system') }}</option>
             <option value="zh">{{ t('settings.lang.zh') }}</option>
             <option value="en">{{ t('settings.lang.en') }}</option>
           </select>
@@ -137,7 +137,7 @@
 
         <div class="row">
           <label class="field-label">{{ t('settings.update.current') }}</label>
-          <span class="ver-value">V{{ state.displayVersion || state.version }}</span>
+          <span class="ver-value">{{ versionLabel() }}</span>
         </div>
 
         <div class="row">
@@ -153,7 +153,7 @@
 
 <script setup>
 import { reactive, ref, watch } from 'vue'
-import { state, patchSettings, patchPrefs, showToast } from '../store'
+import { state, patchSettings, patchPrefs, showToast, syncLangToBackend, versionLabel } from '../store'
 import { api } from '../bridge'
 import { setLang, t } from '../i18n'
 
@@ -166,6 +166,8 @@ const lightweight = ref(state.prefs.lightweight)
 function onLangChange() {
   patchPrefs({ lang: langPref.value })
   setLang(langPref.value || state.systemLang || 'zh')
+  // 同步给后端：托盘菜单 / 通知 / 日志文案随之一并切换
+  syncLangToBackend()
   showToast(t('settings.lang.changed'), 'success')
 }
 

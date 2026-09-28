@@ -29,7 +29,7 @@
           <span class="dot"></span>
           <span>{{ state.online ? t('home.status.connected') : t('home.status.disconnected') }}</span>
         </div>
-        <div class="ver">V{{ state.displayVersion || state.version }}</div>
+        <div class="ver">{{ versionLabel() }}</div>
       </div>
     </aside>
 
@@ -66,7 +66,7 @@ import AccountsTab from './components/AccountsTab.vue'
 import LogTab from './components/LogTab.vue'
 import SettingsTab from './components/SettingsTab.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
-import { state, bootstrap, bindEvents } from './store'
+import { state, bootstrap, bindEvents, versionLabel } from './store'
 import { TOAST_DURATION } from './toast'
 import { installToastFoldAnimator } from './toast-fold'
 import { t } from './i18n'

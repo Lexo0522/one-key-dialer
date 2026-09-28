@@ -69,7 +69,8 @@ const zh = {
   'settings.lang.changed': '界面语言已切换',
   'settings.lang.zh': '简体中文',
   'settings.lang.en': 'English',
-  'settings.lang.hint': '本地保存，暂不写入配置文件',
+  'settings.lang.system': '跟随系统',
+  'settings.lang.hint': '默认跟随系统语言，切换后立即生效（本地保存）',
   'settings.autostart': '开机自启',
   'settings.autostart.hint': '以注册表为准（非仅配置文件）',
   'settings.autostart.enabled': '已开启开机自启',
@@ -259,7 +260,8 @@ const en = {
   'settings.lang.changed': 'Interface language changed',
   'settings.lang.zh': '简体中文',
   'settings.lang.en': 'English',
-  'settings.lang.hint': 'Saved locally; not written to config file',
+  'settings.lang.system': 'Follow system',
+  'settings.lang.hint': 'Follows the system language by default; saved locally',
   'settings.autostart': 'Launch at startup',
   'settings.autostart.hint': 'Registry-based (not config-file only)',
   'settings.autostart.enabled': 'Launch at startup enabled',
@@ -389,6 +391,9 @@ const current = ref('zh')
 
 export function setLang(lang) {
   current.value = lang === 'en' ? 'en' : 'zh'
+  if (typeof document !== 'undefined') {
+    document.documentElement.setAttribute('lang', current.value === 'en' ? 'en' : 'zh-CN')
+  }
 }
 
 export function lang() {

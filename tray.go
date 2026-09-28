@@ -175,6 +175,37 @@ func showTrayNotification(title, message string) {
 	platform.ShowNotification(title, message)
 }
 
+// refreshTrayLabels 语言切换后重写托盘标题与静态菜单文案。
+// 账号子菜单与 tooltip 由 refreshTray 的 3s 轮询负责，这里不重复处理。
+func refreshTrayLabels() {
+	trayMu.Lock()
+	ready := trayReady
+	show, dial, hangup, sw, upd, exit := mItemShow, mItemDial, mItemHangup, mItemSwitch, mItemUpdate, mItemExit
+	trayMu.Unlock()
+	if !ready {
+		return
+	}
+	systray.SetTitle(i18n.T("app.title"))
+	if show != nil {
+		show.SetTitle(i18n.T("tray.showWindow"))
+	}
+	if dial != nil {
+		dial.SetTitle(i18n.T("home.dial.connect"))
+	}
+	if hangup != nil {
+		hangup.SetTitle(i18n.T("home.dial.disconnect"))
+	}
+	if sw != nil {
+		sw.SetTitle(i18n.T("tray.switchAccount"))
+	}
+	if upd != nil {
+		upd.SetTitle(i18n.T("tray.checkUpdates"))
+	}
+	if exit != nil {
+		exit.SetTitle(i18n.T("tray.exit"))
+	}
+}
+
 // refreshTray 刷新托盘图标、tooltip、菜单项与账号子菜单。
 func (a *App) refreshTray() {
 	trayMu.Lock()

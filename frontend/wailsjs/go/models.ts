@@ -92,6 +92,22 @@ export namespace main {
 	        this.default = source["default"];
 	    }
 	}
+	export class LangPayload {
+	    lang: string;
+	    system: string;
+	    auto: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new LangPayload(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.lang = source["lang"];
+	        this.system = source["system"];
+	        this.auto = source["auto"];
+	    }
+	}
 	export class ProbeResult {
 	    ok: boolean;
 	    line: string;

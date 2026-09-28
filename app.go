@@ -28,6 +28,7 @@ const (
 	EvtDiag     = "app:diag"
 	EvtUpdate   = "app:update"
 	EvtNotify   = "app:notify"
+	EvtLang     = "app:lang"
 )
 
 // AccountDTO 前端账号视图（密码仅在用户刚输入或显式导出时回传）。
@@ -66,6 +67,13 @@ type StatusPayload struct {
 type SpeedPayload struct {
 	Down int64 `json:"down"`
 	Up   int64 `json:"up"`
+}
+
+// LangPayload 界面语言状态：生效语言 / 系统语言 / 是否跟随系统。
+type LangPayload struct {
+	Lang   string `json:"lang"`
+	System string `json:"system"`
+	Auto   bool   `json:"auto"`
 }
 
 // UpdatePayload 更新流程事件负载。
@@ -127,10 +135,13 @@ type App struct {
 	lastCheck  *update.CheckResult
 	pendingPkg *update.VerifiedPackage
 	cancelDl   *update.Cancel
+
+	// langStop 关闭后终止系统语言轮询（构造时创建，shutdown 时关闭）。
+	langStop chan struct{}
 }
 
 // NewApp 构造应用门面。
-func NewApp() *App { return &App{} }
+func NewApp() *App { return &App{langStop: make(chan struct{})} }
 
 // ============================ 生命周期 ============================
 
@@ -222,6 +233,7 @@ func (a *App) startup(ctx context.Context) {
 	})
 
 	a.monitor.Start()
+	a.startLangWatcher()
 	if a.settings.Current().AutoReconnect {
 		a.reconnect.Start(a.settings.Current().IntervalSeconds, true)
 	}
@@ -237,6 +249,11 @@ func (a *App) startup(ctx context.Context) {
 
 // shutdown 有序停机：持久化 → 停服务 → 清内存密码 → 退托盘。
 func (a *App) shutdown(ctx context.Context) {
+	// 先停语言轮询，避免停机期间继续刷新文案
+	if a.langStop != nil {
+		close(a.langStop)
+		a.langStop = nil
+	}
 	a.settings.FlushPending()
 	a.accounts.Save()
 	a.historySvc.SaveIfDirty()
@@ -276,6 +293,57 @@ func (a *App) Bootstrap() AppState {
 		DataDir:          a.dataDir,
 		UpdatesDir:       platform.UpdatesDir(),
 	}
+}
+
+// ============================ 界面语言 ============================
+
+// SetUILang 设置界面语言："" / "auto" / "system" 表示跟随系统，zh / en 为显式覆盖。
+// 只作用于当前进程（托盘菜单、通知、日志等后端文案），不写入配置文件；
+// 前端自身文案由前端同步切换。返回生效语言。
+func (a *App) SetUILang(lang string) string {
+	i18n.SetLang(lang)
+	refreshTrayLabels()
+	a.emit(EvtLang, a.langPayload())
+	return i18n.Lang()
+}
+
+// GetUILang 返回当前语言状态快照。
+func (a *App) GetUILang() LangPayload { return a.langPayload() }
+
+// langPayload 组装语言状态：生效语言 / 系统语言 / 是否跟随系统。
+func (a *App) langPayload() LangPayload {
+	return LangPayload{
+		Lang:   i18n.Lang(),
+		System: i18n.SystemLang(),
+		Auto:   i18n.IsAuto(),
+	}
+}
+
+// startLangWatcher 轮询系统语言：跟随模式下自动切换后端文案并通知前端，
+// 使「系统切语言 → 界面跟着变」在运行期生效（无需重启）。
+// Windows 会在显示语言变化时改写 GetUserDefaultUILanguage，故用轻量轮询探测；
+// 显式覆盖语言时探测结果不生效，仅更新缓存。
+func (a *App) startLangWatcher() {
+	stop := a.langStop
+	if stop == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				if !i18n.RefreshSystemLang() {
+					continue
+				}
+				refreshTrayLabels()
+				a.emit(EvtLang, a.langPayload())
+			}
+		}
+	}()
 }
 
 // ============================ 设置 ============================

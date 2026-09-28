@@ -20,7 +20,8 @@ func SetVersion(v string) {
 func Version() string { return version }
 
 // Display 返回展示版本号，例如 v1.1.11。
-func Display() string { return "v" + version }
+// 用 StripV 归一化：-ldflags 注入的值可能自带 v / V 前缀，直接拼接会出现 vv1.x.x。
+func Display() string { return "v" + StripV(version) }
 
 // UserAgent 返回出站请求的 UA。
 func UserAgent() string { return "PPoEDialer/" + version }

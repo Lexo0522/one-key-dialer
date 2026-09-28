@@ -82,6 +82,10 @@ export function GetStats() {
   return window['go']['main']['App']['GetStats']();
 }
 
+export function GetUILang() {
+  return window['go']['main']['App']['GetUILang']();
+}
+
 export function HideWindow() {
   return window['go']['main']['App']['HideWindow']();
 }
@@ -112,6 +116,10 @@ export function SaveSettings(arg1) {
 
 export function SetAutoStart(arg1) {
   return window['go']['main']['App']['SetAutoStart'](arg1);
+}
+
+export function SetUILang(arg1) {
+  return window['go']['main']['App']['SetUILang'](arg1);
 }
 
 export function ShowWindow() {

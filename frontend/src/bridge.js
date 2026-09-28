@@ -14,7 +14,8 @@ export const EV = {
   accounts: 'app:accounts',
   settings: 'app:settings',
   update: 'app:update',
-  notify: 'app:notify'
+  notify: 'app:notify',
+  lang: 'app:lang'
 }
 
 /** 订阅后端事件；返回取消订阅函数。 */
@@ -31,7 +32,7 @@ export function on(event, handler) {
 
 const MOCK_STATE = {
   version: '1.1.11',
-  displayVersion: 'V1.1.11',
+  displayVersion: 'v1.1.11',
   settings: {
     intervalSeconds: 30,
     autoReconnect: false,
@@ -238,6 +239,13 @@ const mockApi = {
   ExitProgram() {},
   async UpdateBusy() {
     return false
+  },
+  // 语言：'' / 'auto' / 'system' 表示跟随系统，'zh' / 'en' 为显式覆盖
+  async SetUILang(lang) {
+    return lang || 'zh'
+  },
+  async GetUILang() {
+    return { lang: 'zh', system: 'zh', auto: true }
   }
 }
 

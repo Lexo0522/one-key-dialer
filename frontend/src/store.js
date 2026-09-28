@@ -130,6 +130,26 @@ export function settings() {
   return state.settings
 }
 
+/** 版本号展示文案：后端 displayVersion 已带 v 前缀，这里归一化后统一加 V，
+ *  避免模板里再拼一次前缀出现「Vv1.x.x」。 */
+export function versionLabel() {
+  const raw = String(state.displayVersion || state.version || '').trim()
+  const digits = raw.replace(/^[vV]/, '')
+  return digits ? 'V' + digits : ''
+}
+
+/** 把前端的语言覆盖同步给后端（托盘菜单 / 通知 / 日志文案）。
+ *  '' / 'auto' / 'system' 表示跟随系统；dev mock 或旧版后端缺失该方法时静默忽略。 */
+export function syncLangToBackend() {
+  try {
+    if (typeof api.SetUILang !== 'function') return
+    // 返回 Promise，失败（旧版后端未绑定该方法）静默吞掉，避免未捕获拒绝
+    Promise.resolve(api.SetUILang(state.prefs.lang || '')).catch(() => {})
+  } catch (e) {
+    /* 非 Wails 环境时忽略 */
+  }
+}
+
 /** 图表重绘间隔（毫秒）：轻量化模式下降频。 */
 export function renderIntervalMs() {
   return state.prefs.lightweight ? 4000 : 1000
@@ -178,6 +198,8 @@ export async function bootstrap() {
   // 语言优先级：本地覆盖 > 后端探测
   state.systemLang = s.lang || 'zh'
   setLang(state.prefs.lang || state.systemLang)
+  // 前端本地保存的语言覆盖需要回传给后端，否则托盘/通知文案会停在系统语言
+  syncLangToBackend()
   state.theme = s.theme && s.theme !== 'system' ? s.theme : resolveTheme(state.themePref)
   applyPalette(state.theme)
   persistPrefs()
@@ -193,6 +215,13 @@ export function bindEvents() {
     if (!line) return
     state.logs.push(line)
     if (state.logs.length > 500) state.logs.splice(0, state.logs.length - 500)
+  })
+
+  // 系统语言在运行期变化（后端每 2s 轮询探测）：未显式指定语言时跟随切换
+  on(EV.lang, (p) => {
+    if (!p || !p.lang) return
+    state.systemLang = p.system || p.lang
+    if (!state.prefs.lang) setLang(state.systemLang)
   })
 
   on(EV.status, (p) => {

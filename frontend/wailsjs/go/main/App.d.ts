@@ -44,6 +44,8 @@ export function GetProbeSummary():Promise<string>;
 
 export function GetStats():Promise<service.StatsSummary>;
 
+export function GetUILang():Promise<main.LangPayload>;
+
 export function HideWindow():Promise<void>;
 
 export function ImportAccounts():Promise<number>;
@@ -59,6 +61,8 @@ export function SaveAccounts(arg1:Array<main.AccountDTO>):Promise<void>;
 export function SaveSettings(arg1:model.Settings):Promise<void>;
 
 export function SetAutoStart(arg1:boolean):Promise<boolean>;
+
+export function SetUILang(arg1:string):Promise<string>;
 
 export function ShowWindow():Promise<void>;
 

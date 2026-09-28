@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Lexo0522/one-key-dialer/internal/i18n"
 	"github.com/Lexo0522/one-key-dialer/internal/model"
 	"github.com/Lexo0522/one-key-dialer/internal/platform"
 	"github.com/Lexo0522/one-key-dialer/internal/storage"
@@ -97,7 +98,8 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	return true
 }
 
-func appTitle() string { return "PPPoE校园网拨号工具" }
+// appTitle 窗口标题跟随界面语言（启动时探测一次，运行期切换不改变标题）。
+func appTitle() string { return i18n.T("app.title") }
 
 // readStartMinimized 在窗口创建前直接读 settings.json，决定是否隐藏启动。
 func readStartMinimized() bool {
