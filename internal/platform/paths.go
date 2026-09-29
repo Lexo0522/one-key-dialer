@@ -3,7 +3,6 @@ package platform
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -12,6 +11,7 @@ import (
 	"unsafe"
 
 	"github.com/Lexo0522/one-key-dialer/internal/model"
+	"golang.org/x/sys/windows/registry"
 )
 
 // AppDataFolder 回退数据目录名。
@@ -160,44 +160,19 @@ func OsBuildNumber() int {
 }
 
 // AppsUseLightTheme 读取 Windows 应用深浅色设置（0 = 深色）。
+// 走注册表 API 而非 reg.exe 子进程：GUI 进程下每次查询都会闪一个 cmd 黑框。
 func AppsUseLightTheme() bool {
-	out, err := exec.Command("reg", "query",
-		`HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
-		"/v", "AppsUseLightTheme").Output()
+	key, err := registry.OpenKey(registry.CURRENT_USER,
+		`Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.READ)
 	if err != nil {
 		return true
 	}
-	text := strings.ToLower(string(out))
-	idx := strings.Index(text, "0x")
-	if idx < 0 {
+	defer key.Close()
+	v, _, err := key.GetIntegerValue("AppsUseLightTheme")
+	if err != nil {
 		return true
-	}
-	end := idx + 2
-	for end < len(text) && isHexDigit(text[end]) {
-		end++
-	}
-	if end == idx+2 {
-		return true
-	}
-	v := 0
-	for i := idx + 2; i < end; i++ {
-		v = v*16 + hexVal(text[i])
 	}
 	return v != 0
-}
-
-func isHexDigit(c byte) bool {
-	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
-}
-
-func hexVal(c byte) int {
-	switch {
-	case c >= '0' && c <= '9':
-		return int(c - '0')
-	case c >= 'a' && c <= 'f':
-		return int(c-'a') + 10
-	}
-	return 0
 }
 
 func writeUint32(b []byte, off, v int) {
