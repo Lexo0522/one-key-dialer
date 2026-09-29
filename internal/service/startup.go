@@ -10,6 +10,9 @@ import (
 )
 
 // AutoStartValueName 注册表中的 Run 值名。
+// 刻意沿用历史拼写（未随 exe 改名为 PPPoEDialer）：值名不变可保证
+// 存量安装原地更新数据、不会产生新旧两条自启动项；指向的命令行
+// 由 EnsureHealthy 在新版启动时自动改写到当前 exe。
 const AutoStartValueName = "PPoEDialer"
 
 // StartupService 通过 HKCU\...\Run 注册/注销开机自启动（以注册表为准）。

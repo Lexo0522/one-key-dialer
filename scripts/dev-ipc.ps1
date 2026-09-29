@@ -12,7 +12,7 @@ param(
     [string]$PipeName = "\\.\pipe\PPoEDialerDev"
 )
 $ErrorActionPreference = "Continue"
-$exe = Join-Path $PSScriptRoot "..\build\bin\PPoEDialer.exe"
+$exe = Join-Path $PSScriptRoot "..\build\bin\PPPoEDialer.exe"
 
 function Send-Ipc([string]$pipe, [string]$method) {
     $p = [System.IO.Pipes.NamedPipeClientStream]::new('.', $pipe.TrimStart('\\.\pipe\'),
@@ -47,14 +47,14 @@ switch ($Action) {
         & $MyInvocation.MyCommand.Path -Action status -PipeName $PipeName
     }
     "status" {
-        Get-Process PPoEDialer -ErrorAction SilentlyContinue |
+        Get-Process PPPoEDialer -ErrorAction SilentlyContinue |
             Select-Object Id, @{n = 'PrivateMB'; e = { [math]::Round($_.PrivateMemorySize64 / 1MB, 1) }} |
             Format-Table -AutoSize
         $wv = (Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Measure-Object).Count
         Write-Output ("webview processes (system-wide): " + $wv)
     }
     "mem" {
-        Get-Process PPoEDialer -ErrorAction SilentlyContinue | ForEach-Object {
+        Get-Process PPPoEDialer -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Output ("PID " + $_.Id + "  WorkingSet=" + [math]::Round($_.WorkingSet64 / 1MB, 1) +
                 "MB  PrivateBytes=" + [math]::Round($_.PrivateMemorySize64 / 1MB, 1) + "MB")
         }

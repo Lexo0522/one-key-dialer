@@ -1,5 +1,5 @@
 # 内存基线/对比测量脚本
-# 统计 PPoEDialer.exe 及其 WebView2 子进程(msedgewebview2.exe)的私有内存,
+# 统计 PPPoEDialer.exe 及其 WebView2 子进程(msedgewebview2.exe)的私有内存,
 # 用于「代理 + 按需 UI」架构改造前后的内存对比。
 #
 # 用法:
@@ -11,13 +11,13 @@ param(
 )
 
 function Get-AppMemory {
-    # PPoEDialer 主进程(代理/UI 同一 exe)
-    $main = Get-Process -Name "PPoEDialer" -ErrorAction SilentlyContinue
-    # WebView2 子进程(父进程为 PPoEDialer 的 msedgewebview2)
+    # PPPoEDialer 主进程(代理/UI 同一 exe)
+    $main = Get-Process -Name "PPPoEDialer" -ErrorAction SilentlyContinue
+    # WebView2 子进程(父进程为 PPPoEDialer 的 msedgewebview2)
     $webviews = Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" -ErrorAction SilentlyContinue |
         Where-Object {
             $p = Get-Process -Id $_.ParentProcessId -ErrorAction SilentlyContinue
-            $p -and $p.ProcessName -match 'PPoEDialer|msedgewebview2'
+            $p -and $p.ProcessName -match 'PPPoEDialer|msedgewebview2'
         }
     $mainMB = 0.0
     if ($main) {

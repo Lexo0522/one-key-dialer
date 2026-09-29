@@ -71,8 +71,8 @@ jobs:
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@latest
           wails build -platform windows/amd64 -clean
-          if (-not (Test-Path build/bin/PPoEDialer.exe)) {
-            Write-Error "build/bin/PPoEDialer.exe missing"
+          if (-not (Test-Path build/bin/PPPoEDialer.exe)) {
+            Write-Error "build/bin/PPPoEDialer.exe missing"
             exit 1
           }
 
@@ -98,10 +98,10 @@ jobs:
         run: |
           $rev = $env:APP_VERSION
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          $zip = "release/PPoEDialer-$rev-windows.zip"
-          $msi = "release/PPoEDialer-$rev-windows.msi"
+          $zip = "release/PPPoEDialer-$rev-windows.zip"
+          $msi = "release/PPPoEDialer-$rev-windows.msi"
 
-          Compress-Archive -Path build/bin/PPoEDialer.exe -DestinationPath $zip -Force
+          Compress-Archive -Path build/bin/PPPoEDialer.exe -DestinationPath $zip -Force
 
           $wixSrc = "build/windows/installer/Product.wxs"
           & candle.exe -nologo -out release\ `
@@ -129,8 +129,8 @@ jobs:
         run: |
           $rev = $env:APP_VERSION
           foreach ($f in @(
-              "release/PPoEDialer-$rev-windows.zip",
-              "release/PPoEDialer-$rev-windows.msi",
+              "release/PPPoEDialer-$rev-windows.zip",
+              "release/PPPoEDialer-$rev-windows.msi",
               "release/SHA256SUMS.txt")) {
             if (-not (Test-Path $f)) {
               Write-Error "release asset missing: $f"
@@ -149,7 +149,7 @@ jobs:
       - name: Upload build artifact (backup)
         uses: actions/upload-artifact@v5
         with:
-          name: PPoEDialer-release-assets
+          name: PPPoEDialer-release-assets
           path: |
             release/*.zip
             release/*.msi
@@ -165,8 +165,8 @@ jobs:
           $tag = $env:TAG
           $rev = $env:APP_VERSION
           $files = @(
-            "release/PPoEDialer-$rev-windows.zip",
-            "release/PPoEDialer-$rev-windows.msi",
+            "release/PPPoEDialer-$rev-windows.zip",
+            "release/PPPoEDialer-$rev-windows.msi",
             "release/SHA256SUMS.txt")
           # Idempotent: a re-run (or a moved tag) hits an existing release —
           # refresh the assets instead of failing on `gh release create`.
@@ -176,7 +176,7 @@ jobs:
             gh release upload $tag $files --clobber
           } else {
             gh release create $tag $files `
-              --verify-tag --title "PPoEDialer $tag" --generate-notes
+              --verify-tag --title "PPPoEDialer $tag" --generate-notes
           }
           Write-Host "Release $tag published"
 

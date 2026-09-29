@@ -97,13 +97,13 @@ var zh = map[string]string{
 	"autostart.registered":     "已注册开机自启动 (直接启动, 无 VBS)",
 	"autostart.command":        "启动命令: {0}",
 	"autostart.unregistered":   "已取消开机自启动",
-	"autostart.noTarget":       "注册失败: 无法确定启动路径（请使用打包后的 PPoEDialer.exe 运行后再勾选）",
+	"autostart.noTarget":       "注册失败: 无法确定启动路径（请使用打包后的 PPPoEDialer.exe 运行后再勾选）",
 	"autostart.verifyFailed":   "注册失败: 写入后校验未通过",
 	"autostart.registerFailed": "注册失败: {0}",
 	"autostart.unregFailed":    "取消开机自启动失败: {0}",
 	"autostart.queryFailed":    "查询开机自启动状态失败: {0}",
 	"autostart.repairing":      "检测到开机自启动配置异常，正在重新注册…",
-	"autostart.repairFailed":   "自动修复开机自启动失败，请用打包版 PPoEDialer.exe 重新勾选「开机自动启动」",
+	"autostart.repairFailed":   "自动修复开机自启动失败，请用打包版 PPPoEDialer.exe 重新勾选「开机自动启动」",
 	"autostart.repaired":       "开机自启动已修复",
 
 	// 持久化

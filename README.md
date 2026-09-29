@@ -33,8 +33,8 @@ frontend/          Vue 3 + Vite；左右布局（侧栏：首页/账号配置/�
 
 同一个 exe 按参数分两种运行形态:
 
-- **代理模式 `PPoEDialer.exe --agent`**(开机自启动即此模式):纯 Go 常驻进程,承载全部服务(托盘、拨号、监控、自动重连、存储、更新),**不启动 WebView**。经 GC 调优与周期内存归还,任务管理器口径的常驻内存约 **9-15MB**。
-- **UI 模式 `PPoEDialer.exe`**(双击/托盘「显示窗口」):按需拉起,经命名管道(`\\.\pipe\PPoEDialerAgent`)调用代理,窗口外观与操作和单进程时代完全一致,前端 Vue 代码零改动。**关闭窗口即 UI 进程退出**,WebView2 与渲染内存立刻归还系统;代理继续在托盘驻留。
+- **代理模式 `PPPoEDialer.exe --agent`**(开机自启动即此模式):纯 Go 常驻进程,承载全部服务(托盘、拨号、监控、自动重连、存储、更新),**不启动 WebView**。经 GC 调优与周期内存归还,任务管理器口径的常驻内存约 **9-15MB**。
+- **UI 模式 `PPPoEDialer.exe`**(双击/托盘「显示窗口」):按需拉起,经命名管道(`\\.\pipe\PPoEDialerAgent`)调用代理,窗口外观与操作和单进程时代完全一致,前端 Vue 代码零改动。**关闭窗口即 UI 进程退出**,WebView2 与渲染内存立刻归还系统;代理继续在托盘驻留。
 - UI 崩溃不影响代理;代理退出后 UI 进程自动随之退出。更新安装前,更新脚本会等待代理与全部 UI 进程退出后再覆盖文件。
 
 ### 其它实现要点
@@ -77,7 +77,7 @@ frontend/          Vue 3 + Vite；左右布局（侧栏：首页/账号配置/�
 wails dev
 
 # 构建 Windows 可执行文件
-wails build                    # → build/bin/PPoEDialer.exe
+wails build                    # → build/bin/PPPoEDialer.exe
 
 # 单独构建前端（浏览器 dev 模式会自动降级到 mock 后端）
 cd frontend && npm install && npm run dev

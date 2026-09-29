@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  WiX v3 source for the PPoEDialer MSI.
+  WiX v3 source for the PPPoEDialer MSI.
 
   The in-app updater falls back to this MSI when the install directory is not
   writable (see internal/update), so it must stay a per-machine install that
@@ -8,12 +8,12 @@
 
   Candle variables (passed on the command line):
     -dVersion=X.Y.Z         MSI ProductVersion; must be numeric only
-    -dSrcDir=<path>         directory containing PPoEDialer.exe
+    -dSrcDir=<path>         directory containing PPPoEDialer.exe
     -dIconPath=<file>       icon shown in Programs and Features
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
 
-  <?define ProductName = "PPoEDialer" ?>
+  <?define ProductName = "PPPoEDialer" ?>
   <?define Manufacturer = "Lexo0522" ?>
 
   <Product Id="*"
@@ -50,10 +50,12 @@
 
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="MainExecutable" Guid="{2D9E1C77-4A58-4F0B-8E63-1C7B5D9A0F42}">
-        <File Id="PPoEDialerExe"
-              Name="PPoEDialer.exe"
-              Source="$(var.SrcDir)\PPoEDialer.exe"
+        <File Id="PPPoEDialerExe"
+              Name="PPPoEDialer.exe"
+              Source="$(var.SrcDir)\PPPoEDialer.exe"
               KeyPath="yes"/>
+        <!-- The binary was called PPoEDialer.exe before the rename; sweep it. -->
+        <RemoveFile Id="LegacyExe" Name="PPoEDialer.exe" On="both"/>
       </Component>
     </DirectoryRef>
 
@@ -62,7 +64,7 @@
         <Shortcut Id="AppStartMenuShortcut"
                   Name="$(var.ProductName)"
                   Description="PPPoE 校园网拨号工具"
-                  Target="[INSTALLFOLDER]PPoEDialer.exe"
+                  Target="[INSTALLFOLDER]PPPoEDialer.exe"
                   WorkingDirectory="INSTALLFOLDER"/>
         <RemoveFolder Id="CleanUpShortcut" Directory="AppProgramMenuFolder" On="uninstall"/>
         <RegistryValue Root="HKCU"

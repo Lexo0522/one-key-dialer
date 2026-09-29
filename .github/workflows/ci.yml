@@ -69,14 +69,14 @@ jobs:
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@latest
           wails build -platform windows/amd64
-          if (-not (Test-Path build/bin/PPoEDialer.exe)) {
-            Write-Error "build/bin/PPoEDialer.exe missing"
+          if (-not (Test-Path build/bin/PPPoEDialer.exe)) {
+            Write-Error "build/bin/PPPoEDialer.exe missing"
             exit 1
           }
 
       - name: Upload app binary
         uses: actions/upload-artifact@v5
         with:
-          name: PPoEDialer-exe
-          path: build/bin/PPoEDialer.exe
+          name: PPPoEDialer-exe
+          path: build/bin/PPPoEDialer.exe
           if-no-files-found: error
