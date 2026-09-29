@@ -26,8 +26,10 @@ var (
 )
 
 // mibIfRow 与 Win32 MIB_IFROW 布局一致(ifdef.h,MAX_INTERFACE_NAME_LEN=256、
-// MAX_PHYS_ADDR_LEN=8、MAXLEN_IFDESCR=256,x86/x64 通用,总长 856 字节)。
-// 只取 InOctets/OutOctets 两项,与 netstat -e 的聚合计数器语义一致。
+// MAX_PHYS_ADDR_LEN=8、MAXLEN_IFDESCR=256,x86/x64 通用,总长 860 字节)。
+// 只取 InOctets/OutOctets 两项。注意 OutOctets 在偏移 576:InOctets 之后
+// 还有 5 个入向包计数器,不能按 netstat -e 的列序紧排——错排会读到
+// InUcastPkts(Win10+ 上常为 0),上行速度将恒为 0。
 type mibIfRow struct {
 	Name            [256]uint16
 	Index           uint32
@@ -40,13 +42,14 @@ type mibIfRow struct {
 	OperStatus      uint32
 	LastChange      uint32
 	InOctets        uint32
-	OutOctets       uint32
-	InUnknownProtos uint32
-	InNoRoutes      uint32
-	InErrors        uint32
+	InUcastPkts     uint32
+	InNUcastPkts    uint32
 	InDiscards      uint32
-	InDeliver       uint32
-	OutRequests     uint32
+	InErrors        uint32
+	InUnknownProtos uint32
+	OutOctets       uint32
+	OutUcastPkts    uint32
+	OutNUcastPkts   uint32
 	OutDiscards     uint32
 	OutErrors       uint32
 	OutQLen         uint32
