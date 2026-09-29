@@ -10,6 +10,7 @@
     -dVersion=X.Y.Z         MSI ProductVersion; must be numeric only
     -dSrcDir=<path>         directory containing PPPoEDialer.exe
     -dIconPath=<file>       icon shown in Programs and Features
+    -dLicensePath=<file>    RTF license text shown by the minimal UI
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
 
@@ -81,9 +82,16 @@
       <ComponentRef Id="ApplicationShortcut"/>
     </Feature>
 
-    <!-- Keep the pretty minimal-dialog UI; no reboot prompts. -->
     <Property Id="ARPHELPLINK" Value="https://github.com/Lexo0522/one-key-dialer"/>
     <Property Id="ARPPRODUCTICON" Value="AppIcon"/>
     <Icon Id="AppIcon" SourceFile="$(var.IconPath)"/>
+
+    <!-- Minimal-dialog UI (EULA page + progress + exit), no reboot prompts.
+         Dialog text comes from WixUI_zh-CN.wxl via -cultures:zh-cn (see
+         release.yml). WixUILicenseRtf is a BUILD-TIME WixVariable: the
+         extension embeds the RTF into the Binary table at link time, the
+         runtime property of the same name only carries the extracted file. -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicensePath)"/>
+    <UIRef Id="WixUI_Minimal"/>
   </Product>
 </Wix>

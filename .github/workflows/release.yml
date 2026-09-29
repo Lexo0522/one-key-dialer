@@ -108,6 +108,7 @@ jobs:
             -dVersion="$rev" `
             -dSrcDir="build/bin" `
             -dIconPath="build/windows/icon.ico" `
+            -dLicensePath="build/windows/installer/license.rtf" `
             $wixSrc
           if ($LASTEXITCODE -ne 0) { Write-Error "candle.exe failed"; exit 1 }
 
