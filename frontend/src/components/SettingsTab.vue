@@ -4,7 +4,6 @@
       <div class="page-title">
         <i class="fas fa-cog"></i>{{ t('settings.title') }}
       </div>
-      <span class="hint">{{ versionLabel() }}</span>
     </div>
 
     <div class="settings-grid">
