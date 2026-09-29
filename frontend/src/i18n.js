@@ -150,7 +150,6 @@ const zh = {
   'account.user': '账号:',
   'account.pass': '密码:',
   'account.pwKeepHint': '已保存，留空沿用',
-  'account.clearPassword': '清除已保存的密码',
   'account.userChangedTitle': '账号已修改',
   'account.userChangedMsg': '账号名已更改，已保存的密码无法自动沿用。请重新输入密码，或确认清除该密码。',
   'account.remark': '备注:',
@@ -349,7 +348,6 @@ const en = {
   'account.user': 'Username:',
   'account.pass': 'Password:',
   'account.pwKeepHint': 'Saved — leave blank to keep',
-  'account.clearPassword': 'Clear saved password',
   'account.userChangedTitle': 'Username changed',
   'account.userChangedMsg':
     'The username changed, so the saved password cannot be carried over automatically. Re-enter the password, or confirm clearing it.',

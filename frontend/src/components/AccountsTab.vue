@@ -66,35 +66,30 @@
       </div>
     </div>
 
-    <!-- 行内编辑表单（替代旧弹窗） -->
-    <div v-if="mode" class="card form-card">
-      <div class="form-title">
-        <i :class="mode.kind === 'add' ? 'fas fa-plus-circle' : 'fas fa-edit'"></i>
-        {{ mode.kind === 'add' ? t('account.formAdd') : t('account.formEdit') }}
-      </div>
-      <div class="form-grid">
-        <label class="field-label">{{ t('account.nickname') }}</label>
-        <input v-model="form.name" type="text" @keyup.enter="submitForm"/>
-        <label class="field-label">{{ t('account.user') }}</label>
-        <input v-model="form.username" type="text" @keyup.enter="submitForm"/>
-        <label class="field-label">{{ t('account.pass') }}</label>
-        <input v-model="form.password" type="password" :placeholder="pwPlaceholder" @keyup.enter="submitForm"/>
-        <template v-if="canClearPw">
-          <span></span>
-          <label class="clear-pw">
-            <input type="checkbox" v-model="clearPassword"/>
-            <span>{{ t('account.clearPassword') }}</span>
-          </label>
-        </template>
-        <label class="field-label">{{ t('account.remark') }}</label>
-        <input v-model="form.remark" type="text" @keyup.enter="submitForm"/>
-      </div>
-      <div class="hint">{{ t('account.nameHint') }}</div>
-      <div class="form-actions">
-        <button class="btn" @click="cancelForm">{{ t('account.cancel') }}</button>
-        <button class="btn btn-primary" @click="submitForm">
-          <i class="fas fa-check"></i>{{ t('account.save') }}
-        </button>
+    <!-- 编辑弹窗：窗口内居中模态，点击蒙版空白处关闭 -->
+    <div v-if="mode" class="mask" @click.self="cancelForm">
+      <div class="dialog form-dialog">
+        <div class="form-title">
+          <i :class="mode.kind === 'add' ? 'fas fa-plus-circle' : 'fas fa-edit'"></i>
+          {{ mode.kind === 'add' ? t('account.formAdd') : t('account.formEdit') }}
+        </div>
+        <div class="form-grid">
+          <label class="field-label">{{ t('account.nickname') }}</label>
+          <input v-model="form.name" type="text" @keyup.enter="submitForm"/>
+          <label class="field-label">{{ t('account.user') }}</label>
+          <input v-model="form.username" type="text" @keyup.enter="submitForm"/>
+          <label class="field-label">{{ t('account.pass') }}</label>
+          <input v-model="form.password" type="password" :placeholder="pwPlaceholder" @keyup.enter="submitForm"/>
+          <label class="field-label">{{ t('account.remark') }}</label>
+          <input v-model="form.remark" type="text" @keyup.enter="submitForm"/>
+        </div>
+        <div class="hint">{{ t('account.nameHint') }}</div>
+        <div class="form-actions">
+          <button class="btn" @click="cancelForm">{{ t('account.cancel') }}</button>
+          <button class="btn btn-primary" @click="submitForm">
+            <i class="fas fa-check"></i>{{ t('account.save') }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -112,8 +107,7 @@ const sel = ref(0)
 // mode: null | { kind: 'add' } | { kind: 'edit', index }
 const mode = ref(null)
 const form = ref({ name: '', username: '', password: '', remark: '' })
-// 编辑表单附加状态：是否显式清除已保存密码；打开表单时的原始账号名
-const clearPassword = ref(false)
+// 打开表单时的原始账号名：用于检测「改账号名导致已存密码无法沿用」
 const editFromUsername = ref('')
 
 // 打开时以「含密码」视图为准：编辑后密码字段随行保留，保存时整体回传。
@@ -130,13 +124,6 @@ watch(
 const pwPlaceholder = computed(() => {
   const cur = mode.value && mode.value.kind === 'edit' ? rows.value[mode.value.index] : null
   return cur && cur.hasPassword ? t('account.pwKeepHint') : ''
-})
-
-// 仅编辑已有密码的账号时展示"清除已保存密码"
-const canClearPw = computed(() => {
-  if (!mode.value || mode.value.kind !== 'edit') return false
-  const cur = rows.value[mode.value.index]
-  return !!cur && !!cur.hasPassword
 })
 
 async function persist() {
@@ -157,7 +144,6 @@ async function persist() {
 
 function onAdd() {
   mode.value = { kind: 'add' }
-  clearPassword.value = false
   editFromUsername.value = ''
   form.value = { name: '', username: '', password: '', remark: '' }
 }
@@ -169,7 +155,6 @@ function onEdit() {
   }
   const cur = rows.value[sel.value]
   mode.value = { kind: 'edit', index: sel.value }
-  clearPassword.value = false
   editFromUsername.value = (cur.username || '').trim()
   form.value = {
     name: cur.name || '',
@@ -199,8 +184,7 @@ async function submitForm() {
     const newUsername = (form.value.username || '').trim()
     // 账号名被修改且没有重新输入密码时，后端无法按账号名匹配到旧密码，
     // 沿用会失败：提前告知用户，避免 silently 丢密。
-    if (newUsername !== editFromUsername.value && !form.value.password &&
-        cur.hasPassword && !clearPassword.value) {
+    if (newUsername !== editFromUsername.value && !form.value.password && cur.hasPassword) {
       const ok = await confirmDialog(t('account.userChangedTitle'), t('account.userChangedMsg'))
       if (!ok) return
     }
@@ -210,11 +194,8 @@ async function submitForm() {
     if (form.value.password) {
       cur.password = form.value.password
       cur.hasPassword = true
-    } else if (clearPassword.value) {
-      cur.password = ''
-      cur.hasPassword = false
     }
-    // 留空且未勾选清除：hasPassword 保持为 true，后端按账号名继承旧密码
+    // 留空：hasPassword 保持为 true，后端按账号名继承旧密码
   }
   mode.value = null
   await persist()
@@ -386,9 +367,10 @@ tr.editing td {
   background: var(--c-table-sel);
 }
 
-/* 行内编辑表单 */
-.form-card {
-  flex: 0 0 auto;
+/* 编辑弹窗：复用全局 .mask/.dialog，宽度按「92px 标签列 + 输入框」定 */
+.form-dialog {
+  width: 480px;
+  max-width: calc(100vw - 40px);
   animation: slide-up .18s var(--ease);
 }
 
@@ -421,22 +403,7 @@ tr.editing td {
   max-width: 380px;
 }
 
-.clear-pw {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  color: var(--c-hint);
-  cursor: pointer;
-  user-select: none;
-}
-
-.clear-pw input {
-  width: auto;
-  accent-color: var(--c-danger, #ef4444);
-}
-
-.form-card .hint {
+.form-dialog .hint {
   margin-top: 8px;
 }
 
