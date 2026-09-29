@@ -3,6 +3,7 @@ module github.com/Lexo0522/one-key-dialer
 go 1.26.6
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/getlantern/systray v1.2.2
 	github.com/wailsapp/wails/v2 v2.16.0
 	golang.org/x/sys v0.48.0

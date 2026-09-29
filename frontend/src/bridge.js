@@ -1,6 +1,7 @@
 // 后端桥接层：Wails 环境下走真实绑定，浏览器 dev 模式下走内存 mock，
 // 便于脱离 Windows 环境做界面校验。
-import * as AppApi from '../wailsjs/go/main/App.js'
+// 绑定名来自 UI 进程绑定的 UIApp 结构（方法名与代理侧 App 一致）。
+import * as AppApi from '../wailsjs/go/main/UIApp.js'
 import { EventsOn } from '../wailsjs/runtime/runtime.js'
 
 export const isWails = typeof window !== 'undefined' && !!window.go && !!window.runtime

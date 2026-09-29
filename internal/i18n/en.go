@@ -32,6 +32,8 @@ var en = map[string]string{
 	"log.author":          "Author: Lexo0522",
 	"log.repo":            "Repo: https://github.com/Lexo0522/one-key-dialer",
 
+	"ui.agentUnavailable": "The background service failed to start. Please reopen the window. If this keeps happening, reboot and try again.",
+
 	"precheck.alreadyOnline":    "Already connected, no need to dial again",
 	"precheck.noAccount":        "Current account index is invalid, please re-select",
 	"precheck.emptyUsername":    "Pre-dial check failed: username is empty",

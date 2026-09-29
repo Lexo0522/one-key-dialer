@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
+	"github.com/Lexo0522/one-key-dialer/internal/ipc"
 	"github.com/Lexo0522/one-key-dialer/internal/model"
 	"github.com/Lexo0522/one-key-dialer/internal/platform"
 	"github.com/Lexo0522/one-key-dialer/internal/service"
 	"github.com/Lexo0522/one-key-dialer/internal/storage"
 	"github.com/Lexo0522/one-key-dialer/internal/update"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // 事件名（前后端通信契约）
@@ -151,14 +151,21 @@ type App struct {
 
 	// langStop 关闭后终止系统语言轮询（构造时创建，shutdown 时关闭）。
 	langStop chan struct{}
+
+	// ipcSrv 代理进程的命名管道服务端（UI 进程按需接入）。
+	ipcSrv *ipc.Server
+	// memStop 关闭后终止周期性内存归还（构造时创建，shutdown 时关闭）。
+	memStop chan struct{}
 }
 
 // NewApp 构造应用门面。
-func NewApp() *App { return &App{langStop: make(chan struct{})} }
+func NewApp() *App {
+	return &App{langStop: make(chan struct{}), memStop: make(chan struct{})}
+}
 
 // ============================ 生命周期 ============================
 
-// startup 在 Wails 启动回调里装配全部服务。
+// startup 装配全部服务（代理进程模式:无 Wails 窗口,由 main 在拉起代理时调用）。
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.dataDir = platform.DataDir()
@@ -267,14 +274,46 @@ func (a *App) startup(ctx context.Context) {
 	if a.settings.Current().UpdateCheckEnabled {
 		a.exec.Schedule(5*time.Second, func() { a.doCheckUpdate(false) })
 	}
+
+	// 命名管道服务端:UI 进程按需接入;先于一切 UI 拉起动作
+	handler := ipc.NewDispatcher(a).Handler()
+	srv, err := ipc.NewServer(handler, func(int) { a.refreshTray() })
+	if err != nil {
+		if errors.Is(err, ipc.ErrAlreadyRunning) {
+			// 已有代理实例:本进程不重复装配,直接退出（由 main 兜底）
+			warn("ipc: agent already running")
+			a.ExitProgram()
+			return
+		}
+		a.logSvc.Error(i18n.Tf("log.appStarted", "ipc: "+err.Error()))
+	} else {
+		a.ipcSrv = srv
+	}
+
+	// 代理进程内存紧致化:小堆 + 低 GC 目标 + 周期归还,
+	// 保证托盘待机时私有工作集维持在 ~20MB 量级
+	startMemoryKeeper(a.memStop, func() { a.logSvc.Flush() })
+
+	// 代理模式没有窗口展示日志,启动段落立即落盘一次,
+	// 保证「起不来/连不上」类问题在日志文件里可追溯
+	a.logSvc.Flush()
+
+	// 自启动且未勾选「启动最小化」:登录后自动拉起一次主窗口
+	if autoStartLaunch && !a.settings.Current().StartMinimized {
+		a.exec.Schedule(1*time.Second, a.ShowWindow)
+	}
 }
 
-// shutdown 有序停机：持久化 → 停服务 → 清内存密码 → 退托盘。
+// shutdown 有序停机:持久化 → 停服务 → 停 IPC → 清内存密码 → 退托盘。
 func (a *App) shutdown(ctx context.Context) {
-	// 先停语言轮询，避免停机期间继续刷新文案
+	// 先停语言轮询与内存看护，避免停机期间继续运行
 	if a.langStop != nil {
 		close(a.langStop)
 		a.langStop = nil
+	}
+	if a.memStop != nil {
+		close(a.memStop)
+		a.memStop = nil
 	}
 	a.settings.FlushPending()
 	a.accounts.Save()
@@ -285,6 +324,11 @@ func (a *App) shutdown(ctx context.Context) {
 	a.monitor.Stop()
 	a.orch.Shutdown(3 * time.Second)
 	a.exec.Shutdown(2 * time.Second)
+
+	if a.ipcSrv != nil {
+		a.ipcSrv.Close() // 断开 UI 客户端,它们会自行退出
+		a.ipcSrv = nil
+	}
 
 	a.accounts.ClearPasswordsInMemory()
 	a.clearPendingPassword()
@@ -472,17 +516,9 @@ func (a *App) DialCurrentAccount() bool {
 	return a.orch.DialUser()
 }
 
-// ExportAccounts 导出账号 CSV；withPassword 为 true 时含明文密码。
-func (a *App) ExportAccounts(withPassword bool) string {
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title: i18n.T("export.title"),
-		DefaultFilename: map[bool]string{true: "pppoe_accounts_export_WITH_PASSWORDS.csv",
-			false: "pppoe_accounts_export.csv"}[withPassword],
-		Filters: []runtime.FileFilter{{DisplayName: "CSV", Pattern: "*.csv"}},
-	})
-	if err != nil || path == "" {
-		return ""
-	}
+// ExportAccountsTo 导出账号到指定 CSV;withPassword 为 true 时含明文密码。
+// 文件对话框由 UI 进程负责,代理只做落盘(pipe 方法)。
+func (a *App) ExportAccountsTo(path string, withPassword bool) error {
 	var accounts []*model.Account
 	if withPassword {
 		// 含密码导出必须取带密码快照，用后立即清零
@@ -499,22 +535,15 @@ func (a *App) ExportAccounts(withPassword bool) string {
 	}
 	if err := storage.SaveCsv(path, accounts, withPassword); err != nil {
 		a.logSvc.Error(i18n.Tf("export.failed", err.Error()))
-		return ""
+		return err
 	}
 	a.logSvc.Success(i18n.T("export.ok"))
-	return path
+	return nil
 }
 
-// ImportAccounts 从 CSV 追加导入账号。
-// 返回 -1 表示用户取消或读取失败（前端静默不提示），>=0 为实际导入条数。
-func (a *App) ImportAccounts() int {
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:   i18n.T("import.title"),
-		Filters: []runtime.FileFilter{{DisplayName: "CSV", Pattern: "*.csv"}},
-	})
-	if err != nil || path == "" {
-		return -1
-	}
+// ImportAccountsFrom 从 CSV 追加导入账号（路径由 UI 进程的文件对话框提供）。
+// 返回 -1 表示读取失败（前端静默不提示），>=0 为实际导入条数。
+func (a *App) ImportAccountsFrom(path string) int {
 	imported, err := storage.LoadCsv(path)
 	if err != nil {
 		a.logSvc.Error(i18n.Tf("import.failed", err.Error()))
@@ -554,22 +583,14 @@ func (a *App) ClearHistory() {
 	a.logSvc.Info(i18n.T("history.cleared"))
 }
 
-// ExportHistory 导出历史 CSV。
-func (a *App) ExportHistory() string {
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           i18n.T("history.exportTitle"),
-		DefaultFilename: "pppoe_history_export.csv",
-		Filters:         []runtime.FileFilter{{DisplayName: "CSV", Pattern: "*.csv"}},
-	})
-	if err != nil || path == "" {
-		return ""
-	}
+// ExportHistoryTo 导出历史 CSV 到指定路径（路径由 UI 进程的文件对话框提供）。
+func (a *App) ExportHistoryTo(path string) error {
 	if err := a.historySvc.Export(path); err != nil {
 		a.logSvc.Error(i18n.Tf("history.exportFailed", err.Error()))
-		return ""
+		return err
 	}
 	a.logSvc.Success(i18n.Tf("history.exported", path))
-	return path
+	return nil
 }
 
 // GetStats 返回统计汇总。
@@ -815,7 +836,9 @@ func (a *App) InstallUpdate() {
 
 	progress := updateProgress{a: a, stage: UpdateStagePrepare}
 	a.exec.SubmitLong(func() {
-		prepared, err := a.updater.Prepare(pkg, progress)
+		// 更新脚本需等全部相关进程退出后再覆盖 exe:代理自身 + 接入中的 UI 进程
+		waitPIDs := a.uiWaitPIDs()
+		prepared, err := a.updater.Prepare(pkg, progress, waitPIDs)
 		a.updateMu.Lock()
 		a.updateBusy = false
 		a.updateMu.Unlock()
@@ -843,37 +866,66 @@ func (a *App) OpenReleasePage(url string) {
 	if url == "" {
 		url = model.GitHubURL + "/releases/latest"
 	}
-	runtime.BrowserOpenURL(a.ctx, url)
+	platform.OpenInBrowser(url)
 }
 
 // ============================ 窗口 / 退出 ============================
 
-// ShowWindow 显示主窗口。
+// ShowWindow 显示主窗口（代理模式）:UI 进程在线时唤出既有窗口,
+// 否则按需拉起一个新的 UI 进程。窗口的销毁即 UI 进程退出,内存随之释放。
 func (a *App) ShowWindow() {
-	windowShown = true
-	if a.ctx == nil {
+	if a.uiOnline() {
+		a.ipcSrv.Broadcast(SysEventShow, nil)
 		return
 	}
-	runtime.WindowShow(a.ctx)
-	runtime.WindowUnminimise(a.ctx)
+	a.spawnUI()
 }
 
-// HideWindow 隐藏主窗口（最小化到托盘）。
-func (a *App) HideWindow() {
-	windowShown = false
-	if a.ctx == nil {
-		return
-	}
-	runtime.WindowHide(a.ctx)
-}
+// HideWindow 代理模式无窗口可隐藏:窗口归属 UI 进程（空操作,仅为方法面完整）。
+func (a *App) HideWindow() {}
 
-// IsWindowVisible 主窗口是否可见。
+// IsWindowVisible UI 进程是否在线（有窗口即视为可见）。
 func (a *App) IsWindowVisible() bool { return a.windowVisible() }
 
 // ExitProgram 有序退出（托盘「退出」与更新安装前调用）。
+// 关机路径绝不允许挂死:给 shutdown 5 秒硬超时,超时(托盘/管道/RAS
+// 任一环节卡住)也保证进程一定退出,由 OS 回收其余资源。
 func (a *App) ExitProgram() {
-	a.exec.Submit(func() {
-		a.shutdown(a.ctx)
+	go func() {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer func() { _ = recover() }()
+			a.shutdown(a.ctx)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
 		osExit(0)
-	})
+	}()
+}
+
+// uiOnline 是否有 UI 进程接入。
+func (a *App) uiOnline() bool { return a.ipcSrv != nil && a.ipcSrv.ClientCount() > 0 }
+
+// uiWaitPIDs 更新脚本需要等待退出的全部进程:代理自身 + 接入中的 UI 进程。
+func (a *App) uiWaitPIDs() []int {
+	if a.ipcSrv == nil {
+		return nil
+	}
+	return a.ipcSrv.ClientPIDs()
+}
+
+// spawnUI 按需拉起 UI 进程（同目录同一 exe,无参数即 UI 模式）。
+func (a *App) spawnUI() {
+	exe, err := currentExe()
+	if err != nil {
+		a.logSvc.Error("spawn ui: " + err.Error())
+		return
+	}
+	a.logSvc.Info("launch ui: " + exe)
+	if err := platform.LaunchDetached([]string{exe}, filepath.Dir(exe)); err != nil {
+		a.logSvc.Error("spawn ui: " + err.Error())
+	}
 }

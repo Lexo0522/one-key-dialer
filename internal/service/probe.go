@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/Lexo0522/one-key-dialer/internal/model"
+	"github.com/Lexo0522/one-key-dialer/internal/platform"
 	"github.com/Lexo0522/one-key-dialer/internal/proxy"
-	"github.com/Lexo0522/one-key-dialer/internal/util"
 )
 
 // ConnectivityConfirm 拨号后的外网可达性确认。
@@ -54,16 +54,13 @@ func confirm(cfg model.ProbeConfig) bool {
 	return false
 }
 
-// icmpReachable 通过 ping 子进程判断主机可达（与旧版回退路径一致）。
+// icmpReachable 用 IcmpSendEcho 原生探测主机可达（与 ping -n 1 -w 1000 等价，
+// 不再拉起 ping.exe 子进程）。
 func icmpReachable(host string) bool {
 	if host == "" {
 		return false
 	}
-	res, err := util.RunProcess([]string{"ping", "-n", "1", "-w", "1000", host}, 5*time.Second, nil)
-	if err != nil {
-		return false
-	}
-	return !res.TimedOut && res.ExitCode == 0
+	return platform.IcmpReachable(host, 1000)
 }
 
 // httpReachable 轻量 HTTP(S) 检查：优先 HEAD，被拒则 GET；2xx/3xx 视为可达。

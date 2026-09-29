@@ -104,6 +104,10 @@ const zh = {
   // 轻量化实际效果：仅图表重绘节拍 1s→4s（store.js renderIntervalMs）、
   // 全局关闭动画过渡、移除 .card 阴影；速度数字由后端事件驱动仍实时刷新。
   'settings.lite.hint': '图表重绘降为每 4 秒一次，并关闭界面动画与卡片阴影（速度数字仍实时刷新）',
+  'settings.lowMem': '低内存渲染',
+  'settings.lowMem.hint': '窗口改用 CPU 软渲染，减少一个 GPU 子进程；下次打开窗口时生效',
+  'settings.lowMem.enabled': '低内存渲染已开启，下次打开窗口生效',
+  'settings.lowMem.disabled': '低内存渲染已关闭，下次打开窗口生效',
   'settings.noInternet': '无外网自动断开',
   'settings.noInternet.hint': 'RAS 拨号成功但外网探测失败时自动断开；默认关闭以保留校园内网',
   'settings.proxy.enable': '启用代理',
@@ -300,6 +304,10 @@ const en = {
   // global animation/transition off, .card shadow removed; speed figures are
   // event-driven and still update live.
   'settings.lite.hint': 'Redraws the traffic chart every 4s instead of 1s and disables UI animations and card shadows; speed figures still update live',
+  'settings.lowMem': 'Low-memory rendering',
+  'settings.lowMem.hint': 'Renders the window on CPU (software) with one fewer GPU process; takes effect next time the window opens',
+  'settings.lowMem.enabled': 'Low-memory rendering enabled; effective next window',
+  'settings.lowMem.disabled': 'Low-memory rendering disabled; effective next window',
   'settings.noInternet': 'Hang up when no Internet',
   'settings.noInternet.hint': 'Hang up when RAS is up but the Internet check fails',
   'settings.proxy.enable': 'Enable proxy',

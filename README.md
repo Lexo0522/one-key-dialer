@@ -11,13 +11,16 @@ Windows 校园网 PPPoE 图形拨号工具：**Go + Wails v2 + Vue 3**。左右�
 ## 架构
 
 ```
-main.go            Wails 入口（窗口、托盘、--autostart）
-app.go             Wails 绑定门面：Bootstrap / 拨号 / 设置 / 账号 / 诊断 / 更新
-app_internal.go    事件推送、状态机、DialView / DialEnvironment 实现
-tray.go            系统托盘菜单与气泡
+main.go            入口与模式解析:--agent 代理模式 / 无参或 --ui 为 UI 模式
+app.go             代理核心:Bootstrap / 拨号 / 设置 / 账号 / 诊断 / 更新(经管道暴露给 UI)
+app_ui.go          UI 进程绑定门面:同名方法经命名管道转发,事件桥接进 Wails
+app_internal.go    事件广播、状态机、DialView / DialEnvironment 实现
+agent.go           代理内存紧致化(GC 调优 + 周期归还)
+tray.go            系统托盘菜单与气泡(驻留在代理进程)
 internal/
+  ipc/             代理↔UI 命名管道通信(NDJSON 握手/请求/事件广播 + 反射分发)
   model/           设置 / 账号 / 历史 / 探测配置（JSON 字段与旧版一致）
-  platform/        RAS、DPAPI、注册表、电话簿、气泡通知（纯 syscall，无 cgo）
+  platform/        RAS、DPAPI、注册表、电话簿、气泡通知、iphlpapi 原生流量/ICMP（纯 syscall,无 cgo）
   storage/         JSON 信封读写、原子替换、CSV 导入导出、ACL 收紧
   service/         拨号编排、自动重连、流量采样、监控、诊断
   update/          双线路在线更新（Gitee 主 / GitHub 备）
@@ -25,6 +28,19 @@ internal/
   util/            格式化、脱敏、进程 IO
 frontend/          Vue 3 + Vite；左右布局（侧栏：首页/账号配置/日志/设置），wailsjs/ 为自动生成的 Go 绑定
 ```
+
+### 进程模型(常驻内存 ~10MB)
+
+同一个 exe 按参数分两种运行形态:
+
+- **代理模式 `PPoEDialer.exe --agent`**(开机自启动即此模式):纯 Go 常驻进程,承载全部服务(托盘、拨号、监控、自动重连、存储、更新),**不启动 WebView**。经 GC 调优与周期内存归还,任务管理器口径的常驻内存约 **9-15MB**。
+- **UI 模式 `PPoEDialer.exe`**(双击/托盘「显示窗口」):按需拉起,经命名管道(`\\.\pipe\PPoEDialerAgent`)调用代理,窗口外观与操作和单进程时代完全一致,前端 Vue 代码零改动。**关闭窗口即 UI 进程退出**,WebView2 与渲染内存立刻归还系统;代理继续在托盘驻留。
+- UI 崩溃不影响代理;代理退出后 UI 进程自动随之退出。更新安装前,更新脚本会等待代理与全部 UI 进程退出后再覆盖文件。
+
+### 其它实现要点
+
+- 流量采样用 iphlpapi `GetIfTable`、连通探测用 `IcmpSendEcho`,不再每 3 秒拉起 `netstat`/`ping` 子进程。
+- `frontend/src/assets/fontawesome/` 本地打包 FA5 图标,离线启动不依赖 CDN。
 
 前端只做展示与输入采集，**全部业务逻辑在 Go 侧**：账号密码经 DPAPI 加密落盘、拨号凭据一次性使用后立即清零、更新包强制 HTTPS + SHA-256 校验。
 
@@ -39,7 +55,8 @@ frontend/          Vue 3 + Vite；左右布局（侧栏：首页/账号配置/�
 - 界面四个页面：首页（账号选择 + 连接 + 流量图表）、账号配置、日志（级别过滤/搜索/自动滚动）、设置（三大卡片左右布局：基本设置 / 代理设置 / 更新；含主题、语言、开机自启、拨号设备下拉选择、流量嗅探、断网自动重连、轻量化、无外网自动断开、代理、检查更新）
 - **应用内代理**：设置页可配置 HTTP/HTTPS/SOCKS5 代理，**仅作用于本应用自身的 HTTP 请求**（在线更新检查与下载、HTTP 模式外网探测），不修改系统代理设置、不影响其他程序；支持绕过列表（精确主机、`*.example.com` 后缀、通配符、CIDR、`<local>` 私网/环回），未启用时回退系统环境变量代理
 - 拨号历史与统计由后端继续记录维护（界面入口收敛到上述四个页面）
-- 系统托盘：显示窗口、拨号、断开、切换账号、检查更新、退出；关闭窗口仅隐藏到托盘
+- 系统托盘：显示窗口、拨号、断开、切换账号、检查更新、退出；关闭窗口即退出界面进程并释放渲染内存（常驻内存 ~10MB），代理继续驻留托盘
+- 设置项「低内存渲染」：UI 窗口改用 CPU 软渲染（`WebviewGpuIsDisabled`），打开窗口期间再省一个 GPU 子进程
 - 开机自启动（`HKCU\...\Run`，以注册表为准，设置项仅用于启动时修复）
 - **主备双线路在线更新**：主线路 Gitee Release，备用线路 GitHub Release；串行执行、主线路失败自动降级、按线路熔断。仅下载带 `SHA256SUMS.txt` 且哈希校验通过的包到 `%APPDATA%\PPoEDialer\updates\`，支持断点续传与停滞看门狗；安装进程确认启动后才退出，全程失败保留当前版本
 - 主题：跟随系统 / 浅色 / 深色（切换立即生效）；界面语言：跟随系统（默认，运行期随系统显示语言自动切换）/ 简体中文 / 英文

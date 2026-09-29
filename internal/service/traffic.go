@@ -1,19 +1,12 @@
 package service
 
 import (
-	"regexp"
-	"strconv"
-	"strings"
-	"time"
-
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
-	"github.com/Lexo0522/one-key-dialer/internal/util"
+	"github.com/Lexo0522/one-key-dialer/internal/platform"
 )
 
-// counterRow 匹配 netstat -e 的首个“标签 + 两个计数器”数据行。
-var counterRow = regexp.MustCompile(`^(.+?)\s+(\d+)\s+(\d+)$`)
-
-// TrafficSampler 通过 netstat -e 采样主机流量计数器。
+// TrafficSampler 通过 iphlpapi(GetIfTable)原生采样主机流量计数器,
+// 不再拉起 cmd /c netstat -e 子进程(省去每轮 cmd.exe+netstat.exe+conhost 抖动)。
 type TrafficSampler struct {
 	onWarn func(string)
 	warned bool
@@ -25,18 +18,15 @@ func NewTrafficSampler(onWarn func(string)) *TrafficSampler {
 }
 
 // Sample 返回 [receivedBytes, sentBytes]；失败返回 {0,0}。
+// 计数器为 32 位,回绕由监控层的增量重置逻辑兜底(与旧 netstat 路径一致)。
 func (t *TrafficSampler) Sample() (int64, int64) {
-	res, err := util.RunProcess([]string{"cmd", "/c", "netstat -e"}, 5*time.Second, nil)
-	if err != nil {
-		t.warnOnce(i18n.Tf("traffic.readFailed", "exec"))
+	recv, sent, ok := platform.HostTrafficCounters()
+	if !ok {
+		t.warnOnce(i18n.Tf("traffic.readFailed", "iphlpapi"))
 		return 0, 0
 	}
-	if recv, sent, ok := parseNetstat(res.Output); ok {
-		t.warned = false
-		return recv, sent
-	}
-	t.warnOnce(i18n.T("traffic.parseFailed"))
-	return 0, 0
+	t.warned = false
+	return recv, sent
 }
 
 func (t *TrafficSampler) warnOnce(message string) {
@@ -45,21 +35,4 @@ func (t *TrafficSampler) warnOnce(message string) {
 	}
 	t.warned = true
 	t.onWarn(message)
-}
-
-// parseNetstat 解析 netstat -e 的第一个计数器行。
-func parseNetstat(output string) (int64, int64, bool) {
-	for _, line := range strings.Split(output, "\n") {
-		m := counterRow.FindStringSubmatch(strings.TrimSpace(line))
-		if m == nil {
-			continue
-		}
-		r, err1 := strconv.ParseInt(m[2], 10, 64)
-		s, err2 := strconv.ParseInt(m[3], 10, 64)
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		return r, s, true
-	}
-	return 0, 0, false
 }

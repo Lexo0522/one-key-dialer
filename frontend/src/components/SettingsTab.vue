@@ -87,6 +87,14 @@
 
         <div class="switch-row">
           <label class="label">
+            <span class="t">{{ t('settings.lowMem') }}</span>
+            <span class="d">{{ t('settings.lowMem.hint') }}</span>
+          </label>
+          <span class="switch"><input v-model="lowMemRender" type="checkbox" @change="pushLowMem"/><span class="track"></span></span>
+        </div>
+
+        <div class="switch-row">
+          <label class="label">
             <span class="t">{{ t('settings.noInternet') }}</span>
             <span class="d">{{ t('settings.noInternet.hint') }}</span>
           </label>
@@ -190,6 +198,8 @@ const autoReconnect = ref(!!state.settings?.autoReconnect)
 const intervalSeconds = ref(state.settings?.intervalSeconds ?? 30)
 const disconnectOnNoInternet = ref(!!state.settings?.disconnectOnNoInternet)
 const updateCheckEnabled = ref(state.settings?.updateCheckEnabled ?? true)
+// 低内存渲染:UI 进程启动时读取,改动需下次打开窗口生效
+const lowMemRender = ref(!!state.settings?.lowMemRender)
 
 // 代理：后端设置项，经 patchSettings 持久化到 settings.json 并实时生效
 // （仅作用于本应用自身的 HTTP 请求：更新检查、HTTP 外网探测）
@@ -212,6 +222,7 @@ watch(
     intervalSeconds.value = s.intervalSeconds
     disconnectOnNoInternet.value = s.disconnectOnNoInternet
     updateCheckEnabled.value = s.updateCheckEnabled
+    lowMemRender.value = !!s.lowMemRender
     proxy.enabled = !!s.proxyEnabled
     proxy.type = s.proxyType || 'http'
     proxy.host = s.proxyHost || ''
@@ -286,6 +297,13 @@ function pushDisconnect() {
 
 function pushUpdateCheck() {
   patchSettings({ updateCheckEnabled: updateCheckEnabled.value })
+}
+
+// 低内存渲染写入后端设置;UI 进程在窗口创建前读取 settings.json,
+// 因此本次改动要等下一次打开窗口才生效。
+function pushLowMem() {
+  patchSettings({ lowMemRender: lowMemRender.value })
+  showToast(t(lowMemRender.value ? 'settings.lowMem.enabled' : 'settings.lowMem.disabled'), 'success')
 }
 
 // 代理写入后端设置：地址必填、端口须为 1-65535 数字，非法输入回退开关并提示。

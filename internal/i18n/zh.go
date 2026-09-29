@@ -32,6 +32,9 @@ var zh = map[string]string{
 	"log.author":          "作者：Lexo0522",
 	"log.repo":            "仓库：https://github.com/Lexo0522/one-key-dialer",
 
+	// UI 进程启动失败
+	"ui.agentUnavailable": "后台服务启动失败，请重新打开窗口。若反复出现，请重启电脑后重试。",
+
 	// 拨号前置校验
 	"precheck.alreadyOnline":    "当前已连接，无需重复拨号",
 	"precheck.noAccount":        "当前账号索引无效，请重新选择账号",

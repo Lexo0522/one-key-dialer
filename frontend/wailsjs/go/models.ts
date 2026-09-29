@@ -176,6 +176,7 @@ export namespace model {
 	    proxyHost: string;
 	    proxyPort: string;
 	    proxyBypass: string;
+	    lowMemRender: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -203,6 +204,7 @@ export namespace model {
 	        this.proxyHost = source["proxyHost"];
 	        this.proxyPort = source["proxyPort"];
 	        this.proxyBypass = source["proxyBypass"];
+	        this.lowMemRender = source["lowMemRender"];
 	    }
 	}
 

@@ -57,6 +57,10 @@ type Settings struct {
 	ProxyHost    string `json:"proxyHost"`
 	ProxyPort    string `json:"proxyPort"`
 	ProxyBypass  string `json:"proxyBypass"`
+
+	// 低内存渲染:UI 进程禁用 GPU 合成(CPU 软渲染),少一个 GPU 子进程,
+	// 打开窗口期间再省 ~20-40MB。旧版无此字段,零值即"关闭",向后兼容。
+	LowMemRender bool `json:"lowMemRender"`
 }
 
 // DefaultSettings 返回全部默认值（与旧版 Builder 默认值一致）。

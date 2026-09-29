@@ -17,7 +17,8 @@ import (
 )
 
 // Prepare 把已校验的安装包展开/生成更新脚本。
-func (m *Module) Prepare(pkg *VerifiedPackage, progress Progress) (*PreparedUpdate, error) {
+// waitPIDs:安装前必须退出的进程(代理自身 + 全部 UI 进程)。
+func (m *Module) Prepare(pkg *VerifiedPackage, progress Progress, waitPIDs []int) (*PreparedUpdate, error) {
 	if pkg == nil || pkg.File == "" {
 		return nil, ErrNoPackageFile
 	}
@@ -29,7 +30,7 @@ func (m *Module) Prepare(pkg *VerifiedPackage, progress Progress) (*PreparedUpda
 	if err := os.MkdirAll(staged, 0o755); err != nil {
 		return nil, err
 	}
-	pid := os.Getpid()
+	pids := collectWaitPIDs(waitPIDs)
 	lower := strings.ToLower(pkg.File)
 	switch {
 	case strings.HasSuffix(lower, ".zip"):
@@ -40,25 +41,38 @@ func (m *Module) Prepare(pkg *VerifiedPackage, progress Progress) (*PreparedUpda
 			return nil, err
 		}
 		payloadRoot := findPayloadRoot(staged)
-		script, err := m.writeZipApplyScript(installDir, payloadRoot, pid)
+		script, err := m.writeZipApplyScript(installDir, payloadRoot, pids)
 		if err != nil {
 			return nil, err
 		}
 		return &PreparedUpdate{ApplyScript: script, Kind: "zip"}, nil
 	case strings.HasSuffix(lower, ".msi"):
-		script, err := m.writeMsiApplyScript(pkg.File, installDir, pid)
+		script, err := m.writeMsiApplyScript(pkg.File, installDir, pids)
 		if err != nil {
 			return nil, err
 		}
 		return &PreparedUpdate{ApplyScript: script, Kind: "msi"}, nil
 	case strings.HasSuffix(lower, ".exe"):
-		script, err := m.writeExeApplyScript(pkg.File, installDir, pid)
+		script, err := m.writeExeApplyScript(pkg.File, installDir, pids)
 		if err != nil {
 			return nil, err
 		}
 		return &PreparedUpdate{ApplyScript: script, Kind: "exe"}, nil
 	}
 	return nil, errors.New(i18n.Tf("update.badType", filepath.Base(pkg.File)))
+}
+
+// collectWaitPIDs 汇总待等待的 PID:代理自身恒在首位,附加全部 UI 进程;去重去非法值。
+func collectWaitPIDs(extra []int) []int {
+	seen := make(map[int]bool, len(extra)+1)
+	pids := make([]int, 0, len(extra)+1)
+	for _, p := range append([]int{os.Getpid()}, extra...) {
+		if p > 0 && !seen[p] {
+			seen[p] = true
+			pids = append(pids, p)
+		}
+	}
+	return pids
 }
 
 // LaunchInstall 以隐藏控制台的方式启动更新脚本；仅当确认启动成功才返回 true。
@@ -206,9 +220,9 @@ func (m *Module) writeApplyScript(body func(w *scriptWriter)) (string, error) {
 	return scriptPath, nil
 }
 
-func (m *Module) writeZipApplyScript(installDir, payloadRoot string, pid int) (string, error) {
+func (m *Module) writeZipApplyScript(installDir, payloadRoot string, pids []int) (string, error) {
 	return m.writeApplyScript(func(w *scriptWriter) {
-		writeWaitForAppExit(w, pid)
+		writeWaitForAppExit(w, pids)
 		wline(w, `set "SRC=`+payloadRoot+`"`)
 		wline(w, `set "DST=`+installDir+`"`)
 		wline(w, `if not exist "%SRC%\" (`)
@@ -241,10 +255,10 @@ func (m *Module) writeZipApplyScript(installDir, payloadRoot string, pid int) (s
 	})
 }
 
-func (m *Module) writeMsiApplyScript(msiPath, installDir string, pid int) (string, error) {
+func (m *Module) writeMsiApplyScript(msiPath, installDir string, pids []int) (string, error) {
 	return m.writeApplyScript(func(w *scriptWriter) {
 		wline(w, "echo Installing MSI update...")
-		writeWaitForAppExit(w, pid)
+		writeWaitForAppExit(w, pids)
 		wline(w, `msiexec /i "`+msiPath+`"`)
 		wline(w, "if errorlevel 1 if not errorlevel 3010 goto msi_failed")
 		wline(w, `if exist "`+filepath.Join(installDir, model.AppName)+`" (`)
@@ -260,19 +274,23 @@ func (m *Module) writeMsiApplyScript(msiPath, installDir string, pid int) (strin
 	})
 }
 
-func (m *Module) writeExeApplyScript(exePath, installDir string, pid int) (string, error) {
+func (m *Module) writeExeApplyScript(exePath, installDir string, pids []int) (string, error) {
 	return m.writeApplyScript(func(w *scriptWriter) {
 		wline(w, "echo Launching installer...")
-		writeWaitForAppExit(w, pid)
+		writeWaitForAppExit(w, pids)
 		wline(w, `start "" /D "`+installDir+`" "`+exePath+`"`)
 	})
 }
 
-func writeWaitForAppExit(w *scriptWriter, pid int) {
-	wline(w, fmt.Sprintf("rem Wait up to %ds for the running app to exit (PID %d)", WaitForExitLoopCount, pid))
-	wline(w, fmt.Sprintf("for /L %%%%i in (1,1,%d) do (", WaitForExitLoopCount))
-	wline(w, fmt.Sprintf(`  tasklist /FI "PID eq %d" 2>nul | find /I "%d" >nul 2>nul && timeout /t 1 /nobreak >nul`, pid, pid))
-	wline(w, ")")
+// writeWaitForAppExit 依次等待每个进程退出(代理 + 全部 UI)。
+// PID 列表已由 Prepare 经 collectWaitPIDs 汇总去重。
+func writeWaitForAppExit(w *scriptWriter, pids []int) {
+	for _, pid := range pids {
+		wline(w, fmt.Sprintf("rem Wait up to %ds for the running app to exit (PID %d)", WaitForExitLoopCount, pid))
+		wline(w, fmt.Sprintf("for /L %%%%i in (1,1,%d) do (", WaitForExitLoopCount))
+		wline(w, fmt.Sprintf(`  tasklist /FI "PID eq %d" 2>nul | find /I "%d" >nul 2>nul && timeout /t 1 /nobreak >nul`, pid, pid))
+		wline(w, ")")
+	}
 }
 
 func writeRelaunch(w *scriptWriter, installDir string) {

@@ -2,14 +2,11 @@ package main
 
 import (
 	_ "embed"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
-	"github.com/Lexo0522/one-key-dialer/internal/model"
 	"github.com/Lexo0522/one-key-dialer/internal/platform"
 	"github.com/Lexo0522/one-key-dialer/internal/util"
 	"github.com/getlantern/systray"
@@ -25,7 +22,6 @@ var (
 	trayMu       sync.Mutex
 	trayApp      *App
 	trayReady    bool
-	windowShown  bool
 	mItemShow    *systray.MenuItem
 	mItemDial    *systray.MenuItem
 	mItemHangup  *systray.MenuItem
@@ -90,7 +86,6 @@ func onTrayReady() {
 			a := trayApp
 			trayMu.Unlock()
 			if a != nil {
-				windowShown = true
 				a.ShowWindow()
 			}
 		}
@@ -287,8 +282,3 @@ func (a *App) refreshTray() {
 		accountItems[0].Show()
 	}
 }
-
-// trayPidHint 供 apply 脚本等待退出（当前进程 PID）。
-func trayPidHint() string { return strconv.Itoa(os.Getpid()) }
-
-var _ = model.ConnectionName

@@ -11,15 +11,20 @@ import (
 	"github.com/Lexo0522/one-key-dialer/internal/service"
 	"github.com/Lexo0522/one-key-dialer/internal/update"
 	"github.com/Lexo0522/one-key-dialer/internal/util"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// emit 推送事件（context 未就绪时静默丢弃）。
+// 代理→UI 的系统级控制事件（UI 进程自行消费,不转发给前端）。
+const (
+	SysEventShow = "sys:show"
+	SysEventQuit = "sys:quit"
+)
+
+// emit 推送事件:代理模式下经命名管道广播给全部在线 UI 进程;
+// 无 UI 接入时为零成本空操作（高频速度/心跳事件自动省流）。
 func (a *App) emit(name string, payload any) {
-	if a.ctx == nil {
-		return
+	if a.ipcSrv != nil {
+		a.ipcSrv.Broadcast(name, payload)
 	}
-	runtime.EventsEmit(a.ctx, name, payload)
 }
 
 // notify 托盘气泡 + 前端提示（窗口可见时只走日志/前端）。
@@ -29,12 +34,9 @@ func (a *App) notify(title, message, tone string) {
 	showTrayNotification(title, message)
 }
 
-// windowVisible 主窗口是否可见。
+// windowVisible 主窗口是否可见:代理进程以「UI 进程是否接入」为准。
 func (a *App) windowVisible() bool {
-	if a.ctx == nil {
-		return false
-	}
-	return windowShown
+	return a.uiOnline()
 }
 
 func (a *App) isOnline() bool {
