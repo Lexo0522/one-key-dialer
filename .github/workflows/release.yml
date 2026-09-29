@@ -179,6 +179,9 @@ jobs:
           if ($LASTEXITCODE -eq 0 -and $existing) {
             Write-Host "Release $tag already exists - refreshing assets"
             gh release upload $tag $files --clobber
+            # Deleting the tag turns a published release back into a draft;
+            # un-draft it or the re-pushed tag's release stays invisible.
+            gh release edit $tag --draft=false
           } else {
             gh release create $tag $files `
               --verify-tag --title "PPPoEDialer $tag" --generate-notes
