@@ -111,7 +111,11 @@ jobs:
             $wixSrc
           if ($LASTEXITCODE -ne 0) { Write-Error "candle.exe failed"; exit 1 }
 
-          & light.exe -nologo -out $msi -ext WixUIExtension release\Product.wixobj
+          # -cultures:zh-cn is load-bearing: the extension's default en-us
+          # WixUI_en-US.wxl carries Codepage=1252, which light applies over
+          # Product/@Codepage and which cannot encode the Chinese strings in
+          # Product.wxs (LGHT0311). The zh-CN wxl brings codepage 936.
+          & light.exe -nologo -out $msi -ext WixUIExtension -cultures:zh-cn release\Product.wixobj
           if ($LASTEXITCODE -ne 0) { Write-Error "light.exe failed"; exit 1 }
 
           # SHA256SUMS.txt: "<hash>  <filename>" — parsed strictly by internal/update.
