@@ -925,7 +925,9 @@ func (a *App) spawnUI() {
 		return
 	}
 	a.logSvc.Info("launch ui: " + exe)
-	if err := platform.LaunchDetached([]string{exe}, filepath.Dir(exe)); err != nil {
+	// 必须走 LaunchGUI:LaunchDetached 的 CREATE_NO_WINDOW 会让
+	// UI 进程的主窗口保持隐藏,窗口永远显示不出来。
+	if err := platform.LaunchGUI([]string{exe}, filepath.Dir(exe)); err != nil {
 		a.logSvc.Error("spawn ui: " + err.Error())
 	}
 }

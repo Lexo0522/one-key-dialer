@@ -24,3 +24,16 @@ func LaunchDetached(command []string, workDir string) error {
 	cmd.SysProcAttr = hiddenProcAttr()
 	return cmd.Start()
 }
+
+// LaunchGUI 启动一个 GUI 子进程（UI 进程），立即返回（不等待结束）。
+// 不能复用 LaunchDetached：CREATE_NO_WINDOW 会把子进程 STARTUPINFO 的
+// wShowWindow 置为 SW_HIDE，其主窗口会一直处于隐藏状态（表现为
+// 托盘「显示窗口」拉不出窗口）。
+func LaunchGUI(command []string, workDir string) error {
+	if len(command) == 0 {
+		return exec.ErrNotFound
+	}
+	cmd := exec.Command(command[0], command[1:]...)
+	cmd.Dir = workDir
+	return cmd.Start()
+}
