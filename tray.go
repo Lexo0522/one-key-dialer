@@ -201,6 +201,15 @@ func refreshTrayLabels() {
 	}
 }
 
+// tooltipMask 把账号掩码收敛到 8 字符内,避免长用户名把 tooltip 顶超 64 字符。
+func tooltipMask(username string) string {
+	m := util.MaskAccount(username, 2)
+	if r := []rune(m); len(r) > 8 {
+		m = string(r[len(r)-8:])
+	}
+	return m
+}
+
 // refreshTray 刷新托盘图标、tooltip、菜单项与账号子菜单。
 func (a *App) refreshTray() {
 	trayMu.Lock()
@@ -211,31 +220,26 @@ func (a *App) refreshTray() {
 	}
 	a.mu.Lock()
 	online := a.online
-	conn := a.connectTimeMs
 	down := a.sessionDown
 	up := a.sessionUp
 	a.mu.Unlock()
 
+	// Windows 11 任务栏把托盘 tooltip 截断在 64 字符(含结尾 NUL),
+	// 文案必须紧凑:去掉标题与时长,上下行速率并作一行,账号掩码
+	// 收敛到 8 字符,保证 ↓/↑ 行永远不会被截掉。
 	var sb strings.Builder
-	sb.WriteString(i18n.T("app.title"))
-	sb.WriteString("\n")
 	if online {
-		sb.WriteString(i18n.T("tray.status") + i18n.T("status.connected"))
+		sb.WriteString(i18n.T("status.connected"))
 		if acc := a.accounts.CurrentOrNil(); acc != nil && acc.Username != "" {
-			sb.WriteString("\n" + i18n.T("tray.account") + util.MaskAccount(acc.Username, 2))
-		}
-		if conn > 0 {
-			sb.WriteString("\n" + i18n.T("tray.uptime") +
-				util.FormatDuration((time.Now().UnixMilli()-conn)/1000))
+			sb.WriteString("\n" + i18n.T("tray.account") + tooltipMask(acc.Username))
 		}
 		a.mu.Lock()
 		ds, us := a.downSpeed, a.upSpeed
 		a.mu.Unlock()
-		sb.WriteString("\n↓ " + util.FormatSpeed(ds))
-		sb.WriteString("\n↑ " + util.FormatSpeed(us))
-		sb.WriteString("\n" + i18n.T("tray.total") + util.FormatBytes(down+up))
+		sb.WriteString("\n↓ " + util.FormatSpeed(ds) + " ↑ " + util.FormatSpeed(us))
+		sb.WriteString("\n" + i18n.T("tray.totalShort") + util.FormatBytes(down+up))
 	} else {
-		sb.WriteString(i18n.T("tray.status") + i18n.T("status.disconnected"))
+		sb.WriteString(i18n.T("status.disconnected"))
 	}
 	systray.SetTooltip(sb.String())
 
