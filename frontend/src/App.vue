@@ -7,7 +7,7 @@
     <!-- 左侧栏 -->
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-logo"><i class="fas fa-bolt"></i></div>
+        <div class="brand-logo"><img :src="logoUrl" alt=""></div>
         <div class="brand-text">
           <div class="brand-name">{{ t('nav.brand') }}</div>
           <div class="brand-sub">{{ t('nav.brandSub') }}</div>
@@ -70,6 +70,7 @@ import { state, bootstrap, bindEvents, versionLabel } from './store'
 import { TOAST_DURATION } from './toast'
 import { installToastFoldAnimator } from './toast-fold'
 import { t } from './i18n'
+import logoUrl from './assets/logo.png'
 
 const active = ref('home')
 
@@ -125,14 +126,16 @@ onMounted(async () => {
 .brand-logo {
   width: 34px;
   height: 34px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, var(--c-info), #6f42c1);
-  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
   flex: 0 0 auto;
+}
+
+.brand-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .brand-name {
