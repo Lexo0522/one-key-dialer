@@ -7,7 +7,7 @@ import (
 )
 
 // version 为数字版本号（打包时可用 -ldflags 覆盖）。
-var version = "1.1.11"
+var version = "1.2.0"
 
 // SetVersion 由构建脚本通过 -ldflags 注入。
 func SetVersion(v string) {
@@ -16,10 +16,10 @@ func SetVersion(v string) {
 	}
 }
 
-// Version 返回数字版本号，例如 1.1.11。
+// Version 返回数字版本号，例如 1.2.0。
 func Version() string { return version }
 
-// Display 返回展示版本号，例如 v1.1.11。
+// Display 返回展示版本号，例如 v1.2.0。
 // 用 StripV 归一化：-ldflags 注入的值可能自带 v / V 前缀，直接拼接会出现 vv1.x.x。
 func Display() string { return "v" + StripV(version) }
 

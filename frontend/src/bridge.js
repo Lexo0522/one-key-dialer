@@ -32,8 +32,8 @@ export function on(event, handler) {
 // ---------------------------------------------------------------- mock ----
 
 const MOCK_STATE = {
-  version: '1.1.11',
-  displayVersion: 'v1.1.11',
+  version: '1.2.0',
+  displayVersion: 'v1.2.0',
   settings: {
     intervalSeconds: 30,
     autoReconnect: false,
@@ -51,7 +51,7 @@ const MOCK_STATE = {
   currentIndex: 0,
   online: false,
   logs: [
-    { time: '20:41:02', level: 'info', message: 'PPPoE校园网拨号工具 V1.1.11 已启动' },
+    { time: '20:41:02', level: 'info', message: 'PPPoE校园网拨号工具 V1.2.0 已启动' },
     { time: '20:41:03', level: 'success', message: '拨号成功！' }
   ],
   autoStartEnabled: false,
@@ -226,7 +226,7 @@ const mockApi = {
         updateAvailable: true,
         canInstall: true,
         title: '发现新版本 V1.2.0',
-        body: '当前 V1.1.11',
+        body: '当前 V1.2.0',
         assetName: 'PPoEDialer-1.2.0.zip',
         assetSize: 12 * 1024 * 1024,
         releaseUrl: 'https://example.invalid/releases/latest'
