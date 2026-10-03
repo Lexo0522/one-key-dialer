@@ -405,9 +405,7 @@ func (a *App) shutdown(ctx context.Context) {
 
 	a.accounts.ClearPasswordsInMemory()
 	a.portalCredMu.Lock()
-	if a.portalCred != nil {
-		a.portalCred.ClearPassword()
-	}
+	a.portalCred.ClearPassword()
 	model.ClearBytes(a.wifiPsk)
 	a.wifiPsk = nil
 	a.portalCredMu.Unlock()
@@ -840,9 +838,6 @@ func (a *App) WifiDisconnect() bool { return a.wifiSvc.Disconnect() == nil }
 func (a *App) GetPortalCredential() PortalCredentialDTO {
 	a.portalCredMu.Lock()
 	defer a.portalCredMu.Unlock()
-	if a.portalCred == nil {
-		return PortalCredentialDTO{}
-	}
 	return PortalCredentialDTO{Username: a.portalCred.Username, HasPassword: a.portalCred.HasPassword()}
 }
 
@@ -852,7 +847,7 @@ func (a *App) SavePortalCredential(username, password string) bool {
 	username = strings.TrimSpace(username)
 	a.portalCredMu.Lock()
 	cred := model.NewPortalCredential(username, password)
-	if a.portalCred != nil && username == a.portalCred.Username && password == "" && a.portalCred.HasPassword() {
+	if username == a.portalCred.Username && password == "" && a.portalCred.HasPassword() {
 		cred.SetPassword(a.portalCred.Password())
 	}
 	a.portalCred = cred

@@ -173,6 +173,8 @@ func (a *App) storeWifiPsk(ssid, psk string) {
 }
 
 // loadPortalCredential 启动时加载门户认证凭据。
+// startup 先于任何 RPC 执行，且 Load 对缺文件/失败均返回非 nil，
+// 因此 a.portalCred 自此全程非 nil，各处无需判空。
 func (a *App) loadPortalCredential() {
 	cred, err := a.portalStore.Load()
 	if err != nil {
@@ -200,11 +202,8 @@ func (a *App) loadWifiPsk() {
 // 供自动认证循环与手动测试共用;成功与否由响应判定 + 复验决定。
 func (a *App) performPortalAuth(portalURL string) service.PortalAuthOutcome {
 	a.portalCredMu.Lock()
-	username, password := "", ""
-	if a.portalCred != nil {
-		username = a.portalCred.Username
-		password = a.portalCred.Password()
-	}
+	username := a.portalCred.Username
+	password := a.portalCred.Password()
 	a.portalCredMu.Unlock()
 	if strings.TrimSpace(username) == "" || password == "" {
 		return service.PortalAuthOutcome{Detail: i18n.T("portal.noCred")}
