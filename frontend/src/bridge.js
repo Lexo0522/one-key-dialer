@@ -16,7 +16,8 @@ export const EV = {
   settings: 'app:settings',
   update: 'app:update',
   notify: 'app:notify',
-  lang: 'app:lang'
+  lang: 'app:lang',
+  wifi: 'app:wifi'
 }
 
 /** 订阅后端事件；返回取消订阅函数。 */
@@ -42,7 +43,15 @@ const MOCK_STATE = {
     accountIndex: 0,
     disconnectOnNoInternet: false,
     updateCheckEnabled: true,
-    uiTheme: 'system'
+    uiTheme: 'system',
+    wifiAutoConnect: false,
+    wifiPreferredSsid: '',
+    portalAuthEnabled: false,
+    portalLoginUrl: '',
+    portalMethod: 'POST',
+    portalBody: '',
+    portalHeaders: '',
+    portalSuccessHint: ''
   },
   accounts: [
     { name: '默认账号', username: '', remark: '', hasPassword: false },
@@ -254,8 +263,84 @@ const mockApi = {
   },
   async GetUILang() {
     return { lang: 'zh', system: 'zh', auto: true }
+  },
+
+  // ---------------- WiFi / 门户认证（浏览器 dev mock） ----------------
+  async WifiAvailable() {
+    return true
+  },
+  async WifiStatus() {
+    return {
+      available: true,
+      connected: mockWifi.connected,
+      ssid: mockWifi.ssid,
+      signalQuality: mockWifi.signal,
+      phase: mockWifi.phase,
+      autoConnect: !!mockSettings.wifiAutoConnect,
+      preferredSsid: mockSettings.wifiPreferredSsid || ''
+    }
+  },
+  async WifiScan(force) {
+    if (mockWifi.scanBusy) return []
+    mockWifi.scanBusy = true
+    setTimeout(() => (mockWifi.scanBusy = false), 600)
+    return mockWifi.networks.map((n) => ({ ...n }))
+  },
+  WifiConnect(ssid, password) {
+    mockLog(`正在连接 WiFi: ${ssid}`)
+    mockWifi.phase = 'connecting'
+    mockBus.emit(EV.wifi, { available: true, connected: false, ssid, signalQuality: 0, phase: 'connecting' })
+    setTimeout(() => {
+      mockWifi.connected = true
+      mockWifi.ssid = ssid
+      mockWifi.signal = 76
+      mockWifi.phase = 'connected'
+      if (password) mockLog(`已保存 WiFi 密码: ${ssid}`, 'success')
+      mockLog(`已连接 WiFi: ${ssid}`, 'success')
+      mockBus.emit(EV.wifi, { available: true, connected: true, ssid, signalQuality: 76, phase: 'connected' })
+    }, 1500)
+    return true
+  },
+  WifiDisconnect() {
+    mockWifi.connected = false
+    mockWifi.ssid = ''
+    mockWifi.phase = 'idle'
+    mockLog('已断开 WiFi')
+    mockBus.emit(EV.wifi, { available: true, connected: false, ssid: '', signalQuality: 0, phase: 'idle' })
+    return true
+  },
+  async GetPortalCredential() {
+    return { username: mockPortal.username, hasPassword: !!mockPortal.password }
+  },
+  SavePortalCredential(username, password) {
+    if (username) mockPortal.username = username
+    if (password) mockPortal.password = password
+    mockLog('认证账号已保存', 'success')
+    return true
+  },
+  async TestPortalAuth() {
+    await new Promise((r) => setTimeout(r, 1200))
+    if (!mockSettings.portalLoginUrl) {
+      return { ok: false, detail: '未检测到认证门户，当前网络无需认证' }
+    }
+    return { ok: true, detail: '检测到认证门户: http://10.1.1.55\n认证提交: HTTP 200 | login_ok\n测试通过：门户已放行' }
   }
 }
+
+// mock 的 WiFi / 门户状态
+const mockWifi = {
+  connected: false,
+  ssid: '',
+  signal: 0,
+  phase: 'idle',
+  scanBusy: false,
+  networks: [
+    { ssid: 'Campus-WiFi', signalQuality: 82, secured: false, connected: false, hasProfile: false, auth: 'Open' },
+    { ssid: 'Campus-5G', signalQuality: 64, secured: true, connected: false, hasProfile: true, auth: 'WPA2-PSK' },
+    { ssid: 'Dorm-2F', signalQuality: 40, secured: true, connected: false, hasProfile: false, auth: 'WPA2-PSK' }
+  ]
+}
+const mockPortal = { username: '20210001', password: '123456' }
 
 /** 统一出口：Wails 或 mock。 */
 export const api = isWails ? AppApi : mockApi

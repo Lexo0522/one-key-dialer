@@ -129,6 +129,38 @@ var en = map[string]string{
 	"proxy.enabled":  "Proxy enabled: {0} (this app's HTTP requests only: update checks, connectivity probes)",
 	"proxy.disabled": "Proxy disabled (this app's HTTP requests connect directly, or fall back to system environment proxy)",
 
+	// WiFi
+	"wifi.hwUnavailable":     "No wireless adapter detected or WLAN service not running; WiFi features unavailable",
+	"wifi.scanFailed":        "WiFi scan failed: {0}",
+	"wifi.connecting":        "Connecting to WiFi: {0}",
+	"wifi.connected":         "Connected to WiFi: {0}",
+	"wifi.connectFailed":     "WiFi connection failed: {0}",
+	"wifi.disconnected":      "WiFi disconnected",
+	"wifi.disconnectFailed":  "Failed to disconnect WiFi: {0}",
+	"wifi.autoConnect.start": "WiFi auto-connect enabled, preferred: {0}",
+	"wifi.autoConnect.stop":  "WiFi auto-connect disabled",
+	"wifi.autoConnectTry":    "Trying auto-connect to preferred WiFi: {0}",
+	"wifi.pskSaved":          "WiFi password saved: {0}",
+	"wifi.pskSaveFailed":     "Failed to save WiFi password: {0}",
+	"wifi.pskLoadFailed":     "Failed to load saved WiFi password (re-enter when connecting): {0}",
+
+	// Portal auto-authentication
+	"portal.authStart":      "Portal auto-authentication enabled",
+	"portal.authStop":       "Portal auto-authentication disabled",
+	"portal.detected":       "Authentication portal detected: {0}",
+	"portal.authOk":         "Portal auto-authentication succeeded",
+	"portal.authFailed":     "Portal auto-authentication failed: {0}",
+	"portal.streak":         "Portal authentication failed {0} times in a row; backing off",
+	"portal.noCred":         "Portal credential not configured; skipping portal authentication",
+	"portal.noLoginUrl":     "Login URL not configured",
+	"portal.credSaved":      "Portal credential saved",
+	"portal.credSaveFailed": "Failed to save portal credential: {0}",
+	"portal.credLoadFailed": "Failed to load portal credential (please re-enter): {0}",
+	"portal.testNoPortal":   "No authentication portal detected; this network does not require authentication",
+	"portal.testSubmit":     "Auth submit: HTTP {0}",
+	"portal.testOk":         "Test passed: portal cleared",
+	"portal.testFailed":     "Test failed: portal still present, check the template or credentials",
+
 	"traffic.parseFailed": "Failed to parse netstat -e output, traffic speed unavailable",
 	"traffic.readFailed":  "Failed to read interface traffic: {0}",
 

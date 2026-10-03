@@ -40,6 +40,8 @@ export function GetAccounts():Promise<Array<main.AccountDTO>>;
 
 export function GetHistory():Promise<Array<model.HistoryRecord>>;
 
+export function GetPortalCredential():Promise<main.PortalCredentialDTO>;
+
 export function GetProbeSummary():Promise<string>;
 
 export function GetStats():Promise<service.StatsSummary>;
@@ -58,6 +60,8 @@ export function OpenReleasePage(arg1:string):Promise<void>;
 
 export function SaveAccounts(arg1:Array<main.AccountDTO>):Promise<void>;
 
+export function SavePortalCredential(arg1:string,arg2:string):Promise<boolean>;
+
 export function SaveSettings(arg1:model.Settings):Promise<void>;
 
 export function SetAutoStart(arg1:boolean):Promise<boolean>;
@@ -70,4 +74,16 @@ export function SwitchAccount(arg1:number):Promise<void>;
 
 export function TestConnectivity():Promise<main.ProbeResult>;
 
+export function TestPortalAuth():Promise<main.PortalTestResult>;
+
 export function UpdateBusy():Promise<boolean>;
+
+export function WifiAvailable():Promise<boolean>;
+
+export function WifiConnect(arg1:string,arg2:string):Promise<boolean>;
+
+export function WifiDisconnect():Promise<boolean>;
+
+export function WifiScan(arg1:boolean):Promise<Array<main.WifiNetworkDTO>>;
+
+export function WifiStatus():Promise<main.WifiStatusDTO>;

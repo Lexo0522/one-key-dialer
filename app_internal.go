@@ -110,6 +110,117 @@ func (a *App) applyAutoReconnect() {
 	}
 }
 
+func (a *App) applyPortalAuth() {
+	s := a.settings.Current()
+	if s.PortalAuthEnabled {
+		a.portalSvc.Start()
+	} else {
+		a.portalSvc.Stop()
+	}
+}
+
+func (a *App) applyWifiAutoConnect() {
+	s := a.settings.Current()
+	a.wifiSvc.Configure(s.WifiAutoConnect, s.WifiPreferredSsid)
+}
+
+// ---------- WiFi / 门户认证辅助 ----------
+
+// wifiStatus 组装前端 WiFi 状态视图。
+func (a *App) wifiStatus() WifiStatusDTO {
+	s := a.settings.Current()
+	dto := WifiStatusDTO{
+		Phase:         "idle",
+		AutoConnect:   s.WifiAutoConnect && s.WifiPreferredSsid != "",
+		PreferredSsid: s.WifiPreferredSsid,
+	}
+	st, err := platform.WlanCurrent()
+	if err != nil {
+		return dto
+	}
+	dto.Available = true
+	dto.Connected = st.Connected
+	dto.Ssid = st.Ssid
+	dto.SignalQuality = st.SignalQuality
+	dto.Phase = st.Phase
+	return dto
+}
+
+// wifiPskFor 返回给定 SSID 已保存的 PSK（仅供自动连接使用）。
+func (a *App) wifiPskFor(ssid string) string {
+	a.portalCredMu.Lock()
+	defer a.portalCredMu.Unlock()
+	if a.wifiPskSsid != ssid || len(a.wifiPsk) == 0 {
+		return ""
+	}
+	return string(a.wifiPsk)
+}
+
+// storeWifiPsk 保存 WiFi PSK:内存即时生效,磁盘后台落盘(DPAPI)。
+func (a *App) storeWifiPsk(ssid, psk string) {
+	a.portalCredMu.Lock()
+	a.wifiPskSsid = ssid
+	model.ClearBytes(a.wifiPsk)
+	a.wifiPsk = []byte(psk)
+	a.portalCredMu.Unlock()
+	a.exec.Submit(func() {
+		if err := a.wifiPskStore.Save(ssid, []byte(psk)); err != nil {
+			a.logSvc.Error(i18n.Tf("wifi.pskSaveFailed", err.Error()))
+		} else {
+			a.logSvc.Info(i18n.Tf("wifi.pskSaved", ssid))
+		}
+	})
+}
+
+// loadPortalCredential 启动时加载门户认证凭据。
+func (a *App) loadPortalCredential() {
+	cred, err := a.portalStore.Load()
+	if err != nil {
+		a.logSvc.Warning(i18n.Tf("portal.credLoadFailed", err.Error()))
+		cred = &model.PortalCredential{}
+	}
+	a.portalCred = cred
+}
+
+// loadWifiPsk 启动时加载已保存的 WiFi PSK。
+func (a *App) loadWifiPsk() {
+	ssid, psk, ok, err := a.wifiPskStore.Load()
+	if err != nil {
+		a.logSvc.Warning(i18n.Tf("wifi.pskLoadFailed", err.Error()))
+		return
+	}
+	if !ok {
+		return
+	}
+	a.wifiPskSsid = ssid
+	a.wifiPsk = psk
+}
+
+// performPortalAuth 按当前设置与已存凭据执行一次门户认证请求。
+// 供自动认证循环与手动测试共用;成功与否由响应判定 + 复验决定。
+func (a *App) performPortalAuth(portalURL string) service.PortalAuthOutcome {
+	a.portalCredMu.Lock()
+	username, password := "", ""
+	if a.portalCred != nil {
+		username = a.portalCred.Username
+		password = a.portalCred.Password()
+	}
+	a.portalCredMu.Unlock()
+	if strings.TrimSpace(username) == "" || password == "" {
+		return service.PortalAuthOutcome{Detail: i18n.T("portal.noCred")}
+	}
+	s := a.settings.Current()
+	cfg := service.PortalAuthConfig{
+		LoginUrl:    s.PortalLoginUrl,
+		Method:      s.PortalMethod,
+		Body:        s.PortalBody,
+		Headers:     service.ParsePortalHeaders(s.PortalHeaders),
+		SuccessHint: s.PortalSuccessHint,
+		Proxy:       s.ProxyConfig(),
+	}
+	return service.ExecutePortalAuth(cfg, portalURL, username, password)
+}
+
 func (a *App) resolvedTheme() string {
 	theme := a.settings.Current().UITheme
 	if theme != model.ThemeSystem {

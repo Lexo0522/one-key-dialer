@@ -30,6 +30,7 @@ const (
 	EvtUpdate   = "app:update"
 	EvtNotify   = "app:notify"
 	EvtLang     = "app:lang"
+	EvtWifi     = "app:wifi"
 )
 
 // 更新阶段标识：随 app:update 事件下发，前端据此决定弹窗形态与可用操作。
@@ -86,6 +87,40 @@ type LangPayload struct {
 	Auto   bool   `json:"auto"`
 }
 
+// WifiNetworkDTO 前端 WiFi 扫描行。
+type WifiNetworkDTO struct {
+	Ssid          string `json:"ssid"`
+	SignalQuality int    `json:"signalQuality"` // 0-100
+	Secured       bool   `json:"secured"`
+	Connected     bool   `json:"connected"`
+	HasProfile    bool   `json:"hasProfile"`
+	Auth          string `json:"auth"`
+}
+
+// WifiStatusDTO 前端 WiFi 状态（含可用性与自动连接配置回显）。
+// Phase: idle/connecting/connected/disconnecting。
+type WifiStatusDTO struct {
+	Available     bool   `json:"available"`
+	Connected     bool   `json:"connected"`
+	Ssid          string `json:"ssid"`
+	SignalQuality int    `json:"signalQuality"`
+	Phase         string `json:"phase"`
+	AutoConnect   bool   `json:"autoConnect"`
+	PreferredSsid string `json:"preferredSsid"`
+}
+
+// PortalCredentialDTO 门户认证凭据视图（明文密码不出后端）。
+type PortalCredentialDTO struct {
+	Username    string `json:"username"`
+	HasPassword bool   `json:"hasPassword"`
+}
+
+// PortalTestResult 手动测试门户认证的结果（Detail 为多行分步明细）。
+type PortalTestResult struct {
+	Ok     bool   `json:"ok"`
+	Detail string `json:"detail"`
+}
+
 // UpdatePayload 更新流程事件负载。
 // Kind: checking | result | status | progress | canceled | error | done | installing。
 // Stage: UpdateStage* 之一，用于区分同一条进度通道上的不同阶段。
@@ -127,6 +162,16 @@ type App struct {
 	monitor   *service.NetworkMonitorService
 	diag      *service.Diagnostics
 	sampler   *service.TrafficSampler
+
+	// WiFi 与门户自动认证
+	wifiSvc      *service.WifiService
+	portalSvc    *service.PortalAuthService
+	portalStore  *storage.PortalStore
+	wifiPskStore *storage.WifiPskStore
+	portalCredMu sync.Mutex
+	portalCred   *model.PortalCredential
+	wifiPskSsid  string
+	wifiPsk      []byte
 
 	updater *update.Module
 
@@ -240,6 +285,21 @@ func (a *App) startup(ctx context.Context) {
 
 	a.diag = service.NewDiagnostics(a.ras, a.diagContext, func(line string) { a.emit(EvtDiag, line) }, a.logSvc)
 
+	// WiFi 与门户自动认证:独立凭据(portal.json)与首选 WiFi 密码(wifi.json)均 DPAPI 保护
+	a.portalStore = storage.NewPortalStore(filepath.Join(a.dataDir, "portal.json"), storage.DpapiSecretProtector{})
+	a.wifiPskStore = storage.NewWifiPskStore(filepath.Join(a.dataDir, "wifi.json"), storage.DpapiSecretProtector{})
+	a.loadPortalCredential()
+	a.loadWifiPsk()
+	a.wifiSvc = service.NewWifiService(a.logSvc, func() { a.emit(EvtWifi, a.wifiStatus()) }, a.wifiPskFor)
+	a.portalSvc = service.NewPortalAuthService(
+		func() bool { return a.lifecycle.IsBusy() },
+		func() service.PortalDetect { return service.DetectPortal(a.probeConfig()) },
+		a.performPortalAuth,
+		a.logSvc)
+	if !platform.WlanAvailable() {
+		a.logSvc.Info(i18n.T("wifi.hwUnavailable"))
+	}
+
 	cfg := update.Load(filepath.Join(a.dataDir, update.OverrideFileName), warn)
 	a.updater = update.NewModule(platform.UpdatesDir(), cfg, func(msg string) { a.logSvc.Info(msg) },
 		func() model.ProxyConfig { return a.settings.Current().ProxyConfig() })
@@ -273,6 +333,10 @@ func (a *App) startup(ctx context.Context) {
 	if a.settings.Current().AutoReconnect {
 		a.reconnect.Start(a.settings.Current().IntervalSeconds, true)
 	}
+	if loaded.PortalAuthEnabled {
+		a.portalSvc.Start()
+	}
+	a.wifiSvc.Configure(loaded.WifiAutoConnect, loaded.WifiPreferredSsid)
 
 	// 托盘
 	initTray(a)
@@ -328,6 +392,8 @@ func (a *App) shutdown(ctx context.Context) {
 	a.logSvc.Flush()
 
 	a.reconnect.Stop()
+	a.portalSvc.Stop()
+	a.wifiSvc.Stop()
 	a.monitor.Stop()
 	a.orch.Shutdown(3 * time.Second)
 	a.exec.Shutdown(2 * time.Second)
@@ -338,6 +404,13 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 
 	a.accounts.ClearPasswordsInMemory()
+	a.portalCredMu.Lock()
+	if a.portalCred != nil {
+		a.portalCred.ClearPassword()
+	}
+	model.ClearBytes(a.wifiPsk)
+	a.wifiPsk = nil
+	a.portalCredMu.Unlock()
 	a.clearPendingPassword()
 	stopTray()
 	a.logSvc.Flush()
@@ -436,6 +509,12 @@ func (a *App) SaveSettings(next model.Settings) {
 	}
 	if proxySectionChanged(prev, next) {
 		a.applyProxySettings(next)
+	}
+	if next.PortalAuthEnabled != prev.PortalAuthEnabled {
+		a.applyPortalAuth()
+	}
+	if next.WifiAutoConnect != prev.WifiAutoConnect || next.WifiPreferredSsid != prev.WifiPreferredSsid {
+		a.applyWifiAutoConnect()
 	}
 }
 
@@ -709,6 +788,113 @@ func (a *App) DiagRewritePhonebook() string { return a.diag.RewritePhonebook() }
 
 // DiagClear 通知前端清空输出区。
 func (a *App) DiagClear() {}
+
+// ============================ WiFi / 门户认证 ============================
+
+// WifiStatus 返回当前无线状态与自动连接配置回显。
+func (a *App) WifiStatus() WifiStatusDTO { return a.wifiStatus() }
+
+// WifiAvailable 本机是否有可用无线网卡。
+func (a *App) WifiAvailable() bool { return a.wifiSvc.Available() }
+
+// WifiScan 扫描周边网络；force 为 true 时触发刷新扫描（约 1-2 秒），
+// 否则 3 秒缓存内直接返回上次结果。
+func (a *App) WifiScan(force bool) []WifiNetworkDTO {
+	nets := a.wifiSvc.Scan(force)
+	out := make([]WifiNetworkDTO, 0, len(nets))
+	for _, n := range nets {
+		out = append(out, WifiNetworkDTO{
+			Ssid:          n.Ssid,
+			SignalQuality: n.SignalQuality,
+			Secured:       n.Secured,
+			Connected:     n.Connected,
+			HasProfile:    n.HasProfile,
+			Auth:          n.Auth,
+		})
+	}
+	return out
+}
+
+// WifiConnect 连接 WiFi（异步：提交后台执行并立即返回受理结果，
+// 连接耗时最长约 15 秒，进度与结果经 app:wifi 事件与日志回报）。
+// 密码连接成功后保存 PSK（DPAPI），供自动连接复用。
+func (a *App) WifiConnect(ssid, password string) bool {
+	if strings.TrimSpace(ssid) == "" || !a.wifiSvc.Available() {
+		return false
+	}
+	a.exec.SubmitLong(func() {
+		if err := a.wifiSvc.Connect(ssid, password); err != nil {
+			return
+		}
+		if password != "" {
+			a.storeWifiPsk(ssid, password)
+		}
+	})
+	return true
+}
+
+// WifiDisconnect 断开当前无线连接。
+func (a *App) WifiDisconnect() bool { return a.wifiSvc.Disconnect() == nil }
+
+// GetPortalCredential 返回门户认证凭据视图（不含明文）。
+func (a *App) GetPortalCredential() PortalCredentialDTO {
+	a.portalCredMu.Lock()
+	defer a.portalCredMu.Unlock()
+	if a.portalCred == nil {
+		return PortalCredentialDTO{}
+	}
+	return PortalCredentialDTO{Username: a.portalCred.Username, HasPassword: a.portalCred.HasPassword()}
+}
+
+// SavePortalCredential 保存门户认证凭据。
+// 同一账号且未填新密码时沿用旧密码（与账号页"留空沿用"一致）。
+func (a *App) SavePortalCredential(username, password string) bool {
+	username = strings.TrimSpace(username)
+	a.portalCredMu.Lock()
+	cred := model.NewPortalCredential(username, password)
+	if a.portalCred != nil && username == a.portalCred.Username && password == "" && a.portalCred.HasPassword() {
+		cred.SetPassword(a.portalCred.Password())
+	}
+	a.portalCred = cred
+	a.portalCredMu.Unlock()
+	a.exec.Submit(func() {
+		if err := a.portalStore.Save(cred); err != nil {
+			a.logSvc.Error(i18n.Tf("portal.credSaveFailed", err.Error()))
+		} else {
+			a.logSvc.Info(i18n.T("portal.credSaved"))
+		}
+	})
+	return true
+}
+
+// TestPortalAuth 手动执行一次完整认证流程（检测门户 → 提交 → 复验），
+// 返回分步明细供前端回显。同步执行,总耗时约 3-10 秒。
+func (a *App) TestPortalAuth() PortalTestResult {
+	cfg := a.probeConfig()
+	var sb strings.Builder
+
+	d1 := service.DetectPortal(cfg)
+	if !d1.Portal {
+		sb.WriteString(i18n.T("portal.testNoPortal"))
+		sb.WriteString("\nHTTP " + d1.Detail)
+		return PortalTestResult{Ok: false, Detail: sb.String()}
+	}
+	sb.WriteString(i18n.Tf("portal.detected", d1.PortalURL))
+
+	out := a.performPortalAuth(d1.PortalURL)
+	sb.WriteString("\n" + i18n.Tf("portal.testSubmit", out.Status))
+	if out.Detail != "" {
+		sb.WriteString(" | " + out.Detail)
+	}
+
+	d2 := service.DetectPortal(cfg)
+	if out.Success && !d2.Portal {
+		sb.WriteString("\n" + i18n.T("portal.testOk"))
+		return PortalTestResult{Ok: true, Detail: sb.String()}
+	}
+	sb.WriteString("\n" + i18n.T("portal.testFailed"))
+	return PortalTestResult{Ok: false, Detail: sb.String()}
+}
 
 // ============================ 在线更新 ============================
 

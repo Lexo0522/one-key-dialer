@@ -74,6 +74,10 @@ export function GetHistory() {
   return window['go']['main']['UIApp']['GetHistory']();
 }
 
+export function GetPortalCredential() {
+  return window['go']['main']['UIApp']['GetPortalCredential']();
+}
+
 export function GetProbeSummary() {
   return window['go']['main']['UIApp']['GetProbeSummary']();
 }
@@ -110,6 +114,10 @@ export function SaveAccounts(arg1) {
   return window['go']['main']['UIApp']['SaveAccounts'](arg1);
 }
 
+export function SavePortalCredential(arg1, arg2) {
+  return window['go']['main']['UIApp']['SavePortalCredential'](arg1, arg2);
+}
+
 export function SaveSettings(arg1) {
   return window['go']['main']['UIApp']['SaveSettings'](arg1);
 }
@@ -134,6 +142,30 @@ export function TestConnectivity() {
   return window['go']['main']['UIApp']['TestConnectivity']();
 }
 
+export function TestPortalAuth() {
+  return window['go']['main']['UIApp']['TestPortalAuth']();
+}
+
 export function UpdateBusy() {
   return window['go']['main']['UIApp']['UpdateBusy']();
+}
+
+export function WifiAvailable() {
+  return window['go']['main']['UIApp']['WifiAvailable']();
+}
+
+export function WifiConnect(arg1, arg2) {
+  return window['go']['main']['UIApp']['WifiConnect'](arg1, arg2);
+}
+
+export function WifiDisconnect() {
+  return window['go']['main']['UIApp']['WifiDisconnect']();
+}
+
+export function WifiScan(arg1) {
+  return window['go']['main']['UIApp']['WifiScan'](arg1);
+}
+
+export function WifiStatus() {
+  return window['go']['main']['UIApp']['WifiStatus']();
 }

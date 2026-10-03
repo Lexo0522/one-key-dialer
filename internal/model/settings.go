@@ -61,6 +61,17 @@ type Settings struct {
 	// 低内存渲染:UI 进程禁用 GPU 合成(CPU 软渲染),少一个 GPU 子进程,
 	// 打开窗口期间再省 ~20-40MB。旧版无此字段,零值即"关闭",向后兼容。
 	LowMemRender bool `json:"lowMemRender"`
+
+	// WiFi 与门户自动认证。旧版 settings.json 无这些字段,零值即"未启用",
+	// 向后兼容;全部在 WiFi 页配置。
+	WifiAutoConnect   bool   `json:"wifiAutoConnect"`   // 断网/开机后自动连接首选 WiFi
+	WifiPreferredSsid string `json:"wifiPreferredSsid"` // 首选 WiFi 的 SSID
+	PortalAuthEnabled bool   `json:"portalAuthEnabled"` // 启用门户自动认证
+	PortalLoginUrl    string `json:"portalLoginUrl"`    // 登录请求地址,支持 {portal} 占位符
+	PortalMethod      string `json:"portalMethod"`      // GET / POST
+	PortalBody        string `json:"portalBody"`        // 请求体模板,支持 {username} {password} {portal}
+	PortalHeaders     string `json:"portalHeaders"`     // 附加请求头,每行一个 "Key: Value"
+	PortalSuccessHint string `json:"portalSuccessHint"` // 响应包含该字符串视为成功(可空)
 }
 
 // DefaultSettings 返回全部默认值（与旧版 Builder 默认值一致）。
@@ -116,6 +127,12 @@ func (s Settings) Normalize() Settings {
 	s.ProxyHost = host
 	s.ProxyPort = normalizeProxyPort(port, s.ProxyType)
 	s.ProxyBypass = joinProxyBypass(splitProxyBypass(s.ProxyBypass))
+	s.WifiPreferredSsid = strings.TrimSpace(s.WifiPreferredSsid)
+	s.PortalLoginUrl = strings.TrimSpace(s.PortalLoginUrl)
+	s.PortalMethod = NormalizePortalMethod(s.PortalMethod)
+	s.PortalBody = strings.TrimSpace(s.PortalBody)
+	s.PortalHeaders = strings.TrimSpace(s.PortalHeaders)
+	s.PortalSuccessHint = strings.TrimSpace(s.PortalSuccessHint)
 	return s
 }
 
@@ -156,4 +173,26 @@ func NormalizeTheme(theme string) string {
 		return ThemeDark
 	}
 	return ThemeSystem
+}
+
+// 门户认证请求方法。
+const (
+	PortalMethodGet  = "GET"
+	PortalMethodPost = "POST"
+)
+
+// NormalizePortalMethod 归一门户请求方法，非法值/空值回退 POST。
+func NormalizePortalMethod(method string) string {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case PortalMethodGet:
+		return PortalMethodGet
+	case PortalMethodPost:
+		return PortalMethodPost
+	}
+	return PortalMethodPost
+}
+
+// WifiAutoConnectSet 判断自动连接 WiFi 是否具备完整条件（开关 + 首选 SSID）。
+func (s Settings) WifiAutoConnectSet() bool {
+	return s.WifiAutoConnect && strings.TrimSpace(s.WifiPreferredSsid) != ""
 }

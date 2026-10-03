@@ -66,6 +66,14 @@ export const state = reactive({
   peakUp: 0,
   peakDown: 0,
 
+  // WiFi：状态由后端 app:wifi 事件推送，网络列表由 WiFi 页按需拉取
+  wifi: {
+    available: false,
+    status: { available: false, connected: false, ssid: '', signalQuality: 0, phase: 'idle' },
+    networks: [],
+    scannedAt: 0
+  },
+
   // 本地偏好
   prefs: loadPrefs(),
 
@@ -313,6 +321,13 @@ export function bindEvents() {
   on(EV.update, (p) => {
     if (!p) return
     applyUpdatePayload(p)
+  })
+
+  // WiFi 状态变化（连接中/已连接/断开等）由后端推送，直接覆盖状态视图
+  on(EV.wifi, (p) => {
+    if (!p) return
+    state.wifi.available = !!p.available
+    state.wifi.status = p
   })
 }
 
@@ -570,6 +585,81 @@ export async function doDisconnect() {
     success: (p) => (p && p.title) || t('toast.disconnect.done'),
     error: (err) => (err && err.title) || t('toast.disconnect.failed')
   })
+}
+
+// --------------------------------------------------------------- WiFi ----
+
+/** 拉取 WiFi 状态（WiFi 页挂载与手动刷新时调用）。 */
+export async function refreshWifiStatus() {
+  try {
+    const st = await api.WifiStatus()
+    if (!st) return
+    state.wifi.available = !!st.available
+    state.wifi.status = st
+  } catch (e) {
+    /* 后端不可达时保持原状态 */
+  }
+}
+
+/** 扫描周边网络；force 为 true 时触发刷新扫描。 */
+export async function scanWifi(force = false) {
+  try {
+    const nets = await api.WifiScan(!!force)
+    state.wifi.networks = Array.isArray(nets) ? nets : []
+    state.wifi.scannedAt = Date.now()
+  } catch (e) {
+    showToast(t('wifi.scan.empty'), 'info')
+  }
+  return state.wifi.networks
+}
+
+/** 连接 WiFi：受理即返回，结果经 app:wifi 事件回报。
+ *  失败提示放在 phase 变化后的超时兜底里，这里只处理未受理。 */
+export async function connectWifi(ssid, password) {
+  let accepted = false
+  try {
+    accepted = await api.WifiConnect(ssid, password || '')
+  } catch (e) {
+    accepted = false
+  }
+  if (!accepted) {
+    showToast(t('wifi.connectFail'), 'error')
+  }
+  return accepted
+}
+
+/** 断开无线连接。 */
+export async function disconnectWifi() {
+  try {
+    await api.WifiDisconnect()
+  } catch (e) {
+    showToast(t('wifi.connectFail'), 'error')
+  }
+}
+
+/** 读取门户认证凭据视图（明文不出后端）。 */
+export async function loadPortalCredential() {
+  try {
+    return (await api.GetPortalCredential()) || { username: '', hasPassword: false }
+  } catch (e) {
+    return { username: '', hasPassword: false }
+  }
+}
+
+/** 保存门户认证凭据。 */
+export async function savePortalCredential(username, password) {
+  const ok = await api.SavePortalCredential(username || '', password || '')
+  showToast(t(ok ? 'wifi.auth.saved' : 'wifi.auth.saveFail'), ok ? 'success' : 'error')
+  return ok
+}
+
+/** 手动测试门户认证（后端同步执行约 3-10 秒）。 */
+export async function testPortalAuth() {
+  try {
+    return (await api.TestPortalAuth()) || { ok: false, detail: '' }
+  } catch (e) {
+    return { ok: false, detail: String(e && e.message ? e.message : e) }
+  }
 }
 
 export { formatSpeed, formatBytes, formatDuration }

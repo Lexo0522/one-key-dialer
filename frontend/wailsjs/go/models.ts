@@ -110,6 +110,34 @@ export namespace main {
 	        this.auto = source["auto"];
 	    }
 	}
+	export class PortalCredentialDTO {
+	    username: string;
+	    hasPassword: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new PortalCredentialDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.username = source["username"];
+	        this.hasPassword = source["hasPassword"];
+	    }
+	}
+	export class PortalTestResult {
+	    ok: boolean;
+	    detail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PortalTestResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.detail = source["detail"];
+	    }
+	}
 	export class ProbeResult {
 	    ok: boolean;
 	    line: string;
@@ -126,6 +154,52 @@ export namespace main {
 	        this.line = source["line"];
 	        this.mode = source["mode"];
 	        this.error = source["error"];
+	    }
+	}
+	export class WifiNetworkDTO {
+	    ssid: string;
+	    signalQuality: number;
+	    secured: boolean;
+	    connected: boolean;
+	    hasProfile: boolean;
+	    auth: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WifiNetworkDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ssid = source["ssid"];
+	        this.signalQuality = source["signalQuality"];
+	        this.secured = source["secured"];
+	        this.connected = source["connected"];
+	        this.hasProfile = source["hasProfile"];
+	        this.auth = source["auth"];
+	    }
+	}
+	export class WifiStatusDTO {
+	    available: boolean;
+	    connected: boolean;
+	    ssid: string;
+	    signalQuality: number;
+	    phase: string;
+	    autoConnect: boolean;
+	    preferredSsid: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WifiStatusDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.connected = source["connected"];
+	        this.ssid = source["ssid"];
+	        this.signalQuality = source["signalQuality"];
+	        this.phase = source["phase"];
+	        this.autoConnect = source["autoConnect"];
+	        this.preferredSsid = source["preferredSsid"];
 	    }
 	}
 
@@ -177,6 +251,14 @@ export namespace model {
 	    proxyPort: string;
 	    proxyBypass: string;
 	    lowMemRender: boolean;
+	    wifiAutoConnect: boolean;
+	    wifiPreferredSsid: string;
+	    portalAuthEnabled: boolean;
+	    portalLoginUrl: string;
+	    portalMethod: string;
+	    portalBody: string;
+	    portalHeaders: string;
+	    portalSuccessHint: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -205,6 +287,14 @@ export namespace model {
 	        this.proxyPort = source["proxyPort"];
 	        this.proxyBypass = source["proxyBypass"];
 	        this.lowMemRender = source["lowMemRender"];
+	        this.wifiAutoConnect = source["wifiAutoConnect"];
+	        this.wifiPreferredSsid = source["wifiPreferredSsid"];
+	        this.portalAuthEnabled = source["portalAuthEnabled"];
+	        this.portalLoginUrl = source["portalLoginUrl"];
+	        this.portalMethod = source["portalMethod"];
+	        this.portalBody = source["portalBody"];
+	        this.portalHeaders = source["portalHeaders"];
+	        this.portalSuccessHint = source["portalSuccessHint"];
 	    }
 	}
 

@@ -309,6 +309,74 @@ func (u *UIApp) DiagRewritePhonebook() string {
 
 func (u *UIApp) DiagClear() {}
 
+// ============================ WiFi / 门户认证 ============================
+
+func (u *UIApp) WifiStatus() WifiStatusDTO {
+	var out WifiStatusDTO
+	if err := u.callInto("WifiStatus", &out); err != nil {
+		return WifiStatusDTO{}
+	}
+	return out
+}
+
+func (u *UIApp) WifiAvailable() bool {
+	var ok bool
+	if err := u.callInto("WifiAvailable", &ok); err != nil {
+		return false
+	}
+	return ok
+}
+
+func (u *UIApp) WifiScan(force bool) []WifiNetworkDTO {
+	var out []WifiNetworkDTO
+	if err := u.callInto("WifiScan", &out, force); err != nil {
+		return []WifiNetworkDTO{}
+	}
+	return out
+}
+
+// WifiConnect 连接耗时最长约 15 秒,代理侧异步执行,这里立即返回受理结果。
+func (u *UIApp) WifiConnect(ssid, password string) bool {
+	var ok bool
+	if err := u.callInto("WifiConnect", &ok, ssid, password); err != nil {
+		return false
+	}
+	return ok
+}
+
+func (u *UIApp) WifiDisconnect() bool {
+	var ok bool
+	if err := u.callInto("WifiDisconnect", &ok); err != nil {
+		return false
+	}
+	return ok
+}
+
+func (u *UIApp) GetPortalCredential() PortalCredentialDTO {
+	var out PortalCredentialDTO
+	if err := u.callInto("GetPortalCredential", &out); err != nil {
+		return PortalCredentialDTO{}
+	}
+	return out
+}
+
+func (u *UIApp) SavePortalCredential(username, password string) bool {
+	var ok bool
+	if err := u.callInto("SavePortalCredential", &ok, username, password); err != nil {
+		return false
+	}
+	return ok
+}
+
+// TestPortalAuth 同步执行一次完整认证流程(约 3-10 秒,低于管道 20 秒超时)。
+func (u *UIApp) TestPortalAuth() PortalTestResult {
+	var out PortalTestResult
+	if err := u.callInto("TestPortalAuth", &out); err != nil {
+		return PortalTestResult{}
+	}
+	return out
+}
+
 func (u *UIApp) CheckUpdate(interactive bool) {
 	_, _ = u.call("CheckUpdate", interactive)
 }

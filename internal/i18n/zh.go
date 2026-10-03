@@ -137,6 +137,38 @@ var zh = map[string]string{
 	"proxy.enabled":  "代理已启用: {0}（仅本应用的 HTTP 请求：更新检查、外网探测）",
 	"proxy.disabled": "代理已关闭（本应用的 HTTP 请求直连，或回退系统环境变量代理）",
 
+	// WiFi
+	"wifi.hwUnavailable":     "未检测到无线网卡或 WLAN 服务未运行，WiFi 功能不可用",
+	"wifi.scanFailed":        "WiFi 扫描失败: {0}",
+	"wifi.connecting":        "正在连接 WiFi: {0}",
+	"wifi.connected":         "已连接 WiFi: {0}",
+	"wifi.connectFailed":     "WiFi 连接失败: {0}",
+	"wifi.disconnected":      "已断开 WiFi",
+	"wifi.disconnectFailed":  "断开 WiFi 失败: {0}",
+	"wifi.autoConnect.start": "WiFi 自动连接已开启，首选: {0}",
+	"wifi.autoConnect.stop":  "WiFi 自动连接已停止",
+	"wifi.autoConnectTry":    "尝试自动连接首选 WiFi: {0}",
+	"wifi.pskSaved":          "已保存 WiFi 密码: {0}",
+	"wifi.pskSaveFailed":     "保存 WiFi 密码失败: {0}",
+	"wifi.pskLoadFailed":     "加载已保存的 WiFi 密码失败（重新连接时输入即可）: {0}",
+
+	// 门户自动认证
+	"portal.authStart":      "门户自动认证已开启",
+	"portal.authStop":       "门户自动认证已停止",
+	"portal.detected":       "检测到认证门户: {0}",
+	"portal.authOk":         "门户自动认证成功",
+	"portal.authFailed":     "门户自动认证失败: {0}",
+	"portal.streak":         "门户认证连续失败 {0} 次，将拉长重试间隔",
+	"portal.noCred":         "未配置认证账号或密码，跳过门户认证",
+	"portal.noLoginUrl":     "未配置登录地址",
+	"portal.credSaved":      "认证账号已保存",
+	"portal.credSaveFailed": "保存认证账号失败: {0}",
+	"portal.credLoadFailed": "加载认证账号失败（请重新填写）: {0}",
+	"portal.testNoPortal":   "未检测到认证门户，当前网络无需认证",
+	"portal.testSubmit":     "认证提交: HTTP {0}",
+	"portal.testOk":         "测试通过：门户已放行",
+	"portal.testFailed":     "测试未通过：门户仍然存在，请核对模板或凭据",
+
 	// 流量
 	"traffic.parseFailed": "netstat -e 输出解析失败，流量速度不可用",
 	"traffic.readFailed":  "读取网卡流量失败: {0}",
