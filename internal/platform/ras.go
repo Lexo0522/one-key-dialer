@@ -143,18 +143,6 @@ func bytesToUTF16(b []byte) []uint16 { return utf16.Encode([]rune(string(b))) }
 
 // ==================== 电话簿 ====================
 
-// PbkStatus 电话簿快照状态。
-type PbkStatus struct {
-	File        string
-	Exists      bool
-	HasEntry    bool
-	Charset     string
-	LastPort    string
-	LastDevice  string
-	LastWrite   string
-	LastWriteMs int64
-}
-
 // DeviceHint PPPoE 设备提示（端口 + 设备名）。
 type DeviceHint struct {
 	Port         string

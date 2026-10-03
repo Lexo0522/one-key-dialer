@@ -40,8 +40,8 @@ export const state = reactive({
   version: '',
   displayVersion: '',
   settings: null,
-  accounts: [],
-  currentIndex: 0,
+  // 宽带拨号凭据视图（明文密码不出后端）
+  broadband: { username: '', hasPassword: false },
   online: false,
   dialBusy: false,
   dialLabel: '',
@@ -201,8 +201,7 @@ export async function bootstrap() {
   state.version = s.version
   state.displayVersion = s.displayVersion
   state.settings = s.settings
-  state.accounts = s.accounts || []
-  state.currentIndex = s.currentIndex
+  state.broadband = s.broadband || { username: '', hasPassword: false }
   state.online = s.online
   state.logs = s.logs || []
   state.autoStartEnabled = s.autoStartEnabled
@@ -275,19 +274,12 @@ export function bindEvents() {
     state.uptimeSeconds = typeof sec === 'number' ? sec : -1
   })
 
-  on(EV.accounts, (p) => {
-    if (!p) return
-    state.accounts = p.accounts || []
-    state.currentIndex = p.currentIndex || 0
-  })
-
   on(EV.settings, (s) => {
     if (!s) return
     // patchSettings 会先乐观更新 state.settings；因此不能只比较旧 settings，
     // 否则后端回推相同设置时会漏掉主题应用。
     const themeChanged = state.themePref !== (s.uiTheme || 'system') || state.settings?.uiTheme !== s.uiTheme
     state.settings = s
-    state.currentIndex = s.accountIndex
     if (themeChanged) {
       state.themePref = s.uiTheme || 'system'
       applyTheme()
@@ -542,8 +534,8 @@ export async function doDial() {
   setDialBusy(t('home.dial.dialing'))
   let accepted = false
   try {
-    // 凭据由后端用当前账号已保存的密码完成，密码不经过前端
-    accepted = await api.DialCurrentAccount()
+    // 凭据由后端用已保存的宽带密码完成，密码不经过前端
+    accepted = await api.Dial()
   } catch (e) {
     accepted = false
   }
@@ -635,6 +627,28 @@ export async function disconnectWifi() {
   } catch (e) {
     showToast(t('wifi.connectFail'), 'error')
   }
+}
+
+/** 读取宽带凭据视图（明文不出后端）。 */
+export async function loadBroadband() {
+  try {
+    return (await api.GetBroadband()) || { username: '', hasPassword: false }
+  } catch (e) {
+    return { username: '', hasPassword: false }
+  }
+}
+
+/** 保存宽带拨号凭据（密码留空沿用已保存值）。 */
+export async function saveBroadband(username, password) {
+  const ok = await api.SaveBroadband(username || '', password || '')
+  if (ok) {
+    state.broadband = {
+      username: (username || '').trim(),
+      hasPassword: state.broadband.hasPassword || !!password
+    }
+  }
+  showToast(t(ok ? 'broadband.saveOk' : 'broadband.saveFail'), ok ? 'success' : 'error')
+  return ok
 }
 
 /** 读取门户认证凭据视图（明文不出后端）。 */

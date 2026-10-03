@@ -1,5 +1,5 @@
-// Package storage 负责 settings.json / accounts.json / history.json 的读写，
-// 文档结构与旧版完全一致（{"schemaVersion":N,"data":...}）。
+// Package storage 负责 settings.json / broadband.json / portal.json / wifi.json 的读写，
+// 文档结构统一为（{"schemaVersion":N,"data":...}）。
 package storage
 
 import (

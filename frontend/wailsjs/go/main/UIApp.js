@@ -14,36 +14,16 @@ export function CheckUpdate(arg1) {
   return window['go']['main']['UIApp']['CheckUpdate'](arg1);
 }
 
-export function ClearHistory() {
-  return window['go']['main']['UIApp']['ClearHistory']();
-}
-
-export function DiagAction(arg1) {
-  return window['go']['main']['UIApp']['DiagAction'](arg1);
-}
-
-export function DiagClear() {
-  return window['go']['main']['UIApp']['DiagClear']();
-}
-
 export function DiagListDevices() {
   return window['go']['main']['UIApp']['DiagListDevices']();
-}
-
-export function DiagRewritePhonebook() {
-  return window['go']['main']['UIApp']['DiagRewritePhonebook']();
 }
 
 export function DiagSelectDevice(arg1, arg2, arg3) {
   return window['go']['main']['UIApp']['DiagSelectDevice'](arg1, arg2, arg3);
 }
 
-export function Dial(arg1, arg2) {
-  return window['go']['main']['UIApp']['Dial'](arg1, arg2);
-}
-
-export function DialCurrentAccount() {
-  return window['go']['main']['UIApp']['DialCurrentAccount']();
+export function Dial() {
+  return window['go']['main']['UIApp']['Dial']();
 }
 
 export function Disconnect() {
@@ -58,32 +38,12 @@ export function ExitProgram() {
   return window['go']['main']['UIApp']['ExitProgram']();
 }
 
-export function ExportAccounts(arg1) {
-  return window['go']['main']['UIApp']['ExportAccounts'](arg1);
-}
-
-export function ExportHistory() {
-  return window['go']['main']['UIApp']['ExportHistory']();
-}
-
-export function GetAccounts() {
-  return window['go']['main']['UIApp']['GetAccounts']();
-}
-
-export function GetHistory() {
-  return window['go']['main']['UIApp']['GetHistory']();
+export function GetBroadband() {
+  return window['go']['main']['UIApp']['GetBroadband']();
 }
 
 export function GetPortalCredential() {
   return window['go']['main']['UIApp']['GetPortalCredential']();
-}
-
-export function GetProbeSummary() {
-  return window['go']['main']['UIApp']['GetProbeSummary']();
-}
-
-export function GetStats() {
-  return window['go']['main']['UIApp']['GetStats']();
 }
 
 export function GetUILang() {
@@ -92,10 +52,6 @@ export function GetUILang() {
 
 export function HideWindow() {
   return window['go']['main']['UIApp']['HideWindow']();
-}
-
-export function ImportAccounts() {
-  return window['go']['main']['UIApp']['ImportAccounts']();
 }
 
 export function InstallUpdate() {
@@ -110,8 +66,8 @@ export function OpenReleasePage(arg1) {
   return window['go']['main']['UIApp']['OpenReleasePage'](arg1);
 }
 
-export function SaveAccounts(arg1) {
-  return window['go']['main']['UIApp']['SaveAccounts'](arg1);
+export function SaveBroadband(arg1, arg2) {
+  return window['go']['main']['UIApp']['SaveBroadband'](arg1, arg2);
 }
 
 export function SavePortalCredential(arg1, arg2) {
@@ -132,14 +88,6 @@ export function SetUILang(arg1) {
 
 export function ShowWindow() {
   return window['go']['main']['UIApp']['ShowWindow']();
-}
-
-export function SwitchAccount(arg1) {
-  return window['go']['main']['UIApp']['SwitchAccount'](arg1);
-}
-
-export function TestConnectivity() {
-  return window['go']['main']['UIApp']['TestConnectivity']();
 }
 
 export function TestPortalAuth() {

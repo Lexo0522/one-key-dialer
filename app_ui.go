@@ -10,7 +10,6 @@ import (
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
 	"github.com/Lexo0522/one-key-dialer/internal/ipc"
 	"github.com/Lexo0522/one-key-dialer/internal/model"
-	"github.com/Lexo0522/one-key-dialer/internal/service"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -151,66 +150,28 @@ func (u *UIApp) SetAutoStart(enabled bool) bool {
 	return ok
 }
 
-func (u *UIApp) GetAccounts() []AccountDTO {
-	var out []AccountDTO
-	if err := u.callInto("GetAccounts", &out); err != nil {
-		return []AccountDTO{}
+// ============================ 宽带账号 ============================
+
+func (u *UIApp) GetBroadband() BroadbandCredentialDTO {
+	var out BroadbandCredentialDTO
+	if err := u.callInto("GetBroadband", &out); err != nil {
+		return BroadbandCredentialDTO{}
 	}
 	return out
 }
 
-func (u *UIApp) SaveAccounts(rows []AccountDTO) {
-	_, _ = u.call("SaveAccounts", rows)
-}
-
-func (u *UIApp) SwitchAccount(index int) {
-	_, _ = u.call("SwitchAccount", index)
-}
-
-func (u *UIApp) DialCurrentAccount() bool {
+func (u *UIApp) SaveBroadband(username, password string) bool {
 	var ok bool
-	if err := u.callInto("DialCurrentAccount", &ok); err != nil {
+	if err := u.callInto("SaveBroadband", &ok, username, password); err != nil {
 		return false
 	}
 	return ok
 }
 
-// ExportAccounts 本地打开保存对话框,落盘由代理完成。
-func (u *UIApp) ExportAccounts(withPassword bool) string {
-	path, err := runtime.SaveFileDialog(u.ctx, runtime.SaveDialogOptions{
-		Title: i18n.T("export.title"),
-		DefaultFilename: map[bool]string{true: "pppoe_accounts_export_WITH_PASSWORDS.csv",
-			false: "pppoe_accounts_export.csv"}[withPassword],
-		Filters: []runtime.FileFilter{{DisplayName: "CSV", Pattern: "*.csv"}},
-	})
-	if err != nil || path == "" {
-		return ""
-	}
-	if _, err := u.call("ExportAccountsTo", path, withPassword); err != nil {
-		return ""
-	}
-	return path
-}
-
-// ImportAccounts 本地打开文件对话框,解析导入由代理完成。
-func (u *UIApp) ImportAccounts() int {
-	path, err := runtime.OpenFileDialog(u.ctx, runtime.OpenDialogOptions{
-		Title:   i18n.T("import.title"),
-		Filters: []runtime.FileFilter{{DisplayName: "CSV", Pattern: "*.csv"}},
-	})
-	if err != nil || path == "" {
-		return -1
-	}
-	var count int
-	if err := u.callInto("ImportAccountsFrom", &count, path); err != nil {
-		return -1
-	}
-	return count
-}
-
-func (u *UIApp) Dial(username, password string) bool {
+// Dial 用已保存的宽带凭据拨号（代理侧完成，密码不出后端）。
+func (u *UIApp) Dial() bool {
 	var ok bool
-	if err := u.callInto("Dial", &ok, username, password); err != nil {
+	if err := u.callInto("Dial", &ok); err != nil {
 		return false
 	}
 	return ok
@@ -224,64 +185,7 @@ func (u *UIApp) Disconnect() bool {
 	return ok
 }
 
-func (u *UIApp) GetHistory() []model.HistoryRecord {
-	var out []model.HistoryRecord
-	if err := u.callInto("GetHistory", &out); err != nil {
-		return []model.HistoryRecord{}
-	}
-	return out
-}
-
-func (u *UIApp) ClearHistory() {
-	_, _ = u.call("ClearHistory")
-}
-
-func (u *UIApp) ExportHistory() string {
-	path, err := runtime.SaveFileDialog(u.ctx, runtime.SaveDialogOptions{
-		Title:           i18n.T("history.exportTitle"),
-		DefaultFilename: "pppoe_history_export.csv",
-		Filters:         []runtime.FileFilter{{DisplayName: "CSV", Pattern: "*.csv"}},
-	})
-	if err != nil || path == "" {
-		return ""
-	}
-	if _, err := u.call("ExportHistoryTo", path); err != nil {
-		return ""
-	}
-	return path
-}
-
-func (u *UIApp) GetStats() service.StatsSummary {
-	var out service.StatsSummary
-	if err := u.callInto("GetStats", &out); err != nil {
-		return service.StatsSummary{}
-	}
-	return out
-}
-
-func (u *UIApp) TestConnectivity() ProbeResult {
-	var out ProbeResult
-	if err := u.callInto("TestConnectivity", &out); err != nil {
-		return ProbeResult{}
-	}
-	return out
-}
-
-func (u *UIApp) GetProbeSummary() string {
-	var out string
-	if err := u.callInto("GetProbeSummary", &out); err != nil {
-		return ""
-	}
-	return out
-}
-
-func (u *UIApp) DiagAction(action string) bool {
-	var ok bool
-	if err := u.callInto("DiagAction", &ok, action); err != nil {
-		return false
-	}
-	return ok
-}
+// ============================ 拨号设备 ============================
 
 func (u *UIApp) DiagListDevices() []DeviceOption {
 	var out []DeviceOption
@@ -298,16 +202,6 @@ func (u *UIApp) DiagSelectDevice(port, device string, rewrite bool) string {
 	}
 	return out
 }
-
-func (u *UIApp) DiagRewritePhonebook() string {
-	var out string
-	if err := u.callInto("DiagRewritePhonebook", &out); err != nil {
-		return ""
-	}
-	return out
-}
-
-func (u *UIApp) DiagClear() {}
 
 // ============================ WiFi / 门户认证 ============================
 

@@ -6,7 +6,7 @@ import (
 	"github.com/Lexo0522/one-key-dialer/internal/platform"
 )
 
-// BlobPrefix accounts.json 中 DPAPI blob 的前缀标记。
+// BlobPrefix DPAPI blob 的前缀标记（broadband.json / portal.json / wifi.json 共用）。
 const BlobPrefix = "DPAPI1:"
 
 // SecretProtector 密码保护抽象。

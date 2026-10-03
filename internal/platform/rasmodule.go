@@ -3,9 +3,7 @@ package platform
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/Lexo0522/one-key-dialer/internal/model"
 )
@@ -176,34 +174,6 @@ func (m *RasModule) RewriteEntry() bool {
 	return m.EnsureEntry()
 }
 
-// SnapshotStatus 返回电话簿状态快照。
-func (m *RasModule) SnapshotStatus() *PbkStatus {
-	if m.phonebookFile == "" {
-		return &PbkStatus{Charset: "-", LastWrite: "APPDATA 不可用"}
-	}
-	st := &PbkStatus{File: m.phonebookFile, Charset: "-"}
-	if _, err := os.Stat(m.phonebookFile); err == nil {
-		st.Exists = true
-	} else {
-		st.LastWrite = "尚未写入"
-		return st
-	}
-	content, charset, err := ReadPbk(m.phonebookFile)
-	st.Charset = charset
-	if err != nil {
-		st.LastWrite = "读取失败: " + err.Error()
-		st.LastWriteMs = time.Now().UnixMilli()
-		return st
-	}
-	st.HasEntry = ContentContainsSection(content, m.connectionName)
-	if hint := FindPppoeDeviceHint(content); hint != nil {
-		st.LastPort = hint.Port
-		st.LastDevice = hint.Device
-	}
-	st.LastWrite = "尚未写入"
-	return st
-}
-
 // CurrentDevice 返回当前生效设备，优先级：显式偏好 → 本连接段 → 电话簿首个 PPPoE → 兜底默认。
 // 永不返回 nil，保证上层始终有可展示的默认值。
 func (m *RasModule) CurrentDevice() *DeviceHint {
@@ -266,42 +236,8 @@ func (m *RasModule) ListDeviceOptions() []DeviceHint {
 	return out
 }
 
-// FormatStatus 生成一行状态文本（诊断 / 日志）。
-func FormatStatus(st *PbkStatus) string {
-	if st == nil {
-		return "(无电话簿状态)"
-	}
-	var sb strings.Builder
-	sb.WriteString("pbk=")
-	if st.File != "" {
-		sb.WriteString(st.File)
-	} else {
-		sb.WriteString("(null)")
-	}
-	sb.WriteString(" exists=" + boolStr(st.Exists))
-	sb.WriteString(" hasEntry=" + boolStr(st.HasEntry))
-	sb.WriteString(" charset=" + st.Charset)
-	if st.LastPort != "" {
-		sb.WriteString(" port=" + st.LastPort)
-	}
-	if st.LastDevice != "" {
-		sb.WriteString(" device=" + st.LastDevice)
-	}
-	if st.LastWrite != "" {
-		sb.WriteString(" lastWrite=" + st.LastWrite)
-	}
-	return sb.String()
-}
-
 func endsWithNewline(s string) bool {
 	return len(s) > 0 && (s[len(s)-1] == '\n' || s[len(s)-1] == '\r')
-}
-
-func boolStr(v bool) string {
-	if v {
-		return "true"
-	}
-	return "false"
 }
 
 func copyFile(src, dst string) error {

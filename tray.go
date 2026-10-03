@@ -12,23 +12,18 @@ import (
 	"github.com/getlantern/systray"
 )
 
-// 托盘菜单最多显示的账号数量（超出部分不再列出）。
-const maxTrayAccounts = 10
-
 //go:embed build/windows/icon.ico
 var trayIcon []byte
 
 var (
-	trayMu       sync.Mutex
-	trayApp      *App
-	trayReady    bool
-	mItemShow    *systray.MenuItem
-	mItemDial    *systray.MenuItem
-	mItemHangup  *systray.MenuItem
-	mItemSwitch  *systray.MenuItem
-	mItemUpdate  *systray.MenuItem
-	mItemExit    *systray.MenuItem
-	accountItems []*systray.MenuItem
+	trayMu      sync.Mutex
+	trayApp     *App
+	trayReady   bool
+	mItemShow   *systray.MenuItem
+	mItemDial   *systray.MenuItem
+	mItemHangup *systray.MenuItem
+	mItemUpdate *systray.MenuItem
+	mItemExit   *systray.MenuItem
 )
 
 // initTray 启动托盘（独立 goroutine 中运行消息循环）。
@@ -53,29 +48,6 @@ func onTrayReady() {
 	mItemDial = systray.AddMenuItem(i18n.T("home.dial.connect"), "")
 	mItemHangup = systray.AddMenuItem(i18n.T("home.dial.disconnect"), "")
 	systray.AddSeparator()
-	mItemSwitch = systray.AddMenuItem(i18n.T("tray.switchAccount"), "")
-	for i := 0; i < maxTrayAccounts; i++ {
-		item := mItemSwitch.AddSubMenuItem("", "")
-		item.Hide()
-		accountItems = append(accountItems, item)
-		go func(it *systray.MenuItem) {
-			for range it.ClickedCh {
-				trayMu.Lock()
-				a := trayApp
-				trayMu.Unlock()
-				if a == nil {
-					continue
-				}
-				for idx, other := range accountItems {
-					if other == it {
-						a.SwitchAccount(idx)
-						break
-					}
-				}
-			}
-		}(item)
-	}
-	systray.AddSeparator()
 	mItemUpdate = systray.AddMenuItem(i18n.T("tray.checkUpdates"), "")
 	systray.AddSeparator()
 	mItemExit = systray.AddMenuItem(i18n.T("tray.exit"), "")
@@ -96,7 +68,7 @@ func onTrayReady() {
 			a := trayApp
 			trayMu.Unlock()
 			if a != nil && !a.isOnline() && !a.lifecycle.IsBusy() {
-				a.DialCurrentAccount()
+				a.Dial()
 			}
 		}
 	}()
@@ -171,11 +143,11 @@ func showTrayNotification(title, message string) {
 }
 
 // refreshTrayLabels 语言切换后重写托盘标题与静态菜单文案。
-// 账号子菜单与 tooltip 由 refreshTray 的 3s 轮询负责，这里不重复处理。
+// tooltip 由 refreshTray 的 3s 轮询负责，这里不重复处理。
 func refreshTrayLabels() {
 	trayMu.Lock()
 	ready := trayReady
-	show, dial, hangup, sw, upd, exit := mItemShow, mItemDial, mItemHangup, mItemSwitch, mItemUpdate, mItemExit
+	show, dial, hangup, upd, exit := mItemShow, mItemDial, mItemHangup, mItemUpdate, mItemExit
 	trayMu.Unlock()
 	if !ready {
 		return
@@ -189,9 +161,6 @@ func refreshTrayLabels() {
 	}
 	if hangup != nil {
 		hangup.SetTitle(i18n.T("home.dial.disconnect"))
-	}
-	if sw != nil {
-		sw.SetTitle(i18n.T("tray.switchAccount"))
 	}
 	if upd != nil {
 		upd.SetTitle(i18n.T("tray.checkUpdates"))
@@ -210,7 +179,7 @@ func tooltipMask(username string) string {
 	return m
 }
 
-// refreshTray 刷新托盘图标、tooltip、菜单项与账号子菜单。
+// refreshTray 刷新托盘图标、tooltip 与菜单项可用性。
 func (a *App) refreshTray() {
 	trayMu.Lock()
 	ready := trayReady
@@ -230,8 +199,8 @@ func (a *App) refreshTray() {
 	var sb strings.Builder
 	if online {
 		sb.WriteString(i18n.T("status.connected"))
-		if acc := a.accounts.CurrentOrNil(); acc != nil && acc.Username != "" {
-			sb.WriteString("\n" + i18n.T("tray.account") + tooltipMask(acc.Username))
+		if user := a.broadbandUsername(); user != "" {
+			sb.WriteString("\n" + i18n.T("tray.account") + tooltipMask(user))
 		}
 		a.mu.Lock()
 		ds, us := a.downSpeed, a.upSpeed
@@ -257,32 +226,5 @@ func (a *App) refreshTray() {
 		} else {
 			mItemHangup.Disable()
 		}
-	}
-
-	accounts := a.accounts.Accounts()
-	current := a.accounts.CurrentIndex()
-	for i, item := range accountItems {
-		if i >= len(accounts) || i >= maxTrayAccounts {
-			item.Hide()
-			continue
-		}
-		acc := accounts[i]
-		label := acc.Name
-		if strings.TrimSpace(label) == "" {
-			label = acc.Username
-		}
-		if label == "" {
-			label = i18n.T("account.unnamed")
-		}
-		if i == current {
-			label = "✓ " + label
-		}
-		item.SetTitle(label)
-		item.Show()
-	}
-	if len(accounts) == 0 && len(accountItems) > 0 {
-		accountItems[0].SetTitle(i18n.T("tray.noAccount"))
-		accountItems[0].Disable()
-		accountItems[0].Show()
 	}
 }

@@ -9,7 +9,6 @@ import (
 
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
 	"github.com/Lexo0522/one-key-dialer/internal/model"
-	"github.com/Lexo0522/one-key-dialer/internal/util"
 )
 
 // 拨号阶段（对应 onDialPhase）
@@ -57,12 +56,9 @@ type DialEnvironment interface {
 	IsOnline() bool
 	ConnectTimeMillis() int64
 	SessionTrafficBytes() int64
-	CurrentAccountName() string
 	ProbeConfig() model.ProbeConfig
 	DisconnectOnNoInternet() bool
-	AddHistory(operation, account, result, duration, traffic string)
 	PersistAfterSuccess()
-	RecordProbeOutcome(outcome model.ProbeOutcome)
 }
 
 // DialLifecycle 拨号/断开的互斥状态机。
@@ -82,29 +78,13 @@ func (l *DialLifecycle) End() { atomic.StoreInt32(&l.busy, 0) }
 // IsBusy 是否正在处理连接操作。
 func (l *DialLifecycle) IsBusy() bool { return atomic.LoadInt32(&l.busy) != 0 }
 
-// DialStats 拨号计数（成功/总次数）。
-type DialStats struct {
-	total   int64
-	success int64
-}
-
-// Total 总拨号次数。
-func (s *DialStats) Total() int64 { return atomic.LoadInt64(&s.total) }
-
-// Success 成功拨号次数。
-func (s *DialStats) Success() int64 { return atomic.LoadInt64(&s.success) }
-
-func (s *DialStats) incTotal()   { atomic.AddInt64(&s.total, 1) }
-func (s *DialStats) incSuccess() { atomic.AddInt64(&s.success, 1) }
-
 // DialOrchestrator 单线程拨号/断开队列：预检、连接生命周期、拨号后外网确认、
-// 重拨编排、历史、统计与通知顺序都在这里收敛。
+// 重拨编排与通知顺序都在这里收敛。
 type DialOrchestrator struct {
 	port      DialPort
 	view      DialView
 	env       DialEnvironment
 	lifecycle *DialLifecycle
-	stats     *DialStats
 
 	jobs         chan func()
 	once         sync.Once
@@ -114,13 +94,12 @@ type DialOrchestrator struct {
 
 // NewDialOrchestrator 构造编排器；工作协程在首次拨号时惰性启动。
 func NewDialOrchestrator(port DialPort, view DialView, env DialEnvironment,
-	lifecycle *DialLifecycle, stats *DialStats) *DialOrchestrator {
+	lifecycle *DialLifecycle) *DialOrchestrator {
 	return &DialOrchestrator{
 		port:      port,
 		view:      view,
 		env:       env,
 		lifecycle: lifecycle,
-		stats:     stats,
 	}
 }
 
@@ -172,7 +151,7 @@ func (o *DialOrchestrator) DialUser() bool {
 	if creds == nil {
 		return false
 	}
-	o.enqueue(func() { o.runDial(creds, model.OpUserDial, true, true) })
+	o.enqueue(func() { o.runDial(creds, true, true) })
 	return true
 }
 
@@ -204,67 +183,8 @@ func (o *DialOrchestrator) DialAuto() {
 		if creds == nil {
 			return
 		}
-		o.stats.incTotal()
 		code, output := o.port.Connect(creds)
-		o.handleDialResult(DialResult{Code: code, Output: output}, model.OpAutoDial, false)
-	})
-}
-
-// RedialAfterDisconnect 在线切换账号：先断开，成功后用新账号重拨。
-func (o *DialOrchestrator) RedialAfterDisconnect() {
-	if o.lifecycle.IsBusy() {
-		o.view.Log(LevelWarning, i18n.T("dial.switchBusy"))
-		return
-	}
-	o.enqueue(func() {
-		if o.shuttingDown.Load() {
-			return
-		}
-		if !o.lifecycle.TryBeginDisconnect() {
-			o.view.Log(LevelWarning, i18n.T("dial.switchBusy"))
-			return
-		}
-		var code int
-		func() {
-			defer func() {
-				o.lifecycle.End()
-				o.view.OnDialPhase("")
-			}()
-			o.view.OnDialPhase(PhaseDisconnecting)
-			c, err := o.port.Disconnect()
-			if err != nil {
-				o.view.Log(LevelError, i18n.Tf("dial.disconnectError", err.Error()))
-				code = -1
-				return
-			}
-			code = c
-		}()
-		if code != 0 {
-			o.view.Log(LevelWarning, i18n.Tf("dial.switchCancel", code))
-			return
-		}
-		if o.shuttingDown.Load() {
-			return
-		}
-		o.view.OnConnectionState(false)
-		o.view.Log(LevelInfo, i18n.T("dial.switchRedial"))
-
-		if !o.lifecycle.TryBeginDial() {
-			return
-		}
-		creds := o.captureForBackground()
-		if creds == nil {
-			return
-		}
-		defer func() {
-			creds.Clear()
-			o.lifecycle.End()
-			o.view.OnDialPhase("")
-		}()
-		o.view.OnDialPhase(PhaseDialing)
-		o.stats.incTotal()
-		code, output := o.port.Connect(creds)
-		o.handleDialResult(DialResult{Code: code, Output: output}, model.OpAutoDial, false)
+		o.handleDialResult(DialResult{Code: code, Output: output}, false)
 	})
 }
 
@@ -292,8 +212,7 @@ func (o *DialOrchestrator) captureForBackground() *model.DialCredentials {
 	return o.view.CaptureCredentials()
 }
 
-func (o *DialOrchestrator) runDial(creds *model.DialCredentials, operation string,
-	saveAfterSuccess, togglePhase bool) {
+func (o *DialOrchestrator) runDial(creds *model.DialCredentials, saveAfterSuccess, togglePhase bool) {
 	if o.shuttingDown.Load() {
 		creds.Clear()
 		return
@@ -305,7 +224,6 @@ func (o *DialOrchestrator) runDial(creds *model.DialCredentials, operation strin
 		o.view.OnDialPhase("")
 		return
 	}
-	o.stats.incTotal()
 	if togglePhase {
 		o.view.OnDialPhase(PhaseDialing)
 	}
@@ -321,7 +239,7 @@ func (o *DialOrchestrator) runDial(creds *model.DialCredentials, operation strin
 		o.view.Log(LevelError, i18n.Tf("dial.dialError", "dial failed"))
 		return
 	}
-	o.handleDialResult(DialResult{Code: code, Output: output}, operation, saveAfterSuccess)
+	o.handleDialResult(DialResult{Code: code, Output: output}, saveAfterSuccess)
 }
 
 func (o *DialOrchestrator) runDisconnectUser() {
@@ -341,19 +259,7 @@ func (o *DialOrchestrator) runDisconnectUser() {
 		o.view.Log(LevelError, i18n.Tf("dial.disconnectError", err.Error()))
 		return
 	}
-	duration := "--"
-	traffic := "--"
-	if conn := o.env.ConnectTimeMillis(); conn > 0 {
-		sec := (time.Now().UnixMilli() - conn) / 1000
-		duration = util.FormatDuration(sec)
-		traffic = util.FormatBytes(o.env.SessionTrafficBytes())
-	}
 	o.view.OnConnectionState(false)
-	result := model.OutcomeDone()
-	if code == 0 {
-		result = model.OutcomeSuccess()
-	}
-	o.env.AddHistory(model.OpUserDisconnect, o.env.CurrentAccountName(), result, duration, traffic)
 	if code == 0 {
 		o.view.Log(LevelSuccess, i18n.T("dial.disconnected"))
 	} else {
@@ -362,8 +268,8 @@ func (o *DialOrchestrator) runDisconnectUser() {
 	o.view.Notify(i18n.T("notify.disconnected.title"), i18n.T("notify.disconnected.body"), ToneInfo)
 }
 
-// handleDialResult 通知顺序：状态 → 计数 → 日志 → 通知 → 历史 → 持久化。
-func (o *DialOrchestrator) handleDialResult(result DialResult, operation string, saveAfterSuccess bool) {
+// handleDialResult 通知顺序：状态 → 日志 → 通知 → 持久化。
+func (o *DialOrchestrator) handleDialResult(result DialResult, saveAfterSuccess bool) {
 	if result.IsSuccess() {
 		o.view.Log(LevelInfo, i18n.T("dial.rasConnected"))
 		cfg := o.env.ProbeConfig()
@@ -382,14 +288,11 @@ func (o *DialOrchestrator) handleDialResult(result DialResult, operation string,
 		}
 		netOk = outcome.OK
 		o.view.Log(LevelInfo, i18n.Tf("dial.probe", outcome.ShortLine()))
-		o.env.RecordProbeOutcome(outcome)
 
 		if netOk {
 			o.view.OnConnectionState(true)
-			o.stats.incSuccess()
 			o.view.Log(LevelSuccess, i18n.T("dial.success"))
 			o.view.Notify(i18n.T("notify.connected.title"), i18n.T("notify.connected.body"), ToneSuccess)
-			o.env.AddHistory(operation, o.env.CurrentAccountName(), model.OutcomeSuccess(), "--", "--")
 			if saveAfterSuccess {
 				o.env.PersistAfterSuccess()
 			}
@@ -398,12 +301,10 @@ func (o *DialOrchestrator) handleDialResult(result DialResult, operation string,
 
 		o.view.OnConnectionState(false)
 		o.view.Log(LevelWarning, i18n.Tf("dial.rasNoInternet", model.OutcomeRasNoInternet(), outcome.ShortLine()))
-		disconnected := false
 		if o.env.DisconnectOnNoInternet() {
 			code, err := o.port.Disconnect()
 			switch {
 			case err == nil && code == 0:
-				disconnected = true
 				o.view.Notify(i18n.T("notify.noNet.title"), i18n.T("notify.noNet.policyDone"), ToneWarning)
 			case err != nil:
 				o.view.Log(LevelWarning, i18n.Tf("dial.policyDisconnectError", "exec", err.Error()))
@@ -415,11 +316,6 @@ func (o *DialOrchestrator) handleDialResult(result DialResult, operation string,
 		} else {
 			o.view.Notify(i18n.T("notify.noNet.title"), i18n.T("notify.noNet.retry"), ToneWarning)
 		}
-		resultText := model.OutcomeRasNoInternet()
-		if disconnected {
-			resultText += i18n.T("dial.historyNoInternetSuffix")
-		}
-		o.env.AddHistory(operation, o.env.CurrentAccountName(), resultText, "--", "--")
 		return
 	}
 
@@ -428,7 +324,6 @@ func (o *DialOrchestrator) handleDialResult(result DialResult, operation string,
 	o.view.Log(LevelError, i18n.Tf("dial.failed", result.Code))
 	o.view.Log(LevelWarning, "  "+detail)
 	o.view.Notify(i18n.T("notify.failed.title"), detail, ToneError)
-	o.env.AddHistory(operation, o.env.CurrentAccountName(), model.FailureResult(result.Code), "--", "--")
 }
 
 // DescribeFailure 把 RAS 错误码映射为中文处理建议。

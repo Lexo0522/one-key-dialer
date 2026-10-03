@@ -35,7 +35,6 @@ type Settings struct {
 	AutoReconnect          bool   `json:"autoReconnect"`
 	AutoStart              bool   `json:"autoStart"`
 	StartMinimized         bool   `json:"startMinimized"`
-	AccountIndex           int    `json:"accountIndex"`
 	ProbeMode              string `json:"probeMode"`
 	ProbeHost              string `json:"probeHost"`
 	ProbeHttpUrl           string `json:"probeHttpUrl"`
@@ -81,7 +80,6 @@ func DefaultSettings() Settings {
 		AutoReconnect:          false,
 		AutoStart:              false,
 		StartMinimized:         false,
-		AccountIndex:           0,
 		ProbeMode:              ProbeModeAuto,
 		ProbeHost:              DefaultProbeHost,
 		ProbeHttpUrl:           DefaultProbeHTTPURL,
@@ -98,9 +96,6 @@ func DefaultSettings() Settings {
 func (s Settings) Normalize() Settings {
 	if s.IntervalSeconds < MinIntervalSeconds {
 		s.IntervalSeconds = MinIntervalSeconds
-	}
-	if s.AccountIndex < 0 {
-		s.AccountIndex = 0
 	}
 	s.ProbeMode = NormalizeProbeMode(s.ProbeMode)
 	if strings.TrimSpace(s.ProbeHost) == "" {
@@ -140,15 +135,6 @@ func (s Settings) Normalize() Settings {
 // 未设置时由后端自动探测，行为与旧版本一致。
 func (s Settings) PppoeDeviceSet() bool {
 	return s.PppoePort != "" && s.PppoeDevice != ""
-}
-
-// WithAccountIndex 返回修改了账号索引的副本。
-func (s Settings) WithAccountIndex(index int) Settings {
-	if index < 0 {
-		index = 0
-	}
-	s.AccountIndex = index
-	return s
 }
 
 // NormalizeProbeMode 归一探测模式，非法值回退 auto。

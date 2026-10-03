@@ -1,13 +1,13 @@
 <template>
   <div class="page home">
-    <!-- 顶部：左账号选择 / 右连接按钮 -->
+    <!-- 顶部：左状态与账号 / 右连接按钮 -->
     <div class="card home-header">
       <div class="h left">
         <span class="status-dot" :class="state.online ? 'on' : 'off'"
               :title="state.online ? t('home.status.connected') : t('home.status.disconnected')"></span>
-        <select v-model.number="currentIndex" class="account-select" @change="onAccountChange">
-          <option v-for="(a, i) in state.accounts" :key="i" :value="i">{{ accountLabel(a, i) }}</option>
-        </select>
+        <span class="account-chip" :class="{ unset: !hasAccount }" :title="accountText">
+          <i class="fas fa-user"></i>{{ accountText }}
+        </span>
         <span v-if="state.online && state.uptimeSeconds >= 0" class="uptime-chip">
           <i class="far fa-clock"></i>{{ t('home.uptime') }} {{ formatDuration(state.uptimeSeconds) }}
         </span>
@@ -91,25 +91,20 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { state, doDial, doDisconnect, showToast, formatSpeed, formatBytes, formatDuration } from '../store'
-import { api } from '../bridge'
+import { state, doDial, doDisconnect, formatSpeed, formatBytes, formatDuration } from '../store'
 import { t } from '../i18n'
 
 const SNIFF_WINDOW_MS = 10 * 60 * 1000
 const H = 250, PAD_L = 58, PAD_R = 14, PAD_T = 14, PAD_B = 26
 
-// ------------------------------------------------------------ 账号与拨号 ----
+// ------------------------------------------------------------ 宽带账号与拨号 ----
 
-const currentIndex = computed({
-  get: () => state.currentIndex,
-  set: (v) => { state.currentIndex = v }
+// 只读展示当前宽带账号；未设置时提示去「宽带」页配置
+const hasAccount = computed(() => !!(state.broadband?.username || '').trim())
+const accountText = computed(() => {
+  const name = (state.broadband?.username || '').trim()
+  return name || t('home.account.unset')
 })
-
-function accountLabel(a, i) {
-  const name = (a.name || '').trim()
-  const base = name || a.username || t('account.unset')
-  return `${i + 1}. ${base}`
-}
 
 const dialButtonText = computed(() => {
   if (state.dialBusy) return state.dialLabel || t('home.dial.dialing')
@@ -120,14 +115,6 @@ function onDialToggle() {
   if (state.dialBusy) return
   if (state.online) doDisconnect()
   else doDial()
-}
-
-function onAccountChange() {
-  const acc = state.accounts[state.currentIndex]
-  const name = (acc && (acc.name || acc.username)) || t('account.unset')
-  api.SwitchAccount(state.currentIndex)
-  // 在线时后端会先断开再用新账号重拨，随后的连接系列 Toast 会接续呈现
-  showToast(`${t('account.switchTitle')}：${name}`, 'info')
 }
 
 // ------------------------------------------------------------ 折线图 ----
@@ -351,11 +338,32 @@ const statCards = computed(() => {
   background: var(--c-hint);
 }
 
-.account-select {
-  min-width: 180px;
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   max-width: 320px;
   height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-chip i {
+  color: var(--c-info);
+  font-size: 12px;
+}
+
+.account-chip.unset {
+  color: var(--c-hint);
+  font-weight: 400;
 }
 
 .uptime-chip {

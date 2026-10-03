@@ -23,10 +23,7 @@ const (
 	EvtStatus   = "app:status"
 	EvtSpeed    = "app:speed"
 	EvtUptime   = "app:uptime"
-	EvtHistory  = "app:history"
-	EvtAccounts = "app:accounts"
 	EvtSettings = "app:settings"
-	EvtDiag     = "app:diag"
 	EvtUpdate   = "app:update"
 	EvtNotify   = "app:notify"
 	EvtLang     = "app:lang"
@@ -42,30 +39,25 @@ const (
 	UpdateStageInstall  = "install"
 )
 
-// AccountDTO 前端账号视图（密码仅在用户刚输入或显式导出时回传）。
-type AccountDTO struct {
-	Name        string `json:"name"`
+// BroadbandCredentialDTO 宽带拨号凭据视图（明文密码不出后端）。
+type BroadbandCredentialDTO struct {
 	Username    string `json:"username"`
-	Password    string `json:"password,omitempty"`
-	Remark      string `json:"remark"`
 	HasPassword bool   `json:"hasPassword"`
 }
 
 // AppState 前端首帧需要的全部状态。
 type AppState struct {
-	Version          string                `json:"version"`
-	DisplayVersion   string                `json:"displayVersion"`
-	Settings         model.Settings        `json:"settings"`
-	Accounts         []AccountDTO          `json:"accounts"`
-	CurrentIndex     int                   `json:"currentIndex"`
-	Online           bool                  `json:"online"`
-	History          []model.HistoryRecord `json:"history"`
-	Logs             []service.LogLine     `json:"logs"`
-	AutoStartEnabled bool                  `json:"autoStartEnabled"`
-	Theme            string                `json:"theme"`
-	Lang             string                `json:"lang"`
-	DataDir          string                `json:"dataDir"`
-	UpdatesDir       string                `json:"updatesDir"`
+	Version          string                 `json:"version"`
+	DisplayVersion   string                 `json:"displayVersion"`
+	Settings         model.Settings         `json:"settings"`
+	Broadband        BroadbandCredentialDTO `json:"broadband"`
+	Online           bool                   `json:"online"`
+	Logs             []service.LogLine      `json:"logs"`
+	AutoStartEnabled bool                   `json:"autoStartEnabled"`
+	Theme            string                 `json:"theme"`
+	Lang             string                 `json:"lang"`
+	DataDir          string                 `json:"dataDir"`
+	UpdatesDir       string                 `json:"updatesDir"`
 }
 
 // StatusPayload 连接状态事件负载。
@@ -145,18 +137,15 @@ type UpdatePayload struct {
 type App struct {
 	ctx context.Context
 
-	dataDir    string
-	logSvc     *service.LogService
-	exec       *service.BackgroundExecutor
-	settings   *service.SettingsManager
-	accounts   *service.AccountSession
-	historySvc *service.HistoryService
-	autoStart  *service.StartupService
+	dataDir   string
+	logSvc    *service.LogService
+	exec      *service.BackgroundExecutor
+	settings  *service.SettingsManager
+	autoStart *service.StartupService
 
 	ras       *platform.RasModule
 	orch      *service.DialOrchestrator
 	lifecycle *service.DialLifecycle
-	stats     *service.DialStats
 
 	reconnect *service.AutoReconnectService
 	monitor   *service.NetworkMonitorService
@@ -173,6 +162,11 @@ type App struct {
 	wifiPskSsid  string
 	wifiPsk      []byte
 
+	// 宽带拨号凭据（broadband.json，DPAPI 保护）
+	broadbandStore *storage.BroadbandStore
+	bbCredMu       sync.Mutex
+	bbCred         *model.BroadbandCredential
+
 	updater *update.Module
 
 	mu            sync.Mutex
@@ -184,7 +178,6 @@ type App struct {
 	baseUp        int64
 	downSpeed     int64
 	upSpeed       int64
-	lastProbe     *model.ProbeOutcome
 	pendingUser   string
 	pendingPass   []byte
 
@@ -216,7 +209,6 @@ func (a *App) startup(ctx context.Context) {
 	a.dataDir = platform.DataDir()
 
 	warn := func(msg string) { a.logSvc.Warning(msg) }
-	errSink := func(msg string) { a.logSvc.Error(msg) }
 
 	a.logSvc = service.NewLogService(filepath.Join(a.dataDir, "pppoe_log.txt"))
 	a.logSvc.AttachLineSink(func(line service.LogLine) { a.emit(EvtLog, line) })
@@ -229,24 +221,18 @@ func (a *App) startup(ctx context.Context) {
 	settingsStore := &storage.SettingsStore{File: filepath.Join(a.dataDir, "settings.json")}
 	a.settings = service.NewSettingsManager(settingsStore, a.exec, warn)
 
-	accountStore := storage.NewAccountStore(filepath.Join(a.dataDir, "accounts.json"), storage.DpapiSecretProtector{})
-	a.accounts = service.NewAccountSession(accountStore, a.exec, warn, errSink)
-
-	historyStore := &storage.HistoryStore{File: filepath.Join(a.dataDir, "history.json")}
-	a.historySvc = service.NewHistoryService(historyStore, warn)
-	a.historySvc.AttachAddSink(func(r model.HistoryRecord) { a.emit(EvtHistory, r) })
+	a.broadbandStore = storage.NewBroadbandStore(filepath.Join(a.dataDir, "broadband.json"), storage.DpapiSecretProtector{})
 
 	a.autoStart = service.NewStartupService(a.logSvc)
 	a.sampler = service.NewTrafficSampler(warn)
 
 	a.ras = platform.NewRasModule(model.ConnectionName, platform.PhonebookFile())
 	a.lifecycle = &service.DialLifecycle{}
-	a.stats = &service.DialStats{}
 
-	// 1) 设置 → 2) 账号 → 3) 服务 → 4) 自检
+	// 1) 设置 → 2) 凭据 → 3) 服务 → 4) 自检
 	loaded := a.settings.LoadFromDisk()
 	a.applyProxySettings(loaded)
-	a.accounts.Load(loaded.AccountIndex)
+	a.loadBroadband()
 
 	// 恢复上次选中的 PPPoE 设备；未保存过则保持自动探测
 	if loaded.PppoeDeviceSet() {
@@ -257,7 +243,7 @@ func (a *App) startup(ctx context.Context) {
 		})
 	}
 
-	a.orch = service.NewDialOrchestrator(a.ras, dialView{a}, dialEnv{a}, a.lifecycle, a.stats)
+	a.orch = service.NewDialOrchestrator(a.ras, dialView{a}, dialEnv{a}, a.lifecycle)
 
 	a.reconnect = service.NewAutoReconnectService(
 		func() bool { return a.lifecycle.IsBusy() },
@@ -283,7 +269,7 @@ func (a *App) startup(ctx context.Context) {
 		a.refreshTray,
 		func(seconds int64) { a.emit(EvtUptime, seconds) })
 
-	a.diag = service.NewDiagnostics(a.ras, a.diagContext, func(line string) { a.emit(EvtDiag, line) }, a.logSvc)
+	a.diag = service.NewDiagnostics(a.ras, a.logSvc)
 
 	// WiFi 与门户自动认证:独立凭据(portal.json)与首选 WiFi 密码(wifi.json)均 DPAPI 保护
 	a.portalStore = storage.NewPortalStore(filepath.Join(a.dataDir, "portal.json"), storage.DpapiSecretProtector{})
@@ -387,8 +373,6 @@ func (a *App) shutdown(ctx context.Context) {
 		a.memStop = nil
 	}
 	a.settings.FlushPending()
-	a.accounts.Save()
-	a.historySvc.SaveIfDirty()
 	a.logSvc.Flush()
 
 	a.reconnect.Stop()
@@ -403,7 +387,8 @@ func (a *App) shutdown(ctx context.Context) {
 		a.ipcSrv = nil
 	}
 
-	a.accounts.ClearPasswordsInMemory()
+	a.bbCredMu.Lock()
+	a.bbCred.ClearPassword()
 	a.portalCredMu.Lock()
 	a.portalCred.ClearPassword()
 	model.ClearBytes(a.wifiPsk)
@@ -426,10 +411,8 @@ func (a *App) Bootstrap() AppState {
 		Version:          model.Version(),
 		DisplayVersion:   model.Display(),
 		Settings:         s,
-		Accounts:         a.accountDTOs(),
-		CurrentIndex:     a.accounts.CurrentIndex(),
+		Broadband:        a.broadbandView(),
 		Online:           a.isOnline(),
-		History:          a.historySvc.Records(),
 		Logs:             a.logSvc.Snapshot(),
 		AutoStartEnabled: a.autoStart.IsEnabled(),
 		Theme:            a.resolvedTheme(),
@@ -551,184 +534,45 @@ func (a *App) SetAutoStart(enabled bool) bool {
 	return ok
 }
 
-// ============================ 账号 ============================
+// ============================ 宽带账号 ============================
 
-// GetAccounts 返回账号列表（不含密码）。
-func (a *App) GetAccounts() []AccountDTO { return a.accountDTOs() }
+// GetBroadband 返回宽带拨号凭据视图（不含明文密码）。
+func (a *App) GetBroadband() BroadbandCredentialDTO { return a.broadbandView() }
 
-// SaveAccounts 用前端提供的完整列表替换账号并落盘。
-// 前端快照不含明文密码：某行未填新密码但声明"已保存"（hasPassword）时，
-// 按账号名从旧账号继承密码，避免整列替换把已存密码抹掉。
-func (a *App) SaveAccounts(rows []AccountDTO) {
-	list := make([]*model.Account, 0, len(rows))
-	for i, r := range rows {
-		acc := model.NewAccount(r.Name, r.Username, r.Password, r.Remark)
-		if r.Password == "" && r.HasPassword {
-			if pw := a.accounts.PasswordForAccount(r.Username, i); len(pw) > 0 {
-				acc.SetPasswordBytes(pw)
-				model.ClearBytes(pw)
-			}
-		}
-		list = append(list, acc)
+// SaveBroadband 保存宽带拨号凭据（DPAPI 落盘 broadband.json）。
+// 同一账号且未填新密码时沿用旧密码。
+func (a *App) SaveBroadband(username, password string) bool {
+	username = strings.TrimSpace(username)
+	a.bbCredMu.Lock()
+	cred := model.NewBroadbandCredential(username, password)
+	if username == a.bbCred.Username && password == "" && a.bbCred.HasPassword() {
+		cred.SetPassword(a.bbCred.Password())
 	}
-	a.accounts.ApplyEdits(list)
-	a.accounts.SaveInBackground()
-	a.clampAndEmit()
-}
-
-// SwitchAccount 切换当前账号（在线时先断开再用新账号重拨）。
-func (a *App) SwitchAccount(index int) {
-	prev := a.accounts.CurrentIndex()
-	a.accounts.SetCurrentIndex(index)
-	a.settings.Update(a.settings.Current().WithAccountIndex(a.accounts.CurrentIndex()))
-	a.clampAndEmit()
-	if prev == a.accounts.CurrentIndex() {
-		return
-	}
-	a.logSvc.Info(i18n.Tf("account.switched", a.accounts.CurrentName()))
-	if a.isOnline() {
-		a.orch.RedialAfterDisconnect()
-	}
-}
-
-// DialCurrentAccount 用当前账号已保存的凭据拨号（密码全程不出后端）。
-// 账号未设置密码时交由预检层提示，返回 false 表示拨号未受理。
-func (a *App) DialCurrentAccount() bool {
-	if acc := a.accounts.CurrentOrNil(); acc != nil {
-		a.setPending(acc.Username, acc.Password())
-	}
-	return a.orch.DialUser()
-}
-
-// ExportAccountsTo 导出账号到指定 CSV;withPassword 为 true 时含明文密码。
-// 文件对话框由 UI 进程负责,代理只做落盘(pipe 方法)。
-func (a *App) ExportAccountsTo(path string, withPassword bool) error {
-	var accounts []*model.Account
-	if withPassword {
-		// 含密码导出必须取带密码快照，用后立即清零
-		accounts = a.accounts.SnapshotWithPasswords()
-		defer func() {
-			for _, acc := range accounts {
-				if acc != nil {
-					acc.ClearPassword()
-				}
-			}
-		}()
-	} else {
-		accounts = a.accounts.Accounts()
-	}
-	if err := storage.SaveCsv(path, accounts, withPassword); err != nil {
-		a.logSvc.Error(i18n.Tf("export.failed", err.Error()))
-		return err
-	}
-	a.logSvc.Success(i18n.T("export.ok"))
-	return nil
-}
-
-// ImportAccountsFrom 从 CSV 追加导入账号（路径由 UI 进程的文件对话框提供）。
-// 返回 -1 表示读取失败（前端静默不提示），>=0 为实际导入条数。
-func (a *App) ImportAccountsFrom(path string) int {
-	imported, err := storage.LoadCsv(path)
-	if err != nil {
-		a.logSvc.Error(i18n.Tf("import.failed", err.Error()))
-		return -1
-	}
-	// 导入前必须取带密码快照：Accounts() 是无密码快照，
-	// 直接整列 ApplyEdits 会把所有已存密码抹掉。
-	list := a.accounts.SnapshotWithPasswords()
-	list = append(list, imported...)
-	a.accounts.ApplyEdits(list)
-	a.accounts.SaveInBackground()
-	a.clampAndEmit()
-	a.logSvc.Success(i18n.T("import.ok"))
-	return len(imported)
-}
-
-// ============================ 拨号 ============================
-
-// Dial 用户拨号（密码由前端一次性传入，用完即清零）。
-// 返回 false 表示拨号未受理（忙/预检失败），前端据此复位按钮状态。
-func (a *App) Dial(username, password string) bool {
-	a.setPending(username, password)
-	return a.orch.DialUser()
-}
-
-// Disconnect 用户断开。返回 false 表示未受理（忙）。
-func (a *App) Disconnect() bool { return a.orch.DisconnectUser() }
-
-// ============================ 历史 / 统计 ============================
-
-// GetHistory 返回历史记录。
-func (a *App) GetHistory() []model.HistoryRecord { return a.historySvc.Records() }
-
-// ClearHistory 清空历史。
-func (a *App) ClearHistory() {
-	a.historySvc.Clear()
-	a.logSvc.Info(i18n.T("history.cleared"))
-}
-
-// ExportHistoryTo 导出历史 CSV 到指定路径（路径由 UI 进程的文件对话框提供）。
-func (a *App) ExportHistoryTo(path string) error {
-	if err := a.historySvc.Export(path); err != nil {
-		a.logSvc.Error(i18n.Tf("history.exportFailed", err.Error()))
-		return err
-	}
-	a.logSvc.Success(i18n.Tf("history.exported", path))
-	return nil
-}
-
-// GetStats 返回统计汇总。
-func (a *App) GetStats() service.StatsSummary {
-	summary := service.Summarize(a.historySvc.Records())
-	a.logSvc.Info(i18n.Tf("stats.refreshed", summary.DialAttempts, summary.DialSuccess))
-	return summary
-}
-
-// ============================ 网络探测 ============================
-
-// ProbeResult 一次连通测试的结果。
-type ProbeResult struct {
-	OK    bool   `json:"ok"`
-	Line  string `json:"line"`
-	Mode  string `json:"mode"`
-	Error string `json:"error"`
-}
-
-// TestConnectivity 执行一次连通测试（只探测、不拨号）。
-func (a *App) TestConnectivity() ProbeResult {
-	cfg := a.probeConfig()
-	outcome := service.ConfirmDetailed(cfg, "manual-test")
-	a.mu.Lock()
-	a.lastProbe = &outcome
-	a.mu.Unlock()
-	return ProbeResult{OK: outcome.OK, Line: outcome.ShortLine(), Mode: cfg.Mode}
-}
-
-// GetProbeSummary 返回探测配置摘要。
-func (a *App) GetProbeSummary() string { return a.probeConfig().Summary() }
-
-// ============================ 诊断 ============================
-
-// DiagAction 执行一个诊断动作（后台运行，输出通过 app:diag 事件流式推送）。
-func (a *App) DiagAction(action string) bool {
-	a.exec.SubmitLong(func() {
-		switch action {
-		case "ping":
-			a.diag.Ping()
-		case "ipconfig":
-			a.diag.IPConfig()
-		case "tracert":
-			a.diag.TraceRoute()
-		case "flushdns":
-			a.diag.FlushDNS()
-		case "status":
-			a.diag.ConnectionReport()
-		case "phonebook":
-			a.diag.PhonebookReport()
+	a.bbCred = cred
+	a.bbCredMu.Unlock()
+	a.exec.Submit(func() {
+		if err := a.broadbandStore.Save(cred); err != nil {
+			a.logSvc.Error(i18n.Tf("broadband.saveFailed", err.Error()))
+		} else {
+			a.logSvc.Info(i18n.T("broadband.saved"))
 		}
 	})
 	return true
 }
+
+// Dial 用已保存的宽带凭据拨号（密码全程不出后端）。
+// 凭据未设置时交由预检层提示，返回 false 表示拨号未受理。
+func (a *App) Dial() bool {
+	username, password := a.broadbandCreds()
+	a.setPending(username, string(password))
+	model.ClearBytes(password)
+	return a.orch.DialUser()
+}
+
+// ============================ 拨号 ============================
+
+// Disconnect 用户断开。返回 false 表示未受理（忙）。
+func (a *App) Disconnect() bool { return a.orch.DisconnectUser() }
 
 // DeviceOption 可选择的 PPPoE 设备。
 type DeviceOption struct {
@@ -780,12 +624,6 @@ func (a *App) DiagSelectDevice(port, device string, rewrite bool) string {
 	}
 	return msg
 }
-
-// DiagRewritePhonebook 强制重写 RAS 电话簿条目。
-func (a *App) DiagRewritePhonebook() string { return a.diag.RewritePhonebook() }
-
-// DiagClear 通知前端清空输出区。
-func (a *App) DiagClear() {}
 
 // ============================ WiFi / 门户认证 ============================
 

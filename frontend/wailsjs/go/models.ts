@@ -1,22 +1,16 @@
 export namespace main {
 	
-	export class AccountDTO {
-	    name: string;
+	export class BroadbandCredentialDTO {
 	    username: string;
-	    password?: string;
-	    remark: string;
 	    hasPassword: boolean;
 	
 	    static createFrom(source: any = {}) {
-	        return new AccountDTO(source);
+	        return new BroadbandCredentialDTO(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
 	        this.username = source["username"];
-	        this.password = source["password"];
-	        this.remark = source["remark"];
 	        this.hasPassword = source["hasPassword"];
 	    }
 	}
@@ -24,10 +18,8 @@ export namespace main {
 	    version: string;
 	    displayVersion: string;
 	    settings: model.Settings;
-	    accounts: AccountDTO[];
-	    currentIndex: number;
+	    broadband: BroadbandCredentialDTO;
 	    online: boolean;
-	    history: model.HistoryRecord[];
 	    logs: service.LogLine[];
 	    autoStartEnabled: boolean;
 	    theme: string;
@@ -44,10 +36,8 @@ export namespace main {
 	        this.version = source["version"];
 	        this.displayVersion = source["displayVersion"];
 	        this.settings = this.convertValues(source["settings"], model.Settings);
-	        this.accounts = this.convertValues(source["accounts"], AccountDTO);
-	        this.currentIndex = source["currentIndex"];
+	        this.broadband = this.convertValues(source["broadband"], BroadbandCredentialDTO);
 	        this.online = source["online"];
-	        this.history = this.convertValues(source["history"], model.HistoryRecord);
 	        this.logs = this.convertValues(source["logs"], service.LogLine);
 	        this.autoStartEnabled = source["autoStartEnabled"];
 	        this.theme = source["theme"];
@@ -74,6 +64,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	export class DeviceOption {
 	    port: string;
 	    device: string;
@@ -138,24 +129,6 @@ export namespace main {
 	        this.detail = source["detail"];
 	    }
 	}
-	export class ProbeResult {
-	    ok: boolean;
-	    line: string;
-	    mode: string;
-	    error: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ProbeResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.ok = source["ok"];
-	        this.line = source["line"];
-	        this.mode = source["mode"];
-	        this.error = source["error"];
-	    }
-	}
 	export class WifiNetworkDTO {
 	    ssid: string;
 	    signalQuality: number;
@@ -207,34 +180,11 @@ export namespace main {
 
 export namespace model {
 	
-	export class HistoryRecord {
-	    time: string;
-	    operation: string;
-	    account: string;
-	    result: string;
-	    duration: string;
-	    traffic: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new HistoryRecord(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.time = source["time"];
-	        this.operation = source["operation"];
-	        this.account = source["account"];
-	        this.result = source["result"];
-	        this.duration = source["duration"];
-	        this.traffic = source["traffic"];
-	    }
-	}
 	export class Settings {
 	    intervalSeconds: number;
 	    autoReconnect: boolean;
 	    autoStart: boolean;
 	    startMinimized: boolean;
-	    accountIndex: number;
 	    probeMode: string;
 	    probeHost: string;
 	    probeHttpUrl: string;
@@ -270,7 +220,6 @@ export namespace model {
 	        this.autoReconnect = source["autoReconnect"];
 	        this.autoStart = source["autoStart"];
 	        this.startMinimized = source["startMinimized"];
-	        this.accountIndex = source["accountIndex"];
 	        this.probeMode = source["probeMode"];
 	        this.probeHost = source["probeHost"];
 	        this.probeHttpUrl = source["probeHttpUrl"];
@@ -302,20 +251,6 @@ export namespace model {
 
 export namespace service {
 	
-	export class ErrorCount {
-	    Result: string;
-	    Count: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new ErrorCount(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Result = source["Result"];
-	        this.Count = source["Count"];
-	    }
-	}
 	export class LogLine {
 	    time: string;
 	    level: string;
@@ -331,48 +266,6 @@ export namespace service {
 	        this.level = source["level"];
 	        this.message = source["message"];
 	    }
-	}
-	export class StatsSummary {
-	    TotalOps: number;
-	    DialAttempts: number;
-	    DialSuccess: number;
-	    DialFail: number;
-	    Disconnects: number;
-	    TopErrors: ErrorCount[];
-	    ReportText: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new StatsSummary(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.TotalOps = source["TotalOps"];
-	        this.DialAttempts = source["DialAttempts"];
-	        this.DialSuccess = source["DialSuccess"];
-	        this.DialFail = source["DialFail"];
-	        this.Disconnects = source["Disconnects"];
-	        this.TopErrors = this.convertValues(source["TopErrors"], ErrorCount);
-	        this.ReportText = source["ReportText"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 
 }

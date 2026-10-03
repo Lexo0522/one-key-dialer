@@ -43,18 +43,6 @@
           <span class="switch"><input v-model="startMinimized" type="checkbox" @change="onStartMinimized"/><span class="track"></span></span>
         </div>
 
-        <div class="row">
-          <label class="field-label">{{ t('settings.device') }}</label>
-          <select v-model="selectedPort" :disabled="deviceBusy || !devices.length" @change="applyDevice">
-            <option v-if="!devices.length" value="">{{ t('settings.device.none') }}</option>
-            <option v-for="d in devices" :key="d.port" :value="d.port">{{ d.device }} [{{ d.port }}]</option>
-          </select>
-          <button class="btn icon-btn refresh-btn" :disabled="deviceBusy" :title="t('settings.device.refresh')" @click="loadDevices">
-            <span class="refresh-icon" :class="{ spinning: deviceBusy }" aria-hidden="true">⟳</span>
-          </button>
-        </div>
-        <div class="hint" :class="{ ok: !!deviceNote }">{{ deviceNote || t('settings.device.hint') }}</div>
-
         <div class="switch-row">
           <label class="label">
             <span class="t">{{ t('settings.sniffing') }}</span>
@@ -337,64 +325,6 @@ function checkNow() {
   if (state.update.checking) return
   api.CheckUpdate(true)
 }
-
-// ------------------------------------------------------------ 拨号设备 ----
-// 下拉列表选择即应用：选中后立即记住设备并重写电话簿条目，无需弹窗确认。
-
-const devices = ref([])
-const selectedPort = ref('')
-const deviceBusy = ref(false)
-const deviceNote = ref('')
-
-// 选中项回显优先级：后端标记的当前设备 → 内置默认设备 → 列表首项。
-// 三者必居其一（后端保证列表非空），因此下拉框不会再出现空白。
-function pickPort(list) {
-  if (!list.length) return ''
-  const cur = list.find((x) => x.current)
-  if (cur) return cur.port
-  const dflt = list.find((x) => x.default)
-  if (dflt) return dflt.port
-  return list[0].port
-}
-
-async function loadDevices() {
-  deviceBusy.value = true
-  try {
-    const list = await api.DiagListDevices()
-    devices.value = list || []
-    if (!devices.value.length) {
-      selectedPort.value = ''
-      deviceNote.value = t('settings.device.none')
-      return
-    }
-    // 已选值仍在列表中则保持不变（刷新、切页不丢选择），否则回显后端当前值
-    const stillThere = devices.value.some((x) => x.port === selectedPort.value)
-    if (!stillThere) selectedPort.value = pickPort(devices.value)
-  } finally {
-    deviceBusy.value = false
-  }
-}
-
-async function applyDevice() {
-  const d = devices.value.find((x) => x.port === selectedPort.value)
-  if (!d) return
-  deviceBusy.value = true
-  try {
-    const msg = await api.DiagSelectDevice(d.port, d.device, true)
-    deviceNote.value = msg || t('settings.device.done')
-    // 同步 current 标记，避免下次刷新时回显被旧数据覆盖
-    devices.value = devices.value.map((x) => ({ ...x, current: x.port === d.port && x.device === d.device }))
-    showToast(t('settings.device.switched'), 'success')
-  } catch (e) {
-    deviceNote.value = t('settings.device.switchFail')
-    showToast(t('settings.device.switchFail'), 'error')
-    await loadDevices()
-  } finally {
-    deviceBusy.value = false
-  }
-}
-
-loadDevices()
 </script>
 
 <style scoped>
@@ -491,30 +421,5 @@ loadDevices()
 
 .ver-value {
   font-weight: 700;
-}
-
-.refresh-btn {
-  width: 32px;
-  height: 30px;
-  padding: 0;
-  flex: 0 0 32px;
-}
-
-.refresh-icon {
-  display: inline-block;
-  font-family: Arial, sans-serif;
-  font-size: 23px;
-  line-height: 1;
-  transform: translateY(-1px);
-}
-
-.refresh-icon.spinning {
-  animation: refresh-rotate .8s linear infinite;
-}
-
-@keyframes refresh-rotate {
-  to {
-    transform: translateY(-1px) rotate(360deg);
-  }
 }
 </style>

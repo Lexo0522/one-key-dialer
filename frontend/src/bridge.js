@@ -12,7 +12,6 @@ export const EV = {
   status: 'app:status',
   speed: 'app:speed',
   uptime: 'app:uptime',
-  accounts: 'app:accounts',
   settings: 'app:settings',
   update: 'app:update',
   notify: 'app:notify',
@@ -40,7 +39,6 @@ const MOCK_STATE = {
     autoReconnect: false,
     autoStart: false,
     startMinimized: false,
-    accountIndex: 0,
     disconnectOnNoInternet: false,
     updateCheckEnabled: true,
     uiTheme: 'system',
@@ -53,11 +51,7 @@ const MOCK_STATE = {
     portalHeaders: '',
     portalSuccessHint: ''
   },
-  accounts: [
-    { name: '默认账号', username: '', remark: '', hasPassword: false },
-    { name: '宿舍宽带', username: '20210001', remark: '主用', hasPassword: true }
-  ],
-  currentIndex: 0,
+  broadband: { username: '20210001', hasPassword: true },
   online: false,
   logs: [
     { time: '20:41:02', level: 'info', message: 'PPPoE校园网拨号工具 V1.2.0 已启动' },
@@ -93,10 +87,9 @@ class Bus {
 
 const mockBus = new Bus()
 let mockSettings = { ...MOCK_STATE.settings }
-let mockAccounts = MOCK_STATE.accounts.map((a) => ({ ...a }))
-// mock 侧按账号名保存的密码（真实后端永不把明文密码发给前端）
-let mockPasswords = new Map()
-if (MOCK_STATE.accounts[1]) mockPasswords.set(MOCK_STATE.accounts[1].username, '123456')
+// mock 侧保存的宽带密码（真实后端永不把明文密码发给前端）
+let mockBroadband = { ...MOCK_STATE.broadband }
+let mockBroadbandPassword = '123456'
 let mockOnline = false
 let mockConnectedAt = 0
 let mockSpeedTimer = null
@@ -131,7 +124,7 @@ function stopMockSpeed() {
 
 const mockApi = {
   async Bootstrap() {
-    return { ...MOCK_STATE, settings: { ...mockSettings }, accounts: mockAccounts.map((a) => ({ ...a })) }
+    return { ...MOCK_STATE, settings: { ...mockSettings }, broadband: { ...mockBroadband } }
   },
   SaveSettings(next) {
     mockSettings = { ...next }
@@ -142,50 +135,23 @@ const mockApi = {
     mockBus.emit(EV.settings, { ...mockSettings })
     return true
   },
-  async GetAccounts() {
-    return mockAccounts.map((a) => ({ ...a }))
+  async GetBroadband() {
+    return { ...mockBroadband }
   },
-  SaveAccounts(rows) {
-    // 复现后端语义：快照不含明文；空密码 + hasPassword 时按账号名继承
-    const next = rows.map((r) => {
-      const key = (r.username || '').trim()
-      let pw = (r.password || '').trim()
-      if (!pw && r.hasPassword) pw = mockPasswords.get(key) || ''
-      if (pw) mockPasswords.set(key, pw)
-      else mockPasswords.delete(key)
-      return {
-        name: r.name || '',
-        username: r.username || '',
-        remark: r.remark || '',
-        hasPassword: !!pw
-      }
-    })
-    mockAccounts = next
-    mockBus.emit(EV.accounts, { accounts: mockAccounts.map((a) => ({ ...a })), currentIndex: mockSettings.accountIndex })
+  SaveBroadband(username, password) {
+    if (username) mockBroadband.username = username
+    if (password) {
+      mockBroadbandPassword = password
+      mockBroadband.hasPassword = true
+    }
+    mockLog('宽带账号已保存', 'success')
+    return true
   },
-  SwitchAccount(index) {
-    mockSettings.accountIndex = index
-    mockLog(`已切换账号: ${mockAccounts[index]?.name || ''}`)
-    mockBus.emit(EV.accounts, { accounts: mockAccounts.map((a) => ({ ...a })), currentIndex: index })
-  },
-  async ExportAccounts() {
-    mockLog('导出成功！', 'success')
-    return 'pppoe_accounts_export.csv'
-  },
-  async ImportAccounts() {
-    // 复现后端语义：成功返回导入条数（-1 为用户取消），并推送账号变更
-    mockAccounts = mockAccounts.concat([
-      { name: '导入账号', username: '20220002', remark: 'CSV', hasPassword: false }
-    ])
-    mockBus.emit(EV.accounts, { accounts: mockAccounts.map((a) => ({ ...a })), currentIndex: mockSettings.accountIndex })
-    mockLog('导入成功！', 'success')
-    return 1
-  },
-  DialCurrentAccount() {
-    const acc = mockAccounts[mockSettings.accountIndex]
-    if (acc && !acc.hasPassword) {
-      mockLog('当前账号未设置密码，请先在账号配置中保存密码', 'warn')
-      mockBus.emit(EV.notify, { title: '拨号失败', body: '当前账号未设置密码，请先在账号配置中保存密码', tone: 'error' })
+  Dial() {
+    if (!mockBroadband.hasPassword || !mockBroadband.username) {
+      const body = '尚未设置宽带账号或密码，请先在「宽带」页保存'
+      mockLog(body, 'warn')
+      mockBus.emit(EV.notify, { title: '拨号失败', body, tone: 'error' })
       return false
     }
     mockLog('连接中…')

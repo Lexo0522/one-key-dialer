@@ -9,8 +9,6 @@ import (
 	"github.com/Lexo0522/one-key-dialer/internal/model"
 	"github.com/Lexo0522/one-key-dialer/internal/platform"
 	"github.com/Lexo0522/one-key-dialer/internal/service"
-	"github.com/Lexo0522/one-key-dialer/internal/update"
-	"github.com/Lexo0522/one-key-dialer/internal/util"
 )
 
 // 代理→UI 的系统级控制事件（UI 进程自行消费,不转发给前端）。
@@ -78,27 +76,39 @@ func (a *App) probeConfig() model.ProbeConfig {
 	return model.ProbeConfigFromSettings(a.settings.Current())
 }
 
-func (a *App) accountDTOs() []AccountDTO {
-	views := a.accounts.Views()
-	out := make([]AccountDTO, 0, len(views))
-	for _, v := range views {
-		out = append(out, AccountDTO{
-			Name:        v.Name,
-			Username:    v.Username,
-			Remark:      v.Remark,
-			HasPassword: v.HasPassword,
-		})
+// ---------- 宽带凭据 ----------
+
+// loadBroadband 启动时加载宽带拨号凭据。
+// startup 先于任何 RPC 执行，且 Load 对缺文件/失败均返回非 nil，
+// 因此 a.bbCred 自此全程非 nil，各处无需判空。
+func (a *App) loadBroadband() {
+	cred, err := a.broadbandStore.Load()
+	if err != nil {
+		a.logSvc.Warning(i18n.Tf("broadband.loadFailed", err.Error()))
+		cred = &model.BroadbandCredential{}
 	}
-	return out
+	a.bbCred = cred
 }
 
-func (a *App) clampAndEmit() {
-	a.accounts.ClampIndexAfterListChange()
-	a.emit(EvtAccounts, map[string]any{
-		"accounts":     a.accountDTOs(),
-		"currentIndex": a.accounts.CurrentIndex(),
-	})
-	a.refreshTray()
+// broadbandView 组装前端宽带凭据视图。
+func (a *App) broadbandView() BroadbandCredentialDTO {
+	a.bbCredMu.Lock()
+	defer a.bbCredMu.Unlock()
+	return BroadbandCredentialDTO{Username: a.bbCred.Username, HasPassword: a.bbCred.HasPassword()}
+}
+
+// broadbandUsername 返回已保存的宽带账号（未设置时为空串）。
+func (a *App) broadbandUsername() string {
+	a.bbCredMu.Lock()
+	defer a.bbCredMu.Unlock()
+	return strings.TrimSpace(a.bbCred.Username)
+}
+
+// broadbandCreds 返回已保存宽带凭据的副本，密码由调用方负责清零。
+func (a *App) broadbandCreds() (string, []byte) {
+	a.bbCredMu.Lock()
+	defer a.bbCredMu.Unlock()
+	return a.bbCred.Username, a.bbCred.CopyPassword()
 }
 
 func (a *App) applyAutoReconnect() {
@@ -289,24 +299,21 @@ func (v dialView) OnConnectionState(online bool) { v.a.setOnline(online) }
 func (v dialView) ValidateInput(interactive bool) bool {
 	username, password := v.a.takePending()
 	if username == "" && len(password) == 0 {
-		if acc := v.a.accounts.CurrentOrNil(); acc != nil {
-			username = acc.Username
-			password = acc.CopyPassword()
-		}
+		username, password = v.a.broadbandCreds()
 	}
 	defer func() {
-		for i := range password {
-			password[i] = 0
-		}
+		model.ClearBytes(password)
 	}()
 	if len(password) == 0 {
-		if acc := v.a.accounts.CurrentOrNil(); acc != nil && acc.Username == username {
-			password = acc.CopyPassword()
+		savedUser, savedPass := v.a.broadbandCreds()
+		if savedUser == username {
+			password = savedPass
+		} else {
+			model.ClearBytes(savedPass)
 		}
 	}
 
-	hasAccount := v.a.accounts.CurrentOrNil() != nil
-	failure := precheckFailure(v.a.isOnline(), hasAccount, username, password)
+	failure := precheckFailure(v.a.isOnline(), username, password)
 	if failure == "" {
 		// 校验通过：把凭据放回待取区，供 CaptureCredentials 使用
 		v.a.setPending(username, string(password))
@@ -322,24 +329,16 @@ func (v dialView) ValidateInput(interactive bool) bool {
 func (v dialView) CaptureCredentials() *model.DialCredentials {
 	username, password := v.a.takePending()
 	if username == "" && len(password) == 0 {
-		if acc := v.a.accounts.CurrentOrNil(); acc != nil {
-			username = acc.Username
-			password = acc.CopyPassword()
-		}
+		username, password = v.a.broadbandCreds()
 	}
 	creds := model.NewDialCredentials(username, password)
-	for i := range password {
-		password[i] = 0
-	}
+	model.ClearBytes(password)
 	return creds
 }
 
-func precheckFailure(online, hasAccount bool, username string, password []byte) string {
+func precheckFailure(online bool, username string, password []byte) string {
 	if online {
 		return i18n.T("precheck.alreadyOnline")
-	}
-	if !hasAccount {
-		return i18n.T("precheck.noAccount")
 	}
 	if strings.TrimSpace(username) == "" {
 		return i18n.T("precheck.emptyUsername")
@@ -352,8 +351,6 @@ func precheckFailure(online, hasAccount bool, username string, password []byte) 
 
 func dialogMessage(logMessage string) string {
 	switch logMessage {
-	case i18n.T("precheck.noAccount"):
-		return i18n.T("precheck.dialog.noAccount")
 	case i18n.T("precheck.emptyUsername"):
 		return i18n.T("precheck.dialog.user")
 	case i18n.T("precheck.emptyPassword"):
@@ -386,27 +383,14 @@ func (e dialEnv) SessionTrafficBytes() int64 {
 	return e.a.sessionDown + e.a.sessionUp
 }
 
-func (e dialEnv) CurrentAccountName() string { return e.a.accounts.CurrentName() }
-
 func (e dialEnv) ProbeConfig() model.ProbeConfig { return e.a.probeConfig() }
 
 func (e dialEnv) DisconnectOnNoInternet() bool {
 	return e.a.settings.Current().DisconnectOnNoInternet
 }
 
-func (e dialEnv) AddHistory(operation, account, result, duration, traffic string) {
-	e.a.historySvc.Add(operation, account, result, duration, traffic)
-}
-
 func (e dialEnv) PersistAfterSuccess() {
 	e.a.settings.FlushPending()
-	e.a.accounts.SaveInBackground()
-}
-
-func (e dialEnv) RecordProbeOutcome(outcome model.ProbeOutcome) {
-	e.a.mu.Lock()
-	e.a.lastProbe = &outcome
-	e.a.mu.Unlock()
 }
 
 // ---------- 更新进度回调 ----------
@@ -429,40 +413,8 @@ func (p updateProgress) OnStatus(message string) {
 
 // ---------- 其它 ----------
 
-func (a *App) diagContext() service.DiagContext {
-	a.mu.Lock()
-	online := a.online
-	conn := a.connectTimeMs
-	down := a.sessionDown
-	up := a.sessionUp
-	downSpeed := a.downSpeed
-	upSpeed := a.upSpeed
-	last := a.lastProbe
-	a.mu.Unlock()
-
-	ctx := service.DiagContext{
-		Online:        online,
-		ConnectTimeMs: conn,
-		DownBytes:     down,
-		UpBytes:       up,
-		DownSpeed:     util.FormatSpeed(downSpeed),
-		UpSpeed:       util.FormatSpeed(upSpeed),
-		ProbeConfig:   a.probeConfig(),
-	}
-	if acc := a.accounts.CurrentOrNil(); acc != nil {
-		ctx.Account = acc.Username
-		ctx.Nickname = acc.Name
-	}
-	if last != nil {
-		ctx.LastProbeDetail = last.DetailLine()
-	}
-	return ctx
-}
-
 func (a *App) flushBeforeUpdate() {
 	a.settings.FlushPending()
-	a.accounts.Save()
-	a.historySvc.SaveIfDirty()
 	a.logSvc.Flush()
 }
 
@@ -475,6 +427,3 @@ func (a *App) UpdateBusy() bool {
 	defer a.updateMu.Unlock()
 	return a.updateBusy
 }
-
-// unused guard
-var _ = update.SanitizeFileName

@@ -72,13 +72,6 @@ func (o ProbeOutcome) ShortLine() string {
 	return fmt.Sprintf("%s mode=%s %dms src=%s", word, o.Mode, o.DurationMs, o.Source)
 }
 
-// DetailLine 返回用于诊断页的详细行。
-func (o ProbeOutcome) DetailLine() string {
-	return fmt.Sprintf("%s | %s | mode=%s host=%s http=%s attempts=%d",
-		time.UnixMilli(o.AtEpochMs).Format("2006-01-02 15:04:05"),
-		o.ShortLine(), o.Mode, o.Host, o.HTTPUrl, o.Attempts)
-}
-
 // ProbeSummary 返回 "mode=%s host=%s http=%s attempts=%d delayMs=%d" 摘要；
 // 启用代理时追加 "proxy=<type host:port>"，便于确认探测实际走的口子。
 func (c ProbeConfig) Summary() string {

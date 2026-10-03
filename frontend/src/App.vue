@@ -38,7 +38,7 @@
     <main class="main">
       <HomeTab v-show="active === 'home'"/>
       <WifiTab v-if="active === 'wifi'"/>
-      <AccountsTab v-if="active === 'accounts'"/>
+      <BroadbandTab v-if="active === 'broadband'"/>
       <LogTab v-if="active === 'log'"/>
       <SettingsTab v-if="active === 'settings'"/>
     </main>
@@ -65,7 +65,7 @@ import { computed, onMounted, ref } from 'vue'
 import { GooeyToaster } from 'vue-goey-toast'
 import HomeTab from './components/HomeTab.vue'
 import WifiTab from './components/WifiTab.vue'
-import AccountsTab from './components/AccountsTab.vue'
+import BroadbandTab from './components/BroadbandTab.vue'
 import LogTab from './components/LogTab.vue'
 import SettingsTab from './components/SettingsTab.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
@@ -81,7 +81,7 @@ const active = ref('home')
 const navItems = computed(() => [
   { key: 'home', label: t('nav.home'), icon: 'fas fa-home' },
   { key: 'wifi', label: t('nav.wifi'), icon: 'fas fa-wifi' },
-  { key: 'accounts', label: t('nav.accounts'), icon: 'fas fa-address-card' },
+  { key: 'broadband', label: t('nav.broadband'), icon: 'fas fa-network-wired' },
   { key: 'log', label: t('nav.log'), icon: 'fas fa-file-alt' },
   { key: 'settings', label: t('nav.settings'), icon: 'fas fa-cog' }
 ])
