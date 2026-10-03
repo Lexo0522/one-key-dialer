@@ -25,6 +25,7 @@
       </nav>
 
       <div class="sidebar-footer">
+        <SideTraffic/>
         <div class="conn" :class="state.online ? 'on' : 'off'">
           <span class="dot"></span>
           <span>{{ state.online ? t('home.status.connected') : t('home.status.disconnected') }}</span>
@@ -68,6 +69,7 @@ import AccountsTab from './components/AccountsTab.vue'
 import LogTab from './components/LogTab.vue'
 import SettingsTab from './components/SettingsTab.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
+import SideTraffic from './components/SideTraffic.vue'
 import { state, bootstrap, bindEvents, versionLabel } from './store'
 import { TOAST_DURATION } from './toast'
 import { installToastFoldAnimator } from './toast-fold'

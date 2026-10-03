@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Lexo0522/one-key-dialer/internal/i18n"
 	"github.com/Lexo0522/one-key-dialer/internal/model"
 )
 
@@ -102,7 +103,7 @@ func TestExecutePortalAuthFallsBackToPortalURL(t *testing.T) {
 	}
 
 	out = ExecutePortalAuth(PortalAuthConfig{Method: "GET"}, "", "u", "p")
-	if out.Success || !strings.Contains(out.Detail, "portal.noLoginUrl") {
+	if out.Success || out.Detail != i18n.T("portal.noLoginUrl") {
 		t.Fatalf("无登录地址且无门户地址应失败: %+v", out)
 	}
 }

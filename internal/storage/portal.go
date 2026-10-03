@@ -27,14 +27,14 @@ type portalDocument struct {
 	Data portalRecord `json:"data"`
 }
 
-// Load 加载门户凭据；文件不存在返回 nil。
+// Load 加载门户凭据；文件不存在返回空凭据（非 nil、无密码）。
 func (s *PortalStore) Load() (*model.PortalCredential, error) {
 	raw, err := ReadEnvelope(s.File, SchemaVersionPortal)
 	if err != nil {
 		return nil, err
 	}
 	if raw == nil {
-		return nil, nil
+		return &model.PortalCredential{}, nil
 	}
 	var doc portalDocument
 	if err := DecodeInto(raw, &doc); err != nil {

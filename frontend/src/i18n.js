@@ -13,6 +13,10 @@ const zh = {
   'nav.brand': '一键拨号',
   'nav.brandSub': 'PPPoE Dialer',
 
+  // 侧栏流量图
+  'side.traffic.graphTip': '近 10 分钟流量，点击切换曲线 / 折线',
+  'side.traffic.paused': '已暂停',
+
   // WiFi
   'wifi.title': 'WiFi',
   'wifi.group.network': '无线网络',
@@ -143,7 +147,7 @@ const zh = {
   'settings.device.switchFail': '拨号设备切换失败',
   'settings.device.refresh': '刷新设备列表',
   'settings.sniffing': '流量嗅探',
-  'settings.sniffing.hint': '开启后首页绘制近 10 分钟流量曲线并统计本次会话流量',
+  'settings.sniffing.hint': '开启后首页与侧栏绘制近 10 分钟流量曲线并统计本次会话流量',
   'settings.reconnect': '断网自动重连',
   'settings.reconnect.hint': '掉线后按检测间隔尝试重新拨号',
   'settings.interval': '检测间隔',
@@ -261,6 +265,10 @@ const en = {
   'nav.settings': 'Settings',
   'nav.brand': 'One-Key Dialer',
   'nav.brandSub': 'PPPoE Dialer',
+
+  // Sidebar traffic graph
+  'side.traffic.graphTip': 'Last 10 minutes; click to toggle curve / line',
+  'side.traffic.paused': 'Paused',
 
   // WiFi
   'wifi.title': 'WiFi',
@@ -389,7 +397,7 @@ const en = {
   'settings.device.switchFail': 'Failed to switch dial device',
   'settings.device.refresh': 'Refresh device list',
   'settings.sniffing': 'Traffic sniffing',
-  'settings.sniffing.hint': 'Draws the 10-minute traffic curve and session stats on Home',
+  'settings.sniffing.hint': 'Draws the 10-minute traffic curve on Home and the sidebar, and tracks session traffic',
   'settings.reconnect': 'Auto reconnect',
   'settings.reconnect.hint': 'Redial at the check interval after disconnect',
   'settings.interval': 'Interval',
