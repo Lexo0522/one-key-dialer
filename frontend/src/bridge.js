@@ -16,7 +16,9 @@ export const EV = {
   update: 'app:update',
   notify: 'app:notify',
   lang: 'app:lang',
-  wifi: 'app:wifi'
+  wifi: 'app:wifi',
+  dial: 'app:dial',
+  diag: 'app:diag'
 }
 
 /** 订阅后端事件；返回取消订阅函数。 */
@@ -93,6 +95,7 @@ let mockBroadbandPassword = '123456'
 let mockOnline = false
 let mockConnectedAt = 0
 let mockSpeedTimer = null
+let mockDiagBusy = false
 
 function mockLog(message, level = 'info') {
   const d = new Date()
@@ -161,6 +164,7 @@ const mockApi = {
       mockBus.emit(EV.status, { online: true, phase: 'connected' })
       mockLog('拨号成功！', 'success')
       mockBus.emit(EV.notify, { title: '连接成功', body: '已连接到校园网', tone: 'success' })
+      mockBus.emit(EV.dial, { ok: true, code: 0, detail: '连通 icmp 12ms src=post-dial', at: Date.now() })
       startMockSpeed()
     }, 900)
     return true
@@ -290,6 +294,63 @@ const mockApi = {
       return { ok: false, detail: '未检测到认证门户，当前网络无需认证' }
     }
     return { ok: true, detail: '检测到认证门户: http://10.1.1.55\n认证提交: HTTP 200 | login_ok\n测试通过：门户已放行' }
+  },
+
+  // ---------------- 宽带页：诊断 / 连接详情（浏览器 dev mock） ----------------
+  ClearBroadband() {
+    mockBroadband = { username: '', hasPassword: false }
+    mockBroadbandPassword = ''
+    mockLog('已清除宽带账号与密码', 'success')
+    return true
+  },
+  async PppStats() {
+    if (!mockOnline) return { available: true, connected: false }
+    return {
+      available: true,
+      connected: true,
+      localIp: '10.16.8.66',
+      serverIp: '10.16.0.1',
+      bps: 1000 * 1000 * 1000,
+      bytesUp: 182536110,
+      bytesDown: 1024753902,
+      errTotal: 0,
+      durationSec: Math.max(1, Math.floor((Date.now() - mockConnectedAt) / 1000))
+    }
+  },
+  async EthLinks() {
+    return [
+      { descr: 'Realtek PCIe GbE Family Controller', up: true, speedMbps: 1000 },
+      { descr: 'Intel(R) I211 Gigabit Network Connection', up: false, speedMbps: 0 }
+    ]
+  },
+  DiagRun() {
+    if (mockDiagBusy) return false
+    mockDiagBusy = true
+    const credOk = !!mockBroadband.username && mockBroadband.hasPassword
+    const steps = [
+      { ok: credOk, text: credOk ? `宽带凭据已配置（${mockBroadband.username}）` : '宽带凭据未配置，请先在宽带页填写账号密码' },
+      { ok: true, text: '电话簿条目正常（WAN Miniport (PPPOE) / PPPoE5-0）' },
+      { ok: true, text: '物理网口 2 个，其中 1 个已连接' },
+      mockOnline
+        ? { ok: true, text: '外网探测: 连通 icmp 12ms src=diag' }
+        : { ok: true, text: '当前离线，跳过外网探测' }
+    ]
+    const emit = (p) => mockBus.emit(EV.diag, p)
+    let i = 0
+    const tick = () => {
+      if (i < steps.length) {
+        emit({ phase: 'step', index: i + 1, ok: steps[i].ok, text: steps[i].text })
+        i++
+        setTimeout(tick, 400)
+        return
+      }
+      const okAll = steps.every((s) => s.ok)
+      emit({ phase: 'done', ok: okAll, text: okAll ? '诊断完成：未发现问题' : '诊断完成：发现以下问题',
+             detail: steps.map((s) => s.text).join('\n') })
+      mockDiagBusy = false
+    }
+    setTimeout(tick, 250)
+    return true
   }
 }
 

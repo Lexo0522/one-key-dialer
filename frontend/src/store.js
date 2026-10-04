@@ -5,6 +5,7 @@ import { resolveTheme, applyPalette } from './theme'
 import { setLang, t } from './i18n'
 import { formatSpeed, formatBytes, formatDuration } from './format'
 import { showToast, toastPromise } from './toast'
+import { confirmDialog } from './dialog'
 
 const PREFS_KEY = 'okd.ui.prefs.v1'
 const SNIFF_WINDOW_MS = 10 * 60 * 1000 // 折线图统计窗口：10 分钟
@@ -73,6 +74,12 @@ export const state = reactive({
     networks: [],
     scannedAt: 0
   },
+
+  // 宽带页：最近一次拨号尝试的结构化结果（app:dial）/ 一键诊断（app:diag）/
+  // PPP 连接详情（宽带页按需轮询 PppStats）
+  lastDial: null,
+  diag: { running: false, steps: [], ok: null, detail: '' },
+  ppp: null,
 
   // 本地偏好
   prefs: loadPrefs(),
@@ -320,6 +327,27 @@ export function bindEvents() {
     if (!p) return
     state.wifi.available = !!p.available
     state.wifi.status = p
+  })
+
+  // 拨号尝试的结构化结果（含 RAS 错误码与处理建议），宽带页内联回显
+  on(EV.dial, (p) => {
+    if (!p) return
+    state.lastDial = p
+  })
+
+  // 一键诊断：步骤逐条追加，done 收尾汇总
+  on(EV.diag, (p) => {
+    if (!p) return
+    if (p.phase === 'step') {
+      state.diag.running = true
+      state.diag.steps.push({ ok: !!p.ok, text: p.text || '' })
+      return
+    }
+    if (p.phase === 'done') {
+      state.diag.running = false
+      state.diag.ok = !!p.ok
+      state.diag.detail = p.detail || ''
+    }
   })
 }
 
@@ -649,6 +677,49 @@ export async function saveBroadband(username, password) {
   }
   showToast(t(ok ? 'broadband.saveOk' : 'broadband.saveFail'), ok ? 'success' : 'error')
   return ok
+}
+
+/** 保存宽带凭据并立即拨号验证（拨号结果经 app:dial 事件回显）。 */
+export async function saveAndDial(username, password) {
+  const saved = await saveBroadband(username, password)
+  if (saved) doDial()
+}
+
+/** 清除已保存的宽带账号与密码（确认后执行，不可恢复）。 */
+export async function clearBroadband() {
+  const go = await confirmDialog(t('broadband.account.clearTitle'), t('broadband.account.clearConfirm'))
+  if (!go) return false
+  const ok = await api.ClearBroadband()
+  if (ok) {
+    state.broadband = { username: '', hasPassword: false }
+    showToast(t('broadband.account.cleared'), 'success')
+  } else {
+    showToast(t('broadband.account.clearFail'), 'error')
+  }
+  return ok
+}
+
+/** 受理一键诊断；结果经 app:diag 事件逐条回推。 */
+export function runDiag() {
+  if (state.diag.running) return
+  state.diag = { running: true, steps: [], ok: null, detail: '' }
+  Promise.resolve(api.DiagRun()).then((accepted) => {
+    if (!accepted) {
+      state.diag.running = false
+      showToast(t('broadband.diag.busy'), 'warning')
+    }
+  }).catch(() => {
+    state.diag.running = false
+  })
+}
+
+/** 拉取 PPP 连接详情（宽带页轮询；未连接时 available=false）。 */
+export async function refreshPpp() {
+  try {
+    state.ppp = await api.PppStats()
+  } catch (e) {
+    state.ppp = { available: false, connected: false }
+  }
 }
 
 /** 读取门户认证凭据视图（明文不出后端）。 */
