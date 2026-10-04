@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -20,6 +21,8 @@ import (
 var (
 	modiphlpapi         = windows.NewLazySystemDLL("iphlpapi.dll")
 	procGetIfTable      = modiphlpapi.NewProc("GetIfTable")
+	procGetIfTable2     = modiphlpapi.NewProc("GetIfTable2")
+	procFreeMibTable    = modiphlpapi.NewProc("FreeMibTable")
 	procIcmpCreateFile  = modiphlpapi.NewProc("IcmpCreateFile")
 	procIcmpSendEcho    = modiphlpapi.NewProc("IcmpSendEcho")
 	procIcmpCloseHandle = modiphlpapi.NewProc("IcmpCloseHandle")
@@ -102,6 +105,41 @@ func HostTrafficCounters() (recv, sent int64, ok bool) {
 	return recv, sent, true
 }
 
+// mibIfRow2 与 Win32 MIB_IF_ROW2 布局一致（netioapi.h，x64 步长 1352 字节）。
+// 字段偏移经真实机器 GetIfTable2 缓冲区逐字段实测校准：InterfaceGuid 按
+// 4 字节对齐紧跟 InterfaceIndex（偏移 12）；PhysicalAddress 之后还有
+// PermanentPhysicalAddress[32] 与 MTU 等本功能未用的 60 字节。
+// Flags 位域（实测口径）：bit0 HardwareInterface、bit1 EndPointInterface、
+// bit2 ConnectorPresent —— 物理网卡=0b101，Hyper-V 扩展适配器=0b010，
+// 虚拟交换机 VNIC=0，WAN Miniport=0b10000，区分度完整。
+// 接口类型编码在 NET_LUID 高 16 位。
+type mibIfRow2 struct {
+	InterfaceLuid   uint64      // 0
+	InterfaceIndex  uint32      // 8
+	InterfaceGuid   [16]byte    // 12
+	Alias           [257]uint16 // 28
+	Description     [257]uint16 // 542
+	PhysAddrLength  uint32      // 1056
+	PhysicalAddress [32]byte    // 1060
+	_               [60]byte    // 1092..1151 PermanentPhysicalAddress[32] + MTU 等
+	Flags           uint32      // 1152
+	OperStatus      uint32      // 1156（1 = IF_OPER_STATUS_OPERATIONAL）
+	_               uint32      // 1160 AdminStatus
+	_               uint32      // 1164 MediaConnectState
+	_               [16]byte    // 1168 NetworkGuid
+	_               uint32      // 1184 ConnectionType
+	_               uint32      // 1188 TunnelType
+	Speed           uint64      // 1192（bps）
+	_               [19]uint64  // 1200..1351 收发计数器占位
+}
+
+const mibIfRow2Size = unsafe.Sizeof(mibIfRow2{})
+
+const (
+	flagHardwareInterface = 1 << 0
+	flagConnectorPresent  = 1 << 2
+)
+
 // EthLink 物理以太网口的插线状态。
 type EthLink struct {
 	Descr     string
@@ -109,40 +147,98 @@ type EthLink struct {
 	SpeedMbps uint64
 }
 
-// EthernetLinks 列出物理以太网口(IF_TYPE_ETHERNET_CSMACD)及插线状态。
-// OperStatus == OPERATIONAL 视为已插线;RAS 电话簿里的 WAN Miniport 端口
-// 与物理网卡没有系统级映射,插线状态只能作为选卡参考独立展示。
-// 失败返回 nil。
+// EthernetLinks 列出物理以太网口（仅真实网卡）及插线状态，基于 GetIfTable2。
+// 旧版 GetIfTable 的 MIB_IFROW 没有物理/虚拟标记，Hyper-V 虚拟交换网卡与
+// WAN Miniport 等软件接口的 dwType 同为 6（以太网），会全部混入；且同一张
+// 网卡会产生多行。这里改为 MIB_IF_ROW2 过滤：
+//   - HardwareInterface + ConnectorPresent 位域同时为真才视为物理网卡
+//     （即 Get-NetAdapter -Physical 的判定口径，虚拟交换机 VNIC 两者皆 0）；
+//   - ifType 取自 NET_LUID 高 16 位，仅保留以太网（6）；
+//   - 同一物理网卡（同描述 + 同 MAC）多行去重合并，链路状态取并集。
 func EthernetLinks() []EthLink {
-	buf, num, ok := getIfTableBytes()
-	if !ok {
+	if procGetIfTable2.Find() != nil {
 		return nil
 	}
-	var out []EthLink
+	var tbl unsafe.Pointer
+	if r1, _, _ := procGetIfTable2.Call(uintptr(unsafe.Pointer(&tbl))); r1 != 0 || tbl == nil {
+		return nil
+	}
+	defer procFreeMibTable.Call(uintptr(tbl))
+
+	// 表头为两个 ULONG：NumEntries / TotalNumEntries，行紧随其后
+	num := int(binary.LittleEndian.Uint32(unsafe.Slice((*byte)(tbl), 8)))
+	if num <= 0 || num > 4096 {
+		return nil
+	}
+
+	type linkKey = string
+	out := make([]EthLink, 0, num)
+	index := make(map[linkKey]int, num)
 	for i := 0; i < num; i++ {
-		off := 4 + i*int(mibIfRowSize)
-		if off+int(mibIfRowSize) > len(buf) {
-			break
-		}
-		row := (*mibIfRow)(unsafe.Pointer(&buf[off]))
-		if row.Type != ifTypeEthernet {
+		row := (*mibIfRow2)(unsafe.Add(tbl, uintptr(8+i*int(mibIfRow2Size))))
+		if uint16(row.InterfaceLuid>>48) != ifTypeEthernet {
 			continue
 		}
-		descrLen := row.DescrLen
-		if descrLen > uint32(len(row.Descr)) {
-			descrLen = uint32(len(row.Descr))
-		}
-		descr := strings.TrimSpace(string(row.Descr[:descrLen]))
-		if descr == "" {
+		if row.Flags&(flagHardwareInterface|flagConnectorPresent) !=
+			flagHardwareInterface|flagConnectorPresent {
 			continue
 		}
-		out = append(out, EthLink{
-			Descr:     descr,
-			Up:        row.OperStatus == ifOperOperat,
-			SpeedMbps: uint64(row.Speed) / 1_000_000,
-		})
+		descr := strings.TrimSpace(utf16Nul(row.Description[:]))
+		if descr == "" || !printableASCII(descr) {
+			continue // 步长异常时的防线：宁可少报也不输出乱码
+		}
+		macLen := row.PhysAddrLength
+		if macLen > uint32(len(row.PhysicalAddress)) {
+			macLen = uint32(len(row.PhysicalAddress))
+		}
+		// 同一张物理网卡会以多个 NDIS 过滤层接口出现（描述带不同过滤层后缀），
+		// 按 MAC 去重合并；无 MAC 时退回按描述去重
+		key := string(row.PhysicalAddress[:macLen])
+		if macLen == 0 {
+			key = "\x00" + descr
+		}
+		up := row.OperStatus == ifOperOperat
+		speedMbps := row.Speed / 1_000_000
+		if at, ok := index[key]; ok {
+			if up {
+				out[at].Up = true
+			}
+			if speedMbps > out[at].SpeedMbps {
+				out[at].SpeedMbps = speedMbps
+			}
+			if len(descr) < len(out[at].Descr) {
+				out[at].Descr = descr // 裸网卡名优先于过滤层后缀名
+			}
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, EthLink{Descr: descr, Up: up, SpeedMbps: speedMbps})
 	}
 	return out
+}
+
+// utf16Nul 解码以 NUL 结尾的 UTF-16 序列。
+func utf16Nul(src []uint16) string {
+	for i, v := range src {
+		if v == 0 {
+			return string(utf16.Decode(src[:i]))
+		}
+	}
+	return string(utf16.Decode(src))
+}
+
+// printableASCII 判断字符串是否为非空可打印 ASCII（网卡描述来自驱动，均为 ASCII；
+// 结构体步长若与系统不符会解出乱码，用此校验兜底）。
+func printableASCII(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 // IcmpReachable 用 IcmpSendEcho 原生探测主机可达性(与 ping -n 1 -w <timeoutMs> 等价)。
