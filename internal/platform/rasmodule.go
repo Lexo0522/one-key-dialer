@@ -59,16 +59,16 @@ func (m *RasModule) Connect(creds *model.DialCredentials) (int, string) {
 	if !m.EnsureEntry() {
 		return -1, "ensure connection failed"
 	}
-	m.mu.Lock()
-	m.activeConn = m.connectionName
-	m.mu.Unlock()
-
 	code, ok := RasDial(m.connectionName, m.phonebookFile,
 		[]byte(creds.Username), creds.PasswordBytes())
 	if !ok {
 		return -1, "RasDial API unavailable"
 	}
+	// activeConn 只反映真实结果:拨号成功置位,失败不再乐观前置
 	if code == 0 {
+		m.mu.Lock()
+		m.activeConn = m.connectionName
+		m.mu.Unlock()
 		return code, "RasDial API"
 	}
 	return code, RasErrorText(code)

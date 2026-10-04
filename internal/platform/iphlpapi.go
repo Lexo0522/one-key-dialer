@@ -59,23 +59,37 @@ type mibIfRow struct {
 
 const mibIfRowSize = unsafe.Sizeof(mibIfRow{})
 
-// HostTrafficCounters 返回主机聚合流量计数器 [receivedBytes, sentBytes]。
-// 计数器为 32 位(与 netstat -e 相同),约 4GiB 回绕一次,由上层增量逻辑兜底。
-// 失败返回 ok=false。
-func HostTrafficCounters() (recv, sent int64, ok bool) {
+const (
+	ifTypeEthernet = 6 // IF_TYPE_ETHERNET_CSMACD
+	ifOperOperat   = 1 // IF_OPER_STATUS_OPERATIONAL
+)
+
+// getIfTableBytes 调用 GetIfTable 返回原始缓冲与接口行数;失败 ok=false。
+func getIfTableBytes() ([]byte, int, bool) {
 	var size uint32
 	// 第一次调用传空缓冲,取所需大小(返回 ERROR_INSUFFICIENT_BUFFER)
 	procGetIfTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
 	if size < uint32(4+mibIfRowSize) || size > 16<<20 {
-		return 0, 0, false
+		return nil, 0, false
 	}
 	buf := make([]byte, size)
 	r1, _, _ := procGetIfTable.Call(uintptr(unsafe.Pointer(&buf[0])),
 		uintptr(unsafe.Pointer(&size)), 0)
 	if r1 != 0 {
-		return 0, 0, false
+		return nil, 0, false
 	}
 	num := int(binary.LittleEndian.Uint32(buf))
+	return buf, num, true
+}
+
+// HostTrafficCounters 返回主机聚合流量计数器 [receivedBytes, sentBytes]。
+// 计数器为 32 位(与 netstat -e 相同),约 4GiB 回绕一次,由上层增量逻辑兜底。
+// 失败返回 ok=false。
+func HostTrafficCounters() (recv, sent int64, ok bool) {
+	buf, num, ok := getIfTableBytes()
+	if !ok {
+		return 0, 0, false
+	}
 	for i := 0; i < num; i++ {
 		off := 4 + i*int(mibIfRowSize)
 		if off+int(mibIfRowSize) > len(buf) {
@@ -86,6 +100,49 @@ func HostTrafficCounters() (recv, sent int64, ok bool) {
 		sent += int64(row.OutOctets)
 	}
 	return recv, sent, true
+}
+
+// EthLink 物理以太网口的插线状态。
+type EthLink struct {
+	Descr     string
+	Up        bool
+	SpeedMbps uint64
+}
+
+// EthernetLinks 列出物理以太网口(IF_TYPE_ETHERNET_CSMACD)及插线状态。
+// OperStatus == OPERATIONAL 视为已插线;RAS 电话簿里的 WAN Miniport 端口
+// 与物理网卡没有系统级映射,插线状态只能作为选卡参考独立展示。
+// 失败返回 nil。
+func EthernetLinks() []EthLink {
+	buf, num, ok := getIfTableBytes()
+	if !ok {
+		return nil
+	}
+	var out []EthLink
+	for i := 0; i < num; i++ {
+		off := 4 + i*int(mibIfRowSize)
+		if off+int(mibIfRowSize) > len(buf) {
+			break
+		}
+		row := (*mibIfRow)(unsafe.Pointer(&buf[off]))
+		if row.Type != ifTypeEthernet {
+			continue
+		}
+		descrLen := row.DescrLen
+		if descrLen > uint32(len(row.Descr)) {
+			descrLen = uint32(len(row.Descr))
+		}
+		descr := strings.TrimSpace(string(row.Descr[:descrLen]))
+		if descr == "" {
+			continue
+		}
+		out = append(out, EthLink{
+			Descr:     descr,
+			Up:        row.OperStatus == ifOperOperat,
+			SpeedMbps: uint64(row.Speed) / 1_000_000,
+		})
+	}
+	return out
 }
 
 // IcmpReachable 用 IcmpSendEcho 原生探测主机可达性(与 ping -n 1 -w <timeoutMs> 等价)。
