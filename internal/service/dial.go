@@ -47,6 +47,9 @@ type DialView interface {
 	Notify(title, message, tone string)
 	OnDialPhase(phase string)
 	OnConnectionState(online bool)
+	// OnDialFinished 一次拨号尝试的最终结果（成功 / RAS 通但无外网 / 拨号失败），
+	// 供界面做结构化回显，不必到日志里翻明细。
+	OnDialFinished(ok bool, code int, detail string)
 	CaptureCredentials() *model.DialCredentials
 	ValidateInput(interactive bool) bool
 }
@@ -237,6 +240,7 @@ func (o *DialOrchestrator) runDial(creds *model.DialCredentials, saveAfterSucces
 	code, output := o.port.Connect(creds)
 	if code < 0 && output == "" {
 		o.view.Log(LevelError, i18n.Tf("dial.dialError", "dial failed"))
+		o.view.OnDialFinished(false, code, i18n.Tf("dial.dialError", "dial failed"))
 		return
 	}
 	o.handleDialResult(DialResult{Code: code, Output: output}, saveAfterSuccess)
@@ -293,6 +297,7 @@ func (o *DialOrchestrator) handleDialResult(result DialResult, saveAfterSuccess 
 			o.view.OnConnectionState(true)
 			o.view.Log(LevelSuccess, i18n.T("dial.success"))
 			o.view.Notify(i18n.T("notify.connected.title"), i18n.T("notify.connected.body"), ToneSuccess)
+			o.view.OnDialFinished(true, 0, i18n.Tf("dial.probe", outcome.ShortLine()))
 			if saveAfterSuccess {
 				o.env.PersistAfterSuccess()
 			}
@@ -300,7 +305,9 @@ func (o *DialOrchestrator) handleDialResult(result DialResult, saveAfterSuccess 
 		}
 
 		o.view.OnConnectionState(false)
-		o.view.Log(LevelWarning, i18n.Tf("dial.rasNoInternet", model.OutcomeRasNoInternet(), outcome.ShortLine()))
+		noNet := i18n.Tf("dial.rasNoInternet", model.OutcomeRasNoInternet(), outcome.ShortLine())
+		o.view.Log(LevelWarning, noNet)
+		o.view.OnDialFinished(false, 0, noNet)
 		if o.env.DisconnectOnNoInternet() {
 			code, err := o.port.Disconnect()
 			switch {
@@ -324,6 +331,7 @@ func (o *DialOrchestrator) handleDialResult(result DialResult, saveAfterSuccess 
 	o.view.Log(LevelError, i18n.Tf("dial.failed", result.Code))
 	o.view.Log(LevelWarning, "  "+detail)
 	o.view.Notify(i18n.T("notify.failed.title"), detail, ToneError)
+	o.view.OnDialFinished(false, result.Code, detail)
 }
 
 // DescribeFailure 把 RAS 错误码映射为中文处理建议。

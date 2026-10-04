@@ -296,6 +296,13 @@ func (v dialView) OnDialPhase(phase string) {
 
 func (v dialView) OnConnectionState(online bool) { v.a.setOnline(online) }
 
+// OnDialFinished 结构化拨号结果:广播给前端（宽带页内联回显）并唤醒诊断试拨等待者。
+func (v dialView) OnDialFinished(ok bool, code int, detail string) {
+	p := DialResultPayload{Ok: ok, Code: code, Detail: detail, At: time.Now().UnixMilli()}
+	v.a.emit(EvtDial, p)
+	v.a.fanOutDialResult(p)
+}
+
 func (v dialView) ValidateInput(interactive bool) bool {
 	username, password := v.a.takePending()
 	if username == "" && len(password) == 0 {

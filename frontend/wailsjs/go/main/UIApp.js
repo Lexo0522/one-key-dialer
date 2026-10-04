@@ -14,8 +14,16 @@ export function CheckUpdate(arg1) {
   return window['go']['main']['UIApp']['CheckUpdate'](arg1);
 }
 
+export function ClearBroadband() {
+  return window['go']['main']['UIApp']['ClearBroadband']();
+}
+
 export function DiagListDevices() {
   return window['go']['main']['UIApp']['DiagListDevices']();
+}
+
+export function DiagRun() {
+  return window['go']['main']['UIApp']['DiagRun']();
 }
 
 export function DiagSelectDevice(arg1, arg2, arg3) {
@@ -36,6 +44,10 @@ export function DownloadUpdate() {
 
 export function ExitProgram() {
   return window['go']['main']['UIApp']['ExitProgram']();
+}
+
+export function EthLinks() {
+  return window['go']['main']['UIApp']['EthLinks']();
 }
 
 export function GetBroadband() {
@@ -64,6 +76,10 @@ export function IsWindowVisible() {
 
 export function OpenReleasePage(arg1) {
   return window['go']['main']['UIApp']['OpenReleasePage'](arg1);
+}
+
+export function PppStats() {
+  return window['go']['main']['UIApp']['PppStats']();
 }
 
 export function SaveBroadband(arg1, arg2) {

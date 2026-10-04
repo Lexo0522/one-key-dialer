@@ -75,7 +75,7 @@ export namespace main {
 	    static createFrom(source: any = {}) {
 	        return new DeviceOption(source);
 	    }
-	
+	    
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.port = source["port"];
@@ -83,6 +83,88 @@ export namespace main {
 	        this.existing = source["existing"];
 	        this.default = source["default"];
 	        this.current = source["current"];
+	    }
+	}
+	export class DialResultPayload {
+	    ok: boolean;
+	    code: number;
+	    detail: string;
+	    at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DialResultPayload(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.code = source["code"];
+	        this.detail = source["detail"];
+	        this.at = source["at"];
+	    }
+	}
+	export class DiagStepPayload {
+	    phase: string;
+	    index: number;
+	    ok: boolean;
+	    text: string;
+	    detail?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiagStepPayload(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.phase = source["phase"];
+	        this.index = source["index"];
+	        this.ok = source["ok"];
+	        this.text = source["text"];
+	        this.detail = source["detail"];
+	    }
+	}
+	export class PppStatsDTO {
+	    available: boolean;
+	    connected: boolean;
+	    localIp: string;
+	    serverIp: string;
+	    bps: number;
+	    bytesUp: number;
+	    bytesDown: number;
+	    errTotal: number;
+	    durationSec: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PppStatsDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.connected = source["connected"];
+	        this.localIp = source["localIp"];
+	        this.serverIp = source["serverIp"];
+	        this.bps = source["bps"];
+	        this.bytesUp = source["bytesUp"];
+	        this.bytesDown = source["bytesDown"];
+	        this.errTotal = source["errTotal"];
+	        this.durationSec = source["durationSec"];
+	    }
+	}
+	export class EthLinkDTO {
+	    descr: string;
+	    up: boolean;
+	    speedMbps: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new EthLinkDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.descr = source["descr"];
+	        this.up = source["up"];
+	        this.speedMbps = source["speedMbps"];
 	    }
 	}
 	export class LangPayload {

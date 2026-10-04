@@ -9,7 +9,11 @@ export function CancelUpdateDownload():Promise<void>;
 
 export function CheckUpdate(arg1:boolean):Promise<void>;
 
+export function ClearBroadband():Promise<boolean>;
+
 export function DiagListDevices():Promise<Array<main.DeviceOption>>;
+
+export function DiagRun():Promise<boolean>;
 
 export function DiagSelectDevice(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
@@ -18,6 +22,8 @@ export function Dial():Promise<boolean>;
 export function Disconnect():Promise<boolean>;
 
 export function DownloadUpdate():Promise<void>;
+
+export function EthLinks():Promise<Array<main.EthLinkDTO>>;
 
 export function ExitProgram():Promise<void>;
 
@@ -34,6 +40,8 @@ export function InstallUpdate():Promise<void>;
 export function IsWindowVisible():Promise<boolean>;
 
 export function OpenReleasePage(arg1:string):Promise<void>;
+
+export function PppStats():Promise<main.PppStatsDTO>;
 
 export function SaveBroadband(arg1:string,arg2:string):Promise<boolean>;
 

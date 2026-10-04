@@ -82,6 +82,28 @@ var zh = map[string]string{
 	"broadband.saved":      "宽带账号已保存",
 	"broadband.saveFailed": "保存宽带账号失败: {0}",
 	"broadband.loadFailed": "加载宽带账号失败（请重新填写）: {0}",
+	"broadband.cleared":    "已清除宽带账号与密码",
+	"broadband.clearFailed":"清除宽带账号失败: {0}",
+
+	// 一键诊断（宽带页）
+	"diag.credOk":           "宽带凭据已配置（{0}）",
+	"diag.credMissing":      "宽带凭据未配置，请先在宽带页填写账号密码",
+	"diag.entryOk":          "电话簿条目正常（{0} / {1}）",
+	"diag.entryMissing":     "电话簿条目缺失，拨号时会自动重建",
+	"diag.links":            "物理网口 {1} 个，其中 {0} 个已连接",
+	"diag.noEthernet":       "未发现物理以太网口（PPPoE 依赖有线网卡）",
+	"diag.linkUp":           "已连接 ({0}Mbps)",
+	"diag.linkDown":         "未插线",
+	"diag.probe":            "外网探测: {0}",
+	"diag.probeSkipped":     "当前离线，跳过外网探测",
+	"diag.dialing":          "正在试拨验证凭据…",
+	"diag.dialSkippedNoCred":"凭据未配置，跳过试拨",
+	"diag.dialSkippedBusy":  "拨号器忙（手动拨号/自动重连进行中），跳过试拨",
+	"diag.dialOk":           "试拨成功",
+	"diag.dialFailed":       "试拨失败（错误码 {0}）：{1}",
+	"diag.dialTimeout":      "试拨超时，请稍后在日志页查看进展",
+	"diag.allOk":            "诊断完成：未发现问题",
+	"diag.issuesFound":      "诊断完成：发现以下问题",
 
 	// 开机自启
 	"autostart.registered":     "已注册开机自启动 (直接启动, 无 VBS)",

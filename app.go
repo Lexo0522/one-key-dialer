@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
@@ -29,6 +30,8 @@ const (
 	EvtNotify   = "app:notify"
 	EvtLang     = "app:lang"
 	EvtWifi     = "app:wifi"
+	EvtDial     = "app:dial"
+	EvtDiag     = "app:diag"
 )
 
 // 更新阶段标识：随 app:update 事件下发，前端据此决定弹窗形态与可用操作。
@@ -195,6 +198,11 @@ type App struct {
 	ipcSrv *ipc.Server
 	// memStop 关闭后终止周期性内存归还（构造时创建，shutdown 时关闭）。
 	memStop chan struct{}
+
+	// 诊断与拨号结果结构化回显（app_diag.go）
+	diagBusy      atomic.Bool
+	dialWaitersMu sync.Mutex
+	dialWaiters   []chan DialResultPayload
 }
 
 // NewApp 构造应用门面。

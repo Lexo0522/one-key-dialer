@@ -203,6 +203,44 @@ func (u *UIApp) DiagSelectDevice(port, device string, rewrite bool) string {
 	return out
 }
 
+// ============================ 诊断 / 连接详情 ============================
+
+// ClearBroadband 清空已保存的宽带凭据（代理侧异步落盘）。
+func (u *UIApp) ClearBroadband() bool {
+	var ok bool
+	if err := u.callInto("ClearBroadband", &ok); err != nil {
+		return false
+	}
+	return ok
+}
+
+// PppStats 返回当前 PPP 连接的链路级详情。
+func (u *UIApp) PppStats() PppStatsDTO {
+	var out PppStatsDTO
+	if err := u.callInto("PppStats", &out); err != nil {
+		return PppStatsDTO{}
+	}
+	return out
+}
+
+// EthLinks 返回物理以太网口的插线状态。
+func (u *UIApp) EthLinks() []EthLinkDTO {
+	var out []EthLinkDTO
+	if err := u.callInto("EthLinks", &out); err != nil {
+		return []EthLinkDTO{}
+	}
+	return out
+}
+
+// DiagRun 受理一次一键诊断；结果经 app:diag 事件逐条推送。
+func (u *UIApp) DiagRun() bool {
+	var ok bool
+	if err := u.callInto("DiagRun", &ok); err != nil {
+		return false
+	}
+	return ok
+}
+
 // ============================ WiFi / 门户认证 ============================
 
 func (u *UIApp) WifiStatus() WifiStatusDTO {
