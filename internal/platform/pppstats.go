@@ -108,11 +108,11 @@ func fillRasStats(h uintptr, info *RasStatInfo) {
 		return
 	}
 	dw := func(off int) uint32 { return binary.LittleEndian.Uint32(buf[off:]) }
-	info.BytesUp = uint64(dw(4))  // dwBytesXmited
+	info.BytesUp = uint64(dw(4))   // dwBytesXmited
 	info.BytesDown = uint64(dw(8)) // dwBytesRcvd
 	info.ErrTotal = uint64(dw(20)) + uint64(dw(24)) + uint64(dw(28)) +
 		uint64(dw(32)) + uint64(dw(36)) + uint64(dw(40))
-	info.Bps = uint64(dw(56))               // dwBps
+	info.Bps = uint64(dw(56))                // dwBps
 	info.DurationSec = uint64(dw(60)) / 1000 // dwConnectDuration(ms)
 }
 

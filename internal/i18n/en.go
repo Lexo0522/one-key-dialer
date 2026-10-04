@@ -74,11 +74,11 @@ var en = map[string]string{
 	"reconnect.monitorError": "Monitor error: {0}: {1}",
 
 	// Broadband credential
-	"broadband.saved":      "Broadband account saved",
-	"broadband.saveFailed": "Failed to save the broadband account: {0}",
-	"broadband.loadFailed": "Failed to load the broadband account (please re-enter): {0}",
-	"broadband.cleared":    "Broadband account and password cleared",
-	"broadband.clearFailed":"Failed to clear the broadband account: {0}",
+	"broadband.saved":       "Broadband account saved",
+	"broadband.saveFailed":  "Failed to save the broadband account: {0}",
+	"broadband.loadFailed":  "Failed to load the broadband account (please re-enter): {0}",
+	"broadband.cleared":     "Broadband account and password cleared",
+	"broadband.clearFailed": "Failed to clear the broadband account: {0}",
 
 	// One-click diagnostics (Broadband tab)
 	"diag.credOk":            "Broadband credentials configured ({0})",
