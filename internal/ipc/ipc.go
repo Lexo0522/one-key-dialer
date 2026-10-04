@@ -16,6 +16,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -250,7 +251,15 @@ func (s *Server) handleReq(c *serverConn, msg *message) {
 			return
 		}
 	}
-	result, err := s.handler(msg.Method, params)
+	// handler 内的 panic 只影响本次调用:代理进程崩溃同样会留下幽灵托盘图标
+	result, err := func() (result any, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("handler panic: %v", r)
+			}
+		}()
+		return s.handler(msg.Method, params)
+	}()
 	res := message{Type: "res", ID: msg.ID, OK: err == nil}
 	if err != nil {
 		res.Error = err.Error()

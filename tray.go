@@ -24,6 +24,11 @@ var (
 	mItemHangup *systray.MenuItem
 	mItemUpdate *systray.MenuItem
 	mItemExit   *systray.MenuItem
+
+	// trayExitCh 由托盘消息循环在图标删除完成后关闭（onTrayExit 在
+	// WM_DESTROY 的 nid.delete 之后回调），供 stopTray 有界等待落定。
+	trayExitCh   = make(chan struct{})
+	trayExitOnce sync.Once
 )
 
 // initTray 启动托盘（独立 goroutine 中运行消息循环）。
@@ -126,10 +131,20 @@ func onTrayExit() {
 	trayMu.Lock()
 	trayReady = false
 	trayMu.Unlock()
+	trayExitOnce.Do(func() { close(trayExitCh) })
 }
 
-// stopTray 退出托盘。
-func stopTray() { systray.Quit() }
+// stopTray 退出托盘并等待图标真正被删除（至多 1 秒）。
+// systray.Quit 只是向托盘消息循环投递 WM_CLOSE，图标的 NIM_DELETE 要等
+// 消息循环异步处理；若不等待，随后的 os.Exit（ExitProgram 的 5 秒硬超时）
+// 可能在删除落地前杀掉进程，任务栏残留幽灵图标（进程已消失、右键无响应）。
+func stopTray() {
+	systray.Quit()
+	select {
+	case <-trayExitCh:
+	case <-time.After(time.Second):
+	}
+}
 
 // showTrayNotification 弹出托盘气泡。
 func showTrayNotification(title, message string) {

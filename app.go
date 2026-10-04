@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -361,8 +362,30 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 
-// shutdown 有序停机:持久化 → 停服务 → 停 IPC → 清内存密码 → 退托盘。
+// shutdown 有序停机:摘托盘 → 断 IPC → 持久化 → 停服务 → 清内存密码。
 func (a *App) shutdown(ctx context.Context) {
+	// 各阶段耗时留痕:停机卡顿时日志可定位是托盘、管道还是服务收尾。
+	t0 := time.Now()
+	mark := func(name string, at time.Time) string {
+		return fmt.Sprintf("%s=%dms", name, time.Since(at).Milliseconds())
+	}
+
+	// 最先摘托盘图标并断开管道。二者都必须赶在 ExitProgram 的 5 秒硬退出
+	// 之前完成:图标删除要经托盘消息循环异步落地(见 stopTray),此前排到
+	// 停机末尾,拨号/服务收尾一旦拖满 5 秒,进程会被硬杀在 NIM_DELETE 之前,
+	// 任务栏残留进程已消失、右键无响应的幽灵图标;管道同理,晚一秒断开,
+	// UI 进程就多挂一秒。
+	stopAt := time.Now()
+	stopTray()
+	markTray := mark("tray", stopAt)
+
+	ipcAt := time.Now()
+	if a.ipcSrv != nil {
+		a.ipcSrv.Close() // 断开 UI 客户端,它们会自行退出
+		a.ipcSrv = nil
+	}
+	markIpc := mark("ipc", ipcAt)
+
 	// 先停语言轮询与内存看护，避免停机期间继续运行
 	if a.langStop != nil {
 		close(a.langStop)
@@ -375,17 +398,20 @@ func (a *App) shutdown(ctx context.Context) {
 	a.settings.FlushPending()
 	a.logSvc.Flush()
 
+	setAt := time.Now()
 	a.reconnect.Stop()
 	a.portalSvc.Stop()
 	a.wifiSvc.Stop()
 	a.monitor.Stop()
-	a.orch.Shutdown(3 * time.Second)
-	a.exec.Shutdown(2 * time.Second)
+	markServices := mark("services", setAt)
 
-	if a.ipcSrv != nil {
-		a.ipcSrv.Close() // 断开 UI 客户端,它们会自行退出
-		a.ipcSrv = nil
-	}
+	orchAt := time.Now()
+	a.orch.Shutdown(3 * time.Second)
+	markOrch := mark("orch", orchAt)
+
+	execAt := time.Now()
+	a.exec.Shutdown(2 * time.Second)
+	markExec := mark("exec", execAt)
 
 	a.bbCredMu.Lock()
 	a.bbCred.ClearPassword()
@@ -395,7 +421,9 @@ func (a *App) shutdown(ctx context.Context) {
 	a.wifiPsk = nil
 	a.portalCredMu.Unlock()
 	a.clearPendingPassword()
-	stopTray()
+
+	a.logSvc.Info(fmt.Sprintf("停机完成: %s %s %s %s %s 总计=%dms",
+		markTray, markIpc, markServices, markOrch, markExec, time.Since(t0).Milliseconds()))
 	a.logSvc.Flush()
 }
 
