@@ -42,12 +42,12 @@ export function DownloadUpdate() {
   return window['go']['main']['UIApp']['DownloadUpdate']();
 }
 
-export function ExitProgram() {
-  return window['go']['main']['UIApp']['ExitProgram']();
-}
-
 export function EthLinks() {
   return window['go']['main']['UIApp']['EthLinks']();
+}
+
+export function ExitProgram() {
+  return window['go']['main']['UIApp']['ExitProgram']();
 }
 
 export function GetBroadband() {
