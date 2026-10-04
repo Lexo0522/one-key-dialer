@@ -781,10 +781,9 @@ const statCards = computed(() => {
   font-weight: 700;
 }
 
-/* 图表卡片 */
+/* 图表卡片：高度与 Clash Verge 流量图一致（绘图区固定 130px） */
 .chart-card {
-  flex: 1 1 auto;
-  min-height: 200px;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
 }
@@ -801,10 +800,10 @@ const statCards = computed(() => {
   color: var(--c-warning);
 }
 
-/* 图表区：CV 的绘图盒子（圆角 + 悬停底色） */
+/* 图表区：CV 的绘图盒子（圆角 + 悬停底色），高度固定 130px */
 .chart-wrap {
-  flex: 1;
-  min-height: 0;
+  flex: 0 0 auto;
+  height: 130px;
   position: relative;
   overflow: hidden;
   border-radius: var(--radius-sm);
@@ -937,13 +936,13 @@ const statCards = computed(() => {
 }
 
 .stat-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 15px;
   flex: 0 0 auto;
 }
 
