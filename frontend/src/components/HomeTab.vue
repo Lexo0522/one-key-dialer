@@ -21,55 +21,40 @@
       </div>
     </div>
 
-    <!-- 近 10 分钟流量折线图 -->
+    <!-- 流量统计图：Clash Verge 同款 Canvas 折线图（平滑贝塞尔 + 渐变填充 + 悬停十字线） -->
     <div class="card chart-card">
       <div class="card-head">
         <div class="card-title"><i class="fas fa-chart-line"></i>{{ t('home.chart.title') }}</div>
-        <div class="legend">
-          <span class="lg up">{{ t('home.chart.up') }}</span>
-          <span class="lg down">{{ t('home.chart.down') }}</span>
-          <span v-if="!state.prefs.sniffing" class="lg paused">
+        <div class="chart-hints">
+          <span v-if="!state.prefs.sniffing" class="hint-chip paused">
             <i class="fas fa-pause"></i>{{ t('home.chart.paused') }}
           </span>
+          <span v-else-if="!displayData.length" class="hint-chip">{{ t('home.chart.empty') }}</span>
         </div>
       </div>
 
-      <div class="chart-wrap">
-        <svg ref="chartWrap" class="chart" :viewBox="`0 0 ${vbW} 250`" preserveAspectRatio="xMidYMid meet" role="img"
-             :aria-label="t('home.chart.title')">
-          <!-- 网格与 Y 轴 -->
-          <g>
-            <line v-for="g in gridLines" :key="'g' + g.v"
-                  x1="58" :x2="g.x2" :y1="g.y" :y2="g.y"
-                  :stroke="g.v === 0 ? 'var(--c-chart-axis)' : 'var(--c-chart-grid)'"
-                  stroke-width="1" :stroke-dasharray="g.v === 0 ? '' : '4 4'"/>
-            <text v-for="g in gridLines" :key="'yl' + g.v"
-                  x="50" :y="g.y + 4" text-anchor="end" class="axis-label">{{ g.label }}</text>
-          </g>
-          <!-- X 轴 -->
-          <g>
-            <text v-for="(x, i) in xTicks" :key="'xt' + i"
-                  :x="x.x" y="244" text-anchor="middle" class="axis-label">{{ x.label }}</text>
-          </g>
-          <!-- 下载（蓝） / 上传（橙） -->
-          <path v-if="snap.downArea" :d="snap.downArea" fill="var(--c-chart-down)" opacity="0.10"/>
-          <polyline v-if="snap.down.length" :points="snap.downPoints"
-                    fill="none" stroke="var(--c-chart-down)" stroke-width="2"
-                    stroke-linejoin="round" stroke-linecap="round"/>
-          <path v-if="snap.upArea" :d="snap.upArea" fill="var(--c-chart-up)" opacity="0.10"/>
-          <polyline v-if="snap.up.length" :points="snap.upPoints"
-                    fill="none" stroke="var(--c-chart-up)" stroke-width="2"
-                    stroke-linejoin="round" stroke-linecap="round"/>
-          <circle v-if="snap.lastDown" :cx="snap.lastDown.x" :cy="snap.lastDown.y" r="3.5" fill="var(--c-chart-down)"/>
-          <circle v-if="snap.lastUp" :cx="snap.lastUp.x" :cy="snap.lastUp.y" r="3.5" fill="var(--c-chart-up)"/>
-          <!-- 空态 / 暂停提示 -->
-          <text v-if="!snap.hasData" :x="vbW / 2" y="130" text-anchor="middle" class="empty-label">
-            {{ t('home.chart.empty') }}
-          </text>
-          <text v-else-if="!state.prefs.sniffing" :x="vbW / 2" y="130" text-anchor="middle" class="empty-label">
-            {{ t('home.chart.paused') }}
-          </text>
-        </svg>
+      <div ref="chartWrap" class="chart-wrap" @click="toggleStyle"
+           @mousemove="onGraphMove" @mouseleave="onGraphLeave">
+        <canvas ref="canvasRef" class="chart-canvas"></canvas>
+        <canvas v-if="tooltip.visible" ref="hoverCanvasRef" class="chart-canvas chart-hover"></canvas>
+
+        <!-- 叠加层：时间范围（点击循环 1/5/10 分钟） -->
+        <span class="cv-range" @click.stop="cycleRange">{{ tf('home.chart.rangeMinutes', timeRange) }}</span>
+        <!-- 叠加层：图例 -->
+        <div class="cv-legend">
+          <span class="cv-up">{{ t('home.chart.up') }}</span>
+          <span class="cv-down">{{ t('home.chart.down') }}</span>
+        </div>
+        <!-- 叠加层：图表样式与诊断 -->
+        <span class="cv-style">{{ chartStyle === 'bezier' ? t('home.chart.styleSmooth') : t('home.chart.styleLinear') }}</span>
+        <span class="cv-diag">{{ tf('home.chart.diagnostics', displayData.length, TARGET_FPS) }}</span>
+
+        <!-- 悬停数值提示 -->
+        <div v-if="tooltip.visible" class="cv-tooltip" :style="tooltipStyle">
+          <div class="cv-tt-time">{{ tooltip.time }}</div>
+          <div class="cv-tt-up">↑ {{ tooltip.upSpeed }}</div>
+          <div class="cv-tt-down">↓ {{ tooltip.downSpeed }}</div>
+        </div>
       </div>
     </div>
 
@@ -90,12 +75,9 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { state, doDial, doDisconnect, formatSpeed, formatBytes, formatDuration } from '../store'
-import { t } from '../i18n'
-
-const SNIFF_WINDOW_MS = 10 * 60 * 1000
-const H = 250, PAD_L = 58, PAD_R = 14, PAD_T = 14, PAD_B = 26
+import { t, tf } from '../i18n'
 
 // ------------------------------------------------------------ 宽带账号与拨号 ----
 
@@ -117,124 +99,539 @@ function onDialToggle() {
   else doDial()
 }
 
-// ------------------------------------------------------------ 折线图 ----
+// ------------------------------------------------------ 流量图（Clash Verge 同款） ----
+// 1:1 移植 Clash Verge Rev 的 EnhancedCanvasTrafficGraph：
+// 常量、Y 轴动态标定（min/max + 10% 余量）、中点二次贝塞尔、渐变面积填充、
+// 时间轴自适应标注、悬停虚线十字线与数值浮层、点击切换平滑/直线、
+// 时间范围 1/5/10 分钟循环、DPR 缩放、失焦/数据过期暂停重绘。
+const MAX_POINTS = 300
+const TARGET_FPS = 15
+const LINE_WIDTH_UP = 2.5
+const LINE_WIDTH_DOWN = 2.5
+const LINE_WIDTH_GRID = 0.5
+const ALPHA_GRADIENT = 0.15
+const ALPHA_LINE = 0.9
+const PADDING_TOP = 16
+const PADDING_RIGHT = 16
+const PADDING_BOTTOM = 32
+const PADDING_LEFT = 35
+const STALE_DATA_THRESHOLD = 2500 // 超时无新数据 => 暂停重绘，保持最后一帧
 
 const chartWrap = ref(null)
-const vbW = ref(680)
-let resizeObs = null
+const canvasRef = ref(null)
+const hoverCanvasRef = ref(null)
 
-onMounted(() => {
-  if (typeof ResizeObserver === 'undefined' || !chartWrap.value) return
-  resizeObs = new ResizeObserver((entries) => {
-    const w = Math.round(entries[0].contentRect.width)
-    if (w > 0 && Math.abs(w - vbW.value) > 2) {
-      vbW.value = Math.max(360, w)
-      rebuild()
-    }
-  })
-  resizeObs.observe(chartWrap.value)
+const timeRange = ref(10) // 1 | 5 | 10（分钟）
+const chartStyle = ref('bezier') // bezier | line
+const tooltip = reactive({
+  visible: false,
+  x: 0,
+  y: 0,
+  upSpeed: '',
+  downSpeed: '',
+  time: '',
+  dataIndex: -1,
+  highlightY: 0,
 })
 
-onUnmounted(() => {
-  if (resizeObs) resizeObs.disconnect()
-})
-
-function niceMax(v) {
-  if (!(v > 0)) return 1024
-  const pow = Math.pow(10, Math.floor(Math.log10(v)))
-  const n = v / pow
-  const m = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10
-  return m * pow
+// 主题色从 CSS 变量解析（CV 用 MUI palette，随主题变化；本应用同理）
+const colors = reactive({ up: '', down: '', grid: '', text: '', bg: '' })
+const COLOR_VARS = {
+  up: '--c-chart-up',
+  down: '--c-chart-down',
+  grid: '--c-chart-grid',
+  text: '--c-chart-axis',
+  bg: '--c-card',
 }
-
-function unitOf(max) {
-  if (max >= 1e9) return { div: 1e9, suffix: 'G' }
-  if (max >= 1e6) return { div: 1e6, suffix: 'M' }
-  if (max >= 1e3) return { div: 1e3, suffix: 'K' }
-  return { div: 1, suffix: '' }
-}
-
-function pad2(n) {
-  return String(n).padStart(2, '0')
-}
-
-const snap = ref({ up: [], down: [], upPoints: '', downPoints: '', upArea: '', downArea: '', lastUp: null, lastDown: null, hasData: false })
-const unit = ref({ div: 1, suffix: '' })
-const gridLines = ref([])
-const xTicks = ref([])
-
-function rebuild() {
-  const W = vbW.value
-  const plotW = W - PAD_L - PAD_R
-  const plotH = H - PAD_T - PAD_B
-  const now = Date.now()
-  const t0 = now - SNIFF_WINDOW_MS
-  const samples = state.samples
-  const hasData = samples.length > 0
-
-  let max = 0
-  for (const s of samples) {
-    if (s.up > max) max = s.up
-    if (s.down > max) max = s.down
+function resolveColors() {
+  const cs = getComputedStyle(document.documentElement)
+  for (const [key, v] of Object.entries(COLOR_VARS)) {
+    colors[key] = cs.getPropertyValue(v).trim()
   }
-  const yM = niceMax(max)
-  unit.value = unitOf(yM)
+}
 
-  const yOf = (v) => PAD_T + (1 - v / yM) * plotH
-  const xOf = (t) => PAD_L + Math.min(1, Math.max(0, (t - t0) / SNIFF_WINDOW_MS)) * plotW
+// 展示数据：按时间范围截取 + 超出 300 点时均匀抽稀（保留首尾点）
+const displayData = computed(() => {
+  const cutoff = Date.now() - timeRange.value * 60 * 1000
+  const src = state.samples.filter((s) => s.t >= cutoff)
+  if (src.length <= MAX_POINTS) return src
+  const step = (src.length - 1) / (MAX_POINTS - 1)
+  const out = []
+  for (let i = 0; i < MAX_POINTS; i++) out.push(src[Math.round(i * step)])
+  return out
+})
 
-  gridLines.value = [0, 0.25, 0.5, 0.75, 1].map((f) => {
-    const v = yM * f
-    return {
-      v,
-      x2: W - PAD_R,
-      y: yOf(v).toFixed(1),
-      label: (v / unit.value.div).toFixed(unit.value.div === 1 ? 0 : 1) + unit.value.suffix
+// Y 轴动态标定：极值外加 10% 余量，贴地曲线更好看
+function computeYScale(data) {
+  if (data.length === 0) return { topValue: 1024, bottomValue: 0 }
+  let maxValue = 0
+  let minValue = Infinity
+  for (const p of data) {
+    if (p.up > maxValue) maxValue = p.up
+    if (p.down > maxValue) maxValue = p.down
+    if (p.up < minValue) minValue = p.up
+    if (p.down < minValue) minValue = p.down
+  }
+  if (!isFinite(minValue)) minValue = 0
+  if (maxValue === 0) return { topValue: 1024, bottomValue: 0 }
+  const range = maxValue - minValue
+  if (range === 0) return { topValue: maxValue * 1.2, bottomValue: 0 }
+  return {
+    topValue: maxValue + range * 0.1,
+    bottomValue: Math.max(0, minValue - range * 0.1),
+  }
+}
+const yScale = computed(() => computeYScale(displayData.value))
+
+function calculateY(value, height, topValue, bottomValue) {
+  const topY = PADDING_TOP + 10
+  const bottomY = height - PADDING_BOTTOM - 5
+  if (topValue === bottomValue) return bottomY
+  const ratio = (value - bottomValue) / (topValue - bottomValue)
+  return bottomY - ratio * (bottomY - topY)
+}
+
+/** 流量格式化（与 CV parse-traffic 一致）：3 位有效数字 + 二进制单位。 */
+const UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+function parseTraffic(num) {
+  if (typeof num !== 'number') return ['NaN', '']
+  const exp = num < 1 ? 0 : Math.min(Math.floor(Math.log2(num) / 10), UNITS.length - 1)
+  const dat = num / Math.pow(1024, exp)
+  const ret = Math.round(dat) >= 1000 ? dat.toFixed(0) : dat.toPrecision(3)
+  return [ret, UNITS[exp]]
+}
+
+const pad2 = (n) => String(n).padStart(2, '0')
+const fmtHourMinute = (ts) => {
+  const d = new Date(ts)
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+const fmtMinuteSecond = (ts) => {
+  const d = new Date(ts)
+  return `${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+const fmtHourMinuteSecond = (ts) => {
+  const d = new Date(ts)
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+
+// ------------------------------------------------------------ Canvas 绘制 ----
+
+function syncCanvasSize(canvas) {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  const rect = canvas.getBoundingClientRect()
+  const dpr = window.devicePixelRatio || 1
+  const pixelWidth = Math.max(1, Math.floor(rect.width * dpr))
+  const pixelHeight = Math.max(1, Math.floor(rect.height * dpr))
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth
+    canvas.height = pixelHeight
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.scale(dpr, dpr)
+  }
+  return { ctx, cssWidth: rect.width, cssHeight: rect.height }
+}
+
+function clearCanvas(canvas) {
+  if (!canvas) return
+  const synced = syncCanvasSize(canvas)
+  if (!synced) return
+  synced.ctx.clearRect(0, 0, synced.cssWidth, synced.cssHeight)
+}
+
+/** Y 轴：底/中/顶 3 个刻度，底顶画横线，非 0 标签垫底色块盖住网格。 */
+function drawYAxis(ctx, width, height, topValue, bottomValue) {
+  const topY = PADDING_TOP + 10
+  const bottomY = height - PADDING_BOTTOM - 5
+  const middleY = (topY + bottomY) / 2
+  const middleValue = (bottomValue + topValue) / 2
+
+  const formatTrafficValue = (bytes) => {
+    if (bytes === 0) return '0'
+    if (bytes < 1024) return `${Math.round(bytes)}B`
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+  }
+
+  const ticks = [
+    { label: formatTrafficValue(bottomValue), y: bottomY },
+    { label: formatTrafficValue(middleValue), y: middleY },
+    { label: formatTrafficValue(topValue), y: topY },
+  ]
+
+  ctx.save()
+  ticks.forEach((tick, index) => {
+    const isBottomTick = index === 0
+    const isTopTick = index === ticks.length - 1
+    if (isBottomTick || isTopTick) {
+      ctx.strokeStyle = colors.grid
+      ctx.lineWidth = isBottomTick ? 0.8 : 0.4
+      ctx.globalAlpha = isBottomTick ? 0.25 : 0.15
+      ctx.beginPath()
+      ctx.moveTo(PADDING_LEFT, tick.y)
+      ctx.lineTo(width - PADDING_RIGHT, tick.y)
+      ctx.stroke()
     }
+    ctx.fillStyle = colors.text
+    ctx.font = "8px -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif"
+    ctx.globalAlpha = 0.9
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'middle'
+    if (tick.label !== '0') {
+      const labelWidth = ctx.measureText(tick.label).width
+      ctx.globalAlpha = 0.15
+      ctx.fillStyle = colors.bg
+      ctx.fillRect(PADDING_LEFT - labelWidth - 8, tick.y - 5, labelWidth + 4, 10)
+    }
+    ctx.globalAlpha = 0.9
+    ctx.fillStyle = colors.text
+    ctx.fillText(tick.label, PADDING_LEFT - 4, tick.y)
   })
+  ctx.restore()
+}
 
-  xTicks.value = [0, 0.25, 0.5, 0.75, 1].map((f) => {
-    const ts = new Date(t0 + SNIFF_WINDOW_MS * f)
-    return { x: (PAD_L + plotW * f).toFixed(1), label: `${pad2(ts.getHours())}:${pad2(ts.getMinutes())}` }
+/** 网格：横向 4 条 + 纵向 6 条。 */
+function drawGrid(ctx, width, height) {
+  const effectiveWidth = width - PADDING_LEFT - PADDING_RIGHT
+  const effectiveHeight = height - PADDING_TOP - PADDING_BOTTOM
+
+  ctx.save()
+  ctx.strokeStyle = colors.grid
+  ctx.lineWidth = LINE_WIDTH_GRID
+  ctx.globalAlpha = 0.7
+
+  const horizontalLines = 4
+  for (let i = 1; i <= horizontalLines; i++) {
+    const y = PADDING_TOP + (effectiveHeight / (horizontalLines + 1)) * i
+    ctx.beginPath()
+    ctx.moveTo(PADDING_LEFT, y)
+    ctx.lineTo(width - PADDING_RIGHT, y)
+    ctx.stroke()
+  }
+  const verticalLines = 6
+  for (let i = 1; i <= verticalLines; i++) {
+    const x = PADDING_LEFT + (effectiveWidth / (verticalLines + 1)) * i
+    ctx.beginPath()
+    ctx.moveTo(x, PADDING_TOP)
+    ctx.lineTo(x, height - PADDING_BOTTOM)
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+/** 时间轴标注策略：范围越短标签越密、精度越高。 */
+function getTimeDisplayStrategy(minutes) {
+  switch (minutes) {
+    case 1:
+      return { maxLabels: 6, formatTime: fmtMinuteSecond, minPixelDistance: 35 }
+    case 5:
+      return { maxLabels: 6, formatTime: fmtHourMinute, minPixelDistance: 38 }
+    default:
+      return { maxLabels: 8, formatTime: fmtHourMinute, minPixelDistance: 40 }
+  }
+}
+
+function drawTimeAxis(ctx, width, height, data) {
+  if (data.length === 0) return
+  const effectiveWidth = width - PADDING_LEFT - PADDING_RIGHT
+  const timeAxisY = height - PADDING_BOTTOM + 14
+  const strategy = getTimeDisplayStrategy(timeRange.value)
+
+  ctx.save()
+  ctx.fillStyle = colors.text
+  ctx.font = "10px -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif"
+  ctx.globalAlpha = 0.7
+
+  const targetLabels = Math.min(strategy.maxLabels, data.length)
+  const step = Math.max(1, Math.floor(data.length / (targetLabels - 1)))
+  const minPixelDistance = strategy.minPixelDistance || 45
+  const actualStep = Math.max(step, Math.ceil((data.length * minPixelDistance) / effectiveWidth))
+
+  const timePoints = []
+  if (data[0].t) {
+    timePoints.push({ x: PADDING_LEFT, label: strategy.formatTime(data[0].t) })
+  }
+  for (let i = actualStep; i < data.length - actualStep; i += actualStep) {
+    const x = PADDING_LEFT + (i / (data.length - 1)) * effectiveWidth
+    timePoints.push({ x, label: strategy.formatTime(data[i].t) })
+  }
+  if (data.length > 1 && data[data.length - 1].t) {
+    const lastX = width - PADDING_RIGHT
+    const lastPoint = timePoints[timePoints.length - 1]
+    if (!lastPoint || lastX - lastPoint.x >= minPixelDistance) {
+      timePoints.push({ x: lastX, label: strategy.formatTime(data[data.length - 1].t) })
+    }
+  }
+
+  timePoints.forEach((point, index) => {
+    if (index === 0) {
+      ctx.textAlign = 'left'
+    } else if (index === timePoints.length - 1) {
+      ctx.textAlign = 'right'
+    } else {
+      ctx.textAlign = 'center'
+    }
+    ctx.fillText(point.label, point.x, timeAxisY)
   })
+  ctx.restore()
+}
 
-  if (!hasData) {
-    snap.value = { up: [], down: [], upPoints: '', downPoints: '', upArea: '', downArea: '', lastUp: null, lastDown: null, hasData: false }
+/** 流量曲线：贝塞尔模式下先画渐变面积，再描 2.5px 圆角线条；直线模式仅描线。 */
+function drawTrafficLine(ctx, data, valueKey, width, height, color, topValue, bottomValue) {
+  if (data.length < 2) return
+
+  const effectiveWidth = width - PADDING_LEFT - PADDING_RIGHT
+  const lastIndex = data.length - 1
+  const getX = (index) => PADDING_LEFT + (index / lastIndex) * effectiveWidth
+  const getY = (index) => calculateY(data[index][valueKey], height, topValue, bottomValue)
+
+  ctx.save()
+
+  if (chartStyle.value === 'bezier') {
+    const gradient = ctx.createLinearGradient(0, PADDING_TOP, 0, height - PADDING_BOTTOM)
+    gradient.addColorStop(
+      0,
+      `${color}${Math.round(ALPHA_GRADIENT * 255).toString(16).padStart(2, '0')}`,
+    )
+    gradient.addColorStop(1, `${color}00`)
+
+    ctx.beginPath()
+    ctx.moveTo(getX(0), getY(0))
+    for (let i = 1; i < data.length; i++) {
+      const currentX = getX(i)
+      const currentY = getY(i)
+      const nextIndex = Math.min(i + 1, lastIndex)
+      const controlX = (currentX + getX(nextIndex)) / 2
+      const controlY = (currentY + getY(nextIndex)) / 2
+      ctx.quadraticCurveTo(currentX, currentY, controlX, controlY)
+    }
+    ctx.lineTo(getX(lastIndex), height - PADDING_BOTTOM)
+    ctx.lineTo(getX(0), height - PADDING_BOTTOM)
+    ctx.closePath()
+    ctx.fillStyle = gradient
+    ctx.fill()
+  }
+
+  ctx.beginPath()
+  ctx.strokeStyle = color
+  ctx.lineWidth = valueKey === 'up' ? LINE_WIDTH_UP : LINE_WIDTH_DOWN
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.globalAlpha = ALPHA_LINE
+
+  ctx.moveTo(getX(0), getY(0))
+  if (chartStyle.value === 'bezier') {
+    for (let i = 1; i < data.length; i++) {
+      const currentX = getX(i)
+      const currentY = getY(i)
+      const nextIndex = Math.min(i + 1, lastIndex)
+      const controlX = (currentX + getX(nextIndex)) / 2
+      const controlY = (currentY + getY(nextIndex)) / 2
+      ctx.quadraticCurveTo(currentX, currentY, controlX, controlY)
+    }
+  } else {
+    for (let i = 1; i < data.length; i++) {
+      ctx.lineTo(getX(i), getY(i))
+    }
+  }
+  ctx.stroke()
+  ctx.restore()
+}
+
+function drawGraph() {
+  const canvas = canvasRef.value
+  if (!canvas || displayData.value.length === 0) {
+    clearCanvas(canvas)
+    clearCanvas(hoverCanvasRef.value)
     return
   }
+  const synced = syncCanvasSize(canvas)
+  if (!synced) return
+  const { ctx, cssWidth, cssHeight } = synced
 
-  // 超过 200 点时抽稀，保证渲染开销稳定
-  const step = Math.max(1, Math.ceil(samples.length / 200))
-  const ups = []
-  const downs = []
-  for (let i = 0; i < samples.length; i += step) {
-    const s = samples[i]
-    ups.push([xOf(s.t).toFixed(1), yOf(s.up).toFixed(1)])
-    downs.push([xOf(s.t).toFixed(1), yOf(s.down).toFixed(1)])
-  }
-  const last = samples[samples.length - 1]
-  const lastPt = [xOf(last.t).toFixed(1), yOf(last.up).toFixed(1)]
-  const lastPtD = [xOf(last.t).toFixed(1), yOf(last.down).toFixed(1)]
-  ups.push(lastPt)
-  downs.push(lastPtD)
+  ctx.clearRect(0, 0, cssWidth, cssHeight)
+  const { topValue, bottomValue } = yScale.value
 
-  const base = (PAD_T + plotH).toFixed(1)
-  snap.value = {
-    up: ups,
-    down: downs,
-    upPoints: ups.map((p) => p.join(',')).join(' '),
-    downPoints: downs.map((p) => p.join(',')).join(' '),
-    upArea: ups.length > 1 ? `M ${ups[0][0]},${base} L ${ups.map((p) => p.join(',')).join(' L ')} L ${ups[ups.length - 1][0]},${base} Z` : '',
-    downArea: downs.length > 1 ? `M ${downs[0][0]},${base} L ${downs.map((p) => p.join(',')).join(' L ')} L ${downs[downs.length - 1][0]},${base} Z` : '',
-    lastUp: { x: Number(lastPt[0]), y: Number(lastPt[1]) },
-    lastDown: { x: Number(lastPtD[0]), y: Number(lastPtD[1]) },
-    hasData: true
-  }
+  drawYAxis(ctx, cssWidth, cssHeight, topValue, bottomValue)
+  drawGrid(ctx, cssWidth, cssHeight)
+  drawTimeAxis(ctx, cssWidth, cssHeight, displayData.value)
+  drawTrafficLine(ctx, displayData.value, 'down', cssWidth, cssHeight, colors.down, topValue, bottomValue)
+  drawTrafficLine(ctx, displayData.value, 'up', cssWidth, cssHeight, colors.up, topValue, bottomValue)
+
+  clearCanvas(hoverCanvasRef.value)
 }
 
-// 图表随 store 的重绘节拍刷新（轻量化模式下自动降频）
-watch(() => state.renderTick, rebuild, { immediate: true })
-watch(() => state.prefs.sniffing, rebuild)
+/** 悬停层：过数据点的虚线十字线（竖线全高，横线在较大值一侧）。 */
+function drawHoverOverlay() {
+  const canvas = hoverCanvasRef.value
+  if (!canvas || displayData.value.length < 2 || !tooltip.visible || tooltip.dataIndex < 0) {
+    clearCanvas(canvas)
+    return
+  }
+  const synced = syncCanvasSize(canvas)
+  if (!synced) return
+  const { ctx, cssWidth, cssHeight } = synced
+  ctx.clearRect(0, 0, cssWidth, cssHeight)
+
+  const effectiveWidth = cssWidth - PADDING_LEFT - PADDING_RIGHT
+  const dataX =
+    PADDING_LEFT + (tooltip.dataIndex / (displayData.value.length - 1)) * effectiveWidth
+
+  ctx.save()
+  ctx.strokeStyle = colors.text
+  ctx.lineWidth = 1
+  ctx.globalAlpha = 0.6
+  ctx.setLineDash([4, 4])
+  ctx.beginPath()
+  ctx.moveTo(dataX, PADDING_TOP)
+  ctx.lineTo(dataX, cssHeight - PADDING_BOTTOM)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(PADDING_LEFT, tooltip.highlightY)
+  ctx.lineTo(cssWidth - PADDING_RIGHT, tooltip.highlightY)
+  ctx.stroke()
+  ctx.restore()
+}
+
+// ---- 重绘调度：rAF 节流 + 数据签名去重 + 失焦/数据过期跳过 ----
+
+let drawFrame = null
+let hoverFrame = null
+let moveFrame = null
+let lastSig = null
+let lastDataTs = 0
+
+function scheduleDrawGraph() {
+  if (drawFrame !== null) return
+  drawFrame = requestAnimationFrame(() => {
+    drawFrame = null
+    if (document.hidden) return
+
+    const d = displayData.value
+    if (d.length === 0) {
+      lastSig = ''
+      lastDataTs = 0
+      drawGraph()
+      return
+    }
+    // 数据过期（断开/暂停嗅探）时保持最后一帧，与 CV 行为一致
+    const lastTs = d[d.length - 1].t
+    if (lastDataTs > 0 && Date.now() - lastTs > STALE_DATA_THRESHOLD) return
+    lastDataTs = lastTs
+
+    const sig = `${d.length}:${d[0].t}:${lastTs}:${chartStyle.value}:${timeRange.value}:${colors.down}`
+    if (sig === lastSig) return
+    lastSig = sig
+
+    drawGraph()
+    drawHoverOverlay()
+  })
+}
+
+function scheduleHoverDraw() {
+  if (hoverFrame !== null) return
+  hoverFrame = requestAnimationFrame(() => {
+    hoverFrame = null
+    drawHoverOverlay()
+  })
+}
+
+watch(displayData, scheduleDrawGraph)
+watch(chartStyle, () => {
+  lastSig = null
+  scheduleDrawGraph()
+})
+watch(timeRange, () => {
+  lastSig = null
+  scheduleDrawGraph()
+})
+watch(() => state.theme, () => {
+  resolveColors()
+  lastSig = null
+  scheduleDrawGraph()
+})
+watch(tooltip, scheduleHoverDraw)
+
+// ---- 交互：悬停 tooltip / 点击切样式 / 范围循环 ----
+
+function onGraphMove(event) {
+  const data = displayData.value
+  if (data.length === 0) return
+  const { clientX, clientY } = event
+  if (moveFrame !== null) return
+  moveFrame = requestAnimationFrame(() => {
+    moveFrame = null
+    const canvas = canvasRef.value
+    if (!canvas || !displayData.value.length) return
+    const rect = canvas.getBoundingClientRect()
+    const mouseX = clientX - rect.left
+    const mouseY = clientY - rect.top
+    const effectiveWidth = rect.width - PADDING_LEFT - PADDING_RIGHT
+    if (effectiveWidth <= 0) return
+    const ratio = Math.max(0, Math.min(1, (mouseX - PADDING_LEFT) / effectiveWidth))
+    const dataIndex = Math.round(ratio * (displayData.value.length - 1))
+    if (dataIndex < 0 || dataIndex >= displayData.value.length) return
+    const point = displayData.value[dataIndex]
+    const [upValue, upUnit] = parseTraffic(point.up)
+    const [downValue, downUnit] = parseTraffic(point.down)
+    const { topValue, bottomValue } = yScale.value
+    const upY = calculateY(point.up, rect.height, topValue, bottomValue)
+    const downY = calculateY(point.down, rect.height, topValue, bottomValue)
+    const highlightY = Math.max(point.up, point.down) === point.up ? upY : downY
+
+    tooltip.x = mouseX
+    tooltip.y = mouseY
+    tooltip.upSpeed = `${upValue}${upUnit}/s`
+    tooltip.downSpeed = `${downValue}${downUnit}/s`
+    tooltip.time = point.t ? fmtHourMinuteSecond(point.t) : ''
+    tooltip.dataIndex = dataIndex
+    tooltip.highlightY = highlightY
+    tooltip.visible = true
+  })
+}
+
+function onGraphLeave() {
+  if (moveFrame !== null) {
+    cancelAnimationFrame(moveFrame)
+    moveFrame = null
+  }
+  tooltip.visible = false
+}
+
+function toggleStyle() {
+  chartStyle.value = chartStyle.value === 'bezier' ? 'line' : 'bezier'
+}
+
+function cycleRange() {
+  timeRange.value = timeRange.value === 1 ? 5 : timeRange.value === 5 ? 10 : 1
+}
+
+const tooltipStyle = computed(() => ({
+  left: `${tooltip.x + 8}px`,
+  top: `${tooltip.y - 8}px`,
+  transform: tooltip.x > 200 ? 'translateX(-100%)' : 'translateX(0)',
+}))
+
+let resizeObs = null
+onMounted(() => {
+  resolveColors()
+  lastSig = null
+  scheduleDrawGraph()
+  if (typeof ResizeObserver !== 'undefined' && chartWrap.value) {
+    resizeObs = new ResizeObserver(() => {
+      lastSig = null
+      scheduleDrawGraph()
+    })
+    resizeObs.observe(chartWrap.value)
+  }
+})
+onBeforeUnmount(() => {
+  if (resizeObs) resizeObs.disconnect()
+  if (drawFrame !== null) cancelAnimationFrame(drawFrame)
+  if (hoverFrame !== null) cancelAnimationFrame(hoverFrame)
+  if (moveFrame !== null) cancelAnimationFrame(moveFrame)
+})
 
 // ------------------------------------------------------------ 状态卡片 ----
 
@@ -387,58 +784,141 @@ const statCards = computed(() => {
 /* 图表卡片 */
 .chart-card {
   flex: 1 1 auto;
-  min-height: 210px;
+  min-height: 200px;
   display: flex;
   flex-direction: column;
 }
 
-.legend {
+.chart-hints {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
   font-size: 11px;
-  color: var(--c-text-sub);
+  color: var(--c-hint);
 }
 
-.lg {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+.hint-chip.paused {
+  color: var(--c-warning);
 }
 
-.lg::before {
-  content: "";
-  width: 14px;
-  height: 3px;
-  border-radius: 2px;
-}
-
-.lg.up::before { background: var(--c-chart-up); }
-.lg.down::before { background: var(--c-chart-down); }
-.lg.paused { color: var(--c-warning); }
-.lg.paused::before { display: none; }
-
+/* 图表区：CV 的绘图盒子（圆角 + 悬停底色） */
 .chart-wrap {
   flex: 1;
   min-height: 0;
-  display: flex;
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--c-hover);
+  cursor: pointer;
 }
 
-.chart {
+.chart-canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  min-height: 170px;
+  display: block;
 }
 
-.axis-label {
+.chart-hover {
+  pointer-events: none;
+}
+
+/* 叠加层：时间范围 chip（点击循环 1/5/10 分钟） */
+.cv-range {
+  position: absolute;
+  top: 6px;
+  left: 40px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-text-sub);
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cv-range:hover {
+  background: var(--c-accent-soft);
+}
+
+/* 叠加层：图例（右上，上行/下行各占一行） */
+.cv-legend {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: none;
+}
+
+.cv-legend span {
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.cv-legend .cv-up {
+  color: var(--c-chart-up);
+}
+
+.cv-legend .cv-down {
+  color: var(--c-chart-down);
+}
+
+/* 叠加层：样式标签（右下）与诊断（左下） */
+.cv-style {
+  position: absolute;
+  bottom: 6px;
+  right: 8px;
   font-size: 10px;
-  fill: var(--c-chart-axis);
-  font-family: Consolas, monospace;
+  color: var(--c-hint);
+  opacity: 0.7;
+  pointer-events: none;
 }
 
-.empty-label {
-  font-size: 12px;
-  fill: var(--c-hint);
+.cv-diag {
+  position: absolute;
+  bottom: 6px;
+  left: 8px;
+  font-size: 9px;
+  color: var(--c-hint);
+  opacity: 0.6;
+  line-height: 1.2;
+  pointer-events: none;
+}
+
+/* 悬停数值浮层 */
+.cv-tooltip {
+  position: absolute;
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  line-height: 1.2;
+  z-index: 1000;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.cv-tt-time {
+  color: var(--c-text-sub);
+  margin-bottom: 2px;
+}
+
+.cv-tt-up {
+  color: var(--c-chart-up);
+  font-weight: 500;
+}
+
+.cv-tt-down {
+  color: var(--c-chart-down);
+  font-weight: 500;
 }
 
 /* 状态卡片：列数随宽度自适应（4 → 2 → 1），窄窗口换行而非挤压 */
