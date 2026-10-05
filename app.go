@@ -361,8 +361,6 @@ func (a *App) startup(ctx context.Context) {
 				a.logSvc.Info("removed legacy binary " + model.LegacyAppName)
 			}
 		}
-		cfgProbe := a.probeConfig()
-		a.logSvc.Info(i18n.Tf("selfcheck.probeConfig", cfgProbe.Summary()))
 		s := a.settings.Current()
 		a.autoStart.EnsureHealthy(s.AutoStart)
 		a.emit(EvtSettings, s)

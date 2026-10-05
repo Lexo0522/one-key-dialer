@@ -136,7 +136,6 @@ var en = map[string]string{
 	"selfcheck.noPermission": "Startup self-check: {0} may lack read/write permission",
 	"selfcheck.deleteFailed": "Startup self-check: failed to delete the {0} probe file",
 	"selfcheck.notWritable":  "Startup self-check: {0} is not writable: {1}",
-	"selfcheck.probeConfig":  "Probe config: {0}",
 
 	// Proxy (this app's HTTP egress only)
 	"proxy.enabled":  "Proxy enabled: {0} (this app's HTTP requests only: update checks, connectivity probes)",

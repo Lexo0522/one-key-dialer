@@ -145,7 +145,6 @@ var zh = map[string]string{
 	"selfcheck.noPermission": "启动自检: {0} 可能无读写权限",
 	"selfcheck.deleteFailed": "启动自检: {0} 测试文件删除失败",
 	"selfcheck.notWritable":  "启动自检: {0} 不可写: {1}",
-	"selfcheck.probeConfig":  "探测配置: {0}",
 
 	// 代理（仅本应用 HTTP 出口）
 	"proxy.enabled":  "代理已启用: {0}（仅本应用的 HTTP 请求：更新检查、外网探测）",
