@@ -51,7 +51,8 @@ const MOCK_STATE = {
     portalMethod: 'POST',
     portalBody: '',
     portalHeaders: '',
-    portalSuccessHint: ''
+    portalSuccessHint: '',
+    speedSites: []
   },
   broadband: { username: '20210001', hasPassword: true },
   online: false,
@@ -294,6 +295,35 @@ const mockApi = {
       return { ok: false, detail: '未检测到认证门户，当前网络无需认证' }
     }
     return { ok: true, detail: '检测到认证门户: http://10.1.1.55\n认证提交: HTTP 200 | login_ok\n测试通过：门户已放行' }
+  },
+
+  // ---------------- 网站测速 / IP 信息（浏览器 dev mock） ----------------
+  async SiteLatencyCheck(urls) {
+    const latency = {
+      'https://www.bilibili.com': 23,
+      'https://www.baidu.com': 12,
+      'https://github.com': 189,
+      'https://www.bing.com': 45,
+      'https://www.douyin.com': 67
+    }
+    await new Promise((r) => setTimeout(r, 600 + Math.random() * 500))
+    return (Array.isArray(urls) ? urls : []).map((url) => ({
+      url,
+      latencyMs: latency[url] !== undefined ? latency[url] : 40 + Math.floor(Math.random() * 200)
+    }))
+  },
+  async GetIPInfo() {
+    await new Promise((r) => setTimeout(r, 500 + Math.random() * 500))
+    return {
+      ip: '203.0.113.7',
+      country: '中国',
+      regionName: '广东',
+      city: '深圳',
+      isp: '中国电信',
+      as: 'AS4134',
+      timezone: 'Asia/Shanghai',
+      localIp: '10.16.8.66'
+    }
   },
 
   // ---------------- 宽带页：诊断 / 连接详情（浏览器 dev mock） ----------------

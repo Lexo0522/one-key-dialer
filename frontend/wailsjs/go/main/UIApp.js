@@ -54,6 +54,10 @@ export function GetBroadband() {
   return window['go']['main']['UIApp']['GetBroadband']();
 }
 
+export function GetIPInfo() {
+  return window['go']['main']['UIApp']['GetIPInfo']();
+}
+
 export function GetPortalCredential() {
   return window['go']['main']['UIApp']['GetPortalCredential']();
 }
@@ -104,6 +108,10 @@ export function SetUILang(arg1) {
 
 export function ShowWindow() {
   return window['go']['main']['UIApp']['ShowWindow']();
+}
+
+export function SiteLatencyCheck(arg1) {
+  return window['go']['main']['UIApp']['SiteLatencyCheck'](arg1);
 }
 
 export function TestPortalAuth() {

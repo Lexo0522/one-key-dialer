@@ -43,7 +43,6 @@ type Settings struct {
 	DisconnectOnNoInternet bool   `json:"disconnectOnNoInternet"`
 	UpdateCheckEnabled     bool   `json:"updateCheckEnabled"`
 	UITheme                string `json:"uiTheme"`
-
 	// PPPoE 拨号设备（写入 RAS 电话簿的 PreferredPort / PreferredDevice）。
 	// 旧版 settings.json 无这两个字段，空串即"自动探测"，向后兼容。
 	PppoePort   string `json:"pppoePort"`
@@ -71,7 +70,21 @@ type Settings struct {
 	PortalBody        string `json:"portalBody"`        // 请求体模板,支持 {username} {password} {portal}
 	PortalHeaders     string `json:"portalHeaders"`     // 附加请求头,每行一个 "Key: Value"
 	PortalSuccessHint string `json:"portalSuccessHint"` // 响应包含该字符串视为成功(可空)
+
+	// 首页网站测速的自定义测试点。空列表 = 前端使用内置默认站点；
+	// 保存过就完全以前端提交的列表为准（可增删内置站点）。
+	// 旧版 settings.json 无此字段，nil 即"默认站点"，向后兼容。
+	SpeedSites []SpeedSite `json:"speedSites"`
 }
+
+// SpeedSite 自定义测速点（Clash 同款「自建测试点」）：展示名 + 完整 URL。
+type SpeedSite struct {
+	Name string `json:"name"`
+	Url  string `json:"url"`
+}
+
+// MaxSpeedSites 测试点数量上限（与 service 侧单次测速上限一致）。
+const MaxSpeedSites = 12
 
 // DefaultSettings 返回全部默认值（与旧版 Builder 默认值一致）。
 func DefaultSettings() Settings {
@@ -128,7 +141,39 @@ func (s Settings) Normalize() Settings {
 	s.PortalBody = strings.TrimSpace(s.PortalBody)
 	s.PortalHeaders = strings.TrimSpace(s.PortalHeaders)
 	s.PortalSuccessHint = strings.TrimSpace(s.PortalSuccessHint)
+	s.SpeedSites = NormalizeSpeedSites(s.SpeedSites)
 	return s
+}
+
+// NormalizeSpeedSites 清洗自定义测试点：去空白、去无效 URL、去重（按 URL）、截断到上限。
+func NormalizeSpeedSites(sites []SpeedSite) []SpeedSite {
+	if len(sites) == 0 {
+		return nil
+	}
+	out := make([]SpeedSite, 0, len(sites))
+	seen := make(map[string]bool, len(sites))
+	for _, s := range sites {
+		s.Name = strings.TrimSpace(s.Name)
+		s.Url = strings.TrimSpace(s.Url)
+		if !isProbeURL(s.Url) || seen[s.Url] {
+			continue
+		}
+		seen[s.Url] = true
+		out = append(out, s)
+		if len(out) >= MaxSpeedSites {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// isProbeURL 只接受 http/https 测试地址。
+func isProbeURL(u string) bool {
+	lower := strings.ToLower(u)
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 }
 
 // PppoeDeviceSet 判断是否保存了显式的 PPPoE 设备选择（端口与设备名都非空）。

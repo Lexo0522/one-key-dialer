@@ -121,6 +121,25 @@ type PortalTestResult struct {
 	Detail string `json:"detail"`
 }
 
+// SiteLatencyDTO 网站测速单站点结果；LatencyMs 为 -1 表示失败或超时。
+// 站点列表由前端配置（settings.speedSites），按 URL 对应回结果。
+type SiteLatencyDTO struct {
+	Url       string `json:"url"`
+	LatencyMs int64  `json:"latencyMs"`
+}
+
+// IPInfoDTO 公网出口 IP 与归属信息（直连查询，不含代理出口）。
+type IPInfoDTO struct {
+	Ip         string `json:"ip"`
+	Country    string `json:"country"`
+	RegionName string `json:"regionName"`
+	City       string `json:"city"`
+	Isp        string `json:"isp"`
+	As         string `json:"as"`
+	Timezone   string `json:"timezone"`
+	LocalIp    string `json:"localIp"`
+}
+
 // UpdatePayload 更新流程事件负载。
 // Kind: checking | result | status | progress | canceled | error | done | installing。
 // Stage: UpdateStage* 之一，用于区分同一条进度通道上的不同阶段。
@@ -797,6 +816,34 @@ func (a *App) TestPortalAuth() PortalTestResult {
 	}
 	sb.WriteString("\n" + i18n.T("portal.testFailed"))
 	return PortalTestResult{Ok: false, Detail: sb.String()}
+}
+
+// ============================ 网站测速 / IP 信息 ============================
+
+// SiteLatencyCheck 批量网站测速（直连、站点间并发，单站 4 秒超时）。
+// urls 为前端配置的测试点（settings.speedSites），结果按入参顺序返回。
+func (a *App) SiteLatencyCheck(urls []string) []SiteLatencyDTO {
+	res := service.TestSiteLatency(urls)
+	out := make([]SiteLatencyDTO, 0, len(res))
+	for _, r := range res {
+		out = append(out, SiteLatencyDTO{Url: r.Url, LatencyMs: r.LatencyMs})
+	}
+	return out
+}
+
+// GetIPInfo 查询公网出口 IP 与运营商归属（直连，主源失败自动回退）。
+func (a *App) GetIPInfo() IPInfoDTO {
+	info := service.FetchIPInfo()
+	return IPInfoDTO{
+		Ip:         info.Ip,
+		Country:    info.Country,
+		RegionName: info.RegionName,
+		City:       info.City,
+		Isp:        info.Isp,
+		As:         info.As,
+		Timezone:   info.Timezone,
+		LocalIp:    info.LocalIp,
+	}
 }
 
 // ============================ 在线更新 ============================

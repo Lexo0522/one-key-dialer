@@ -103,6 +103,32 @@ export namespace main {
 	        this.speedMbps = source["speedMbps"];
 	    }
 	}
+	export class IPInfoDTO {
+	    ip: string;
+	    country: string;
+	    regionName: string;
+	    city: string;
+	    isp: string;
+	    as: string;
+	    timezone: string;
+	    localIp: string;
+
+	    static createFrom(source: any = {}) {
+	        return new IPInfoDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ip = source["ip"];
+	        this.country = source["country"];
+	        this.regionName = source["regionName"];
+	        this.city = source["city"];
+	        this.isp = source["isp"];
+	        this.as = source["as"];
+	        this.timezone = source["timezone"];
+	        this.localIp = source["localIp"];
+	    }
+	}
 	export class LangPayload {
 	    lang: string;
 	    system: string;
@@ -175,6 +201,20 @@ export namespace main {
 	        this.durationSec = source["durationSec"];
 	    }
 	}
+	export class SiteLatencyDTO {
+	    url: string;
+	    latencyMs: number;
+
+	    static createFrom(source: any = {}) {
+	        return new SiteLatencyDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.url = source["url"];
+	        this.latencyMs = source["latencyMs"];
+	    }
+	}
 	export class WifiNetworkDTO {
 	    ssid: string;
 	    signalQuality: number;
@@ -225,7 +265,21 @@ export namespace main {
 }
 
 export namespace model {
-	
+
+	export class SpeedSite {
+	    name: string;
+	    url: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SpeedSite(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.url = source["url"];
+	    }
+	}
 	export class Settings {
 	    intervalSeconds: number;
 	    autoReconnect: boolean;
@@ -255,11 +309,12 @@ export namespace model {
 	    portalBody: string;
 	    portalHeaders: string;
 	    portalSuccessHint: string;
-	
+	    speedSites: Array<SpeedSite>;
+
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.intervalSeconds = source["intervalSeconds"];
@@ -290,7 +345,26 @@ export namespace model {
 	        this.portalBody = source["portalBody"];
 	        this.portalHeaders = source["portalHeaders"];
 	        this.portalSuccessHint = source["portalSuccessHint"];
+	        this.speedSites = this.convertValues(source["speedSites"], SpeedSite);
+	}
+
+	convertValues(a: any, classs: any, asMap: boolean = false): any {
+	    if (!a) {
+	        return a;
 	    }
+	    if (a.slice && a.map) {
+	        return (a as any[]).map(elem => this.convertValues(elem, classs));
+	    } else if ("object" === typeof a) {
+	        if (asMap) {
+	            for (const key of Object.keys(a)) {
+	                a[key] = new classs(a[key]);
+	            }
+	            return a;
+	        }
+	        return new classs(a);
+	    }
+	    return a;
+	}
 	}
 
 }

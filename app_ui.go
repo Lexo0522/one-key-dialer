@@ -332,6 +332,26 @@ func (u *UIApp) TestPortalAuth() PortalTestResult {
 	return out
 }
 
+// ============================ 网站测速 / IP 信息 ============================
+
+// SiteLatencyCheck 批量网站测速；urls 来自前端测试点配置。约 1-4.5 秒。
+func (u *UIApp) SiteLatencyCheck(urls []string) []SiteLatencyDTO {
+	var out []SiteLatencyDTO
+	if err := u.callInto("SiteLatencyCheck", &out, urls); err != nil {
+		return []SiteLatencyDTO{}
+	}
+	return out
+}
+
+// GetIPInfo 查询公网出口 IP 与归属信息（直连，约 1-8 秒）。
+func (u *UIApp) GetIPInfo() IPInfoDTO {
+	var out IPInfoDTO
+	if err := u.callInto("GetIPInfo", &out); err != nil {
+		return IPInfoDTO{}
+	}
+	return out
+}
+
 func (u *UIApp) CheckUpdate(interactive bool) {
 	_, _ = u.call("CheckUpdate", interactive)
 }

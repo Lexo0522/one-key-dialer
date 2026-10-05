@@ -71,13 +71,110 @@
         </div>
       </div>
     </div>
+
+    <!-- 网站测速 + IP 信息：Clash Verge 首页同款卡片 -->
+    <div class="duo-grid">
+      <!-- 网站测速：不自动测，点刷新全测 / 点站点单测；测试点可在卡片内增删（Clash 同款） -->
+      <div class="card duo-card">
+        <div class="card-head">
+          <div class="card-title"><i class="fas fa-tachometer-alt"></i>{{ t('home.speed.title') }}</div>
+          <div class="head-actions">
+            <button class="duo-refresh" :title="t('home.speed.manage')" @click="toggleManage">
+              <i class="fas fa-cog"></i>
+            </button>
+            <button class="duo-refresh" :disabled="latBusy || !siteList.length" :title="t('home.speed.refresh')"
+                    @click="testAllSites">
+              <i class="fas fa-sync-alt" :class="{ spinning: latBusy }"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- 测试点管理面板：行内增删改，保存写入设置 -->
+        <div v-if="manageOpen" class="manage-panel">
+          <div v-for="(row, i) in draftSites" :key="i" class="manage-row">
+            <input v-model.trim="row.name" class="manage-name" :placeholder="t('home.speed.namePh')" spellcheck="false">
+            <input v-model.trim="row.url" class="manage-url" :placeholder="t('home.speed.urlPh')" spellcheck="false">
+            <button class="duo-refresh manage-del" :title="t('home.speed.delete')" @click="removeDraft(i)">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div class="manage-foot">
+            <button class="manage-link" :disabled="draftSites.length >= MAX_SITES" @click="addDraft">
+              <i class="fas fa-plus"></i>{{ t('home.speed.add') }}
+            </button>
+            <div class="manage-btns">
+              <button class="btn btn-primary" @click="saveSites">{{ t('home.speed.save') }}</button>
+              <button class="btn" @click="manageOpen = false">{{ t('home.speed.cancel') }}</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="siteList.length" class="lat-grid">
+          <button v-for="s in siteList" :key="s.url" class="lat-item" :title="s.url"
+                  :disabled="testingMap[s.url]" @click="testOneSite(s)">
+            <span class="lat-avatar" :style="{ background: siteColor(s) }">
+              <img v-if="s.icon" class="lat-icon" :src="s.icon" alt="">
+              <template v-else>{{ siteMark(s) }}</template>
+            </span>
+            <span class="lat-name">{{ siteName(s) }}</span>
+            <span class="lat-ms" :class="latencyClass(s)">
+              <i v-if="testingMap[s.url]" class="fas fa-circle-notch fa-spin"></i>
+              <template v-else>{{ latencyText(s) }}</template>
+            </span>
+          </button>
+        </div>
+        <div v-else class="lat-empty">{{ t('home.speed.empty') }}</div>
+      </div>
+
+      <!-- IP 信息：公网出口归属 + 本机内网地址，点 IP 值复制 -->
+      <div class="card duo-card">
+        <div class="card-head">
+          <div class="card-title"><i class="fas fa-globe-asia"></i>{{ t('home.ip.title') }}</div>
+          <button class="duo-refresh" :disabled="ipBusy" :title="t('home.ip.refresh')" @click="refreshIpInfo">
+            <i class="fas fa-sync-alt" :class="{ spinning: ipBusy }"></i>
+          </button>
+        </div>
+        <div class="ip-body">
+          <div class="ip-row">
+            <span class="ip-label">{{ t('home.ip.public') }}</span>
+            <span class="ip-value mono" :title="t('home.ip.copyHint')" @click="copyText(ipInfo.ip)">
+              {{ ipInfo.ip || t('home.ip.unset') }}
+            </span>
+          </div>
+          <div class="ip-row">
+            <span class="ip-label">{{ t('home.ip.location') }}</span>
+            <span class="ip-value">{{ ipLocation }}</span>
+          </div>
+          <div class="ip-row">
+            <span class="ip-label">{{ t('home.ip.isp') }}</span>
+            <span class="ip-value wrap">{{ ispText }}</span>
+          </div>
+          <div class="ip-row">
+            <span class="ip-label">{{ t('home.ip.timezone') }}</span>
+            <span class="ip-value">{{ timezoneText }}</span>
+          </div>
+          <div class="ip-row">
+            <span class="ip-label">{{ t('home.ip.local') }}</span>
+            <span class="ip-value mono" :title="t('home.ip.copyHint')" @click="copyText(ipInfo.localIp)">
+              {{ ipInfo.localIp || t('home.ip.unset') }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { state, doDial, doDisconnect, formatSpeed, formatBytes, formatDuration } from '../store'
+import { state, doDial, doDisconnect, formatSpeed, formatBytes, formatDuration, showToast, patchSettings } from '../store'
+import { api } from '../bridge'
 import { t, tf } from '../i18n'
+import iconBilibili from '../assets/sites/bilibili.svg'
+import iconBaidu from '../assets/sites/baidu.svg'
+import iconGithub from '../assets/sites/github.svg'
+import iconBing from '../assets/sites/bing.svg'
+import iconDouYin from '../assets/sites/douyin.svg'
 
 // ------------------------------------------------------------ 宽带账号与拨号 ----
 
@@ -625,6 +722,8 @@ onMounted(() => {
     })
     resizeObs.observe(chartWrap.value)
   }
+  // IP 信息：进入首页即查询（与 CV 首页行为一致）；网站测速不自动跑，由用户点击触发
+  refreshIpInfo()
 })
 onBeforeUnmount(() => {
   if (resizeObs) resizeObs.disconnect()
@@ -632,6 +731,228 @@ onBeforeUnmount(() => {
   if (hoverFrame !== null) cancelAnimationFrame(hoverFrame)
   if (moveFrame !== null) cancelAnimationFrame(moveFrame)
 })
+
+// ---------------------------------------------------- 网站测速 / IP 信息（Clash Verge 同款） ----
+// 延迟与 IP 归属均由代理侧直连测量（不经设置内的代理），浏览器 dev 走 bridge mock。
+// 测速不自动触发（用户点刷新全测 / 点站点单测）；测试点可在卡片内增删（Clash 同款
+// 自建测试点），保存在设置 speedSites，为空时使用内置默认站点。
+// latencyMs: null 未测 | -1 失败 | >=0 毫秒；配色阈值与 CV 一致（<200 绿 / <500 橙 / 其余红）。
+
+const MAX_SITES = 12
+
+// 内置默认测试点（icon 为本地打包的白色品牌 SVG，bg 为品牌底色）
+const BUILTIN_SITES = [
+  { name: 'Bilibili', url: 'https://www.bilibili.com', bg: '#FB7299', icon: iconBilibili },
+  { name: 'Baidu', url: 'https://www.baidu.com', bg: '#2932E1', icon: iconBaidu },
+  { name: 'GitHub', url: 'https://github.com', bg: '#24292F', icon: iconGithub },
+  { name: 'Bing', url: 'https://www.bing.com', bg: '#008373', icon: iconBing },
+  { name: 'DouYin', url: 'https://www.douyin.com', bg: '#161823', icon: iconDouYin }
+]
+
+const latBusy = ref(false)
+const ipBusy = ref(false)
+const ipInfo = reactive({ ip: '', country: '', regionName: '', city: '', isp: '', as: '', timezone: '', localIp: '' })
+// 按测试点 URL 记录结果与进行中状态（latencyMs: null 未测 | -1 失败 | >=0 毫秒）
+const latResults = reactive({})
+const testingMap = reactive({})
+
+// 生效测试点列表：设置里保存过就完全以用户列表为准，否则内置默认。
+// 设置项只持久化 name/url，按 URL 补回内置站点的图标与品牌色。
+const siteList = computed(() => {
+  const custom = state.settings?.speedSites
+  if (Array.isArray(custom) && custom.length) {
+    return custom.map((s) => {
+      const b = BUILTIN_SITES.find((x) => x.url === s.url)
+      return b ? { ...s, bg: b.bg, icon: b.icon } : s
+    })
+  }
+  return BUILTIN_SITES
+})
+
+function siteName(s) {
+  return s.name || hostOf(s.url)
+}
+
+function siteMark(s) {
+  const src = siteName(s)
+  return src ? src.charAt(0).toUpperCase() : '?'
+}
+
+function siteColor(s) {
+  if (s.bg) return s.bg
+  // 自建测试点：按名字/URL 哈希取色，保证同一点颜色稳定
+  let h = 0
+  for (const ch of siteName(s) + s.url) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return `hsl(${h % 360}, 52%, 44%)`
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch (e) {
+    return url
+  }
+}
+
+function mergeLatency(res) {
+  if (!Array.isArray(res)) return
+  for (const r of res) {
+    if (r && r.url) latResults[r.url] = r.latencyMs
+  }
+}
+
+async function testAllSites() {
+  if (latBusy.value || !siteList.value.length) return
+  latBusy.value = true
+  siteList.value.forEach((s) => { testingMap[s.url] = true })
+  try {
+    mergeLatency(await api.SiteLatencyCheck(siteList.value.map((s) => s.url)))
+  } catch (e) {
+    /* 后端不可达时保持原状态 */
+  } finally {
+    siteList.value.forEach((s) => { testingMap[s.url] = false })
+    latBusy.value = false
+  }
+}
+
+async function testOneSite(s) {
+  if (latBusy.value || testingMap[s.url]) return
+  testingMap[s.url] = true
+  try {
+    mergeLatency(await api.SiteLatencyCheck([s.url]))
+  } catch (e) {
+    /* 忽略 */
+  } finally {
+    testingMap[s.url] = false
+  }
+}
+
+function latencyText(s) {
+  const ms = latResults[s.url]
+  if (ms === null || ms === undefined) return '--'
+  if (ms < 0) return t('home.speed.fail')
+  return `${ms} ms`
+}
+
+function latencyClass(s) {
+  const ms = latResults[s.url]
+  if (testingMap[s.url] || ms === null || ms === undefined) return 'pending'
+  if (ms < 0) return 'bad'
+  if (ms < 200) return 'good'
+  if (ms < 500) return 'mid'
+  return 'bad'
+}
+
+// ---- 测试点管理：草稿行内编辑，保存写入设置并立即按新列表重测 ----
+
+const manageOpen = ref(false)
+const draftSites = ref([])
+
+function toggleManage() {
+  if (manageOpen.value) {
+    manageOpen.value = false
+    return
+  }
+  // 草稿 = 当前生效列表的深拷贝（内置站点也允许编辑/删除）
+  draftSites.value = siteList.value.map((s) => ({ name: s.name || '', url: s.url }))
+  manageOpen.value = true
+}
+
+function addDraft() {
+  if (draftSites.value.length >= MAX_SITES) {
+    showToast(tf('home.speed.maxSites', MAX_SITES), 'warning')
+    return
+  }
+  draftSites.value.push({ name: '', url: '' })
+}
+
+function removeDraft(i) {
+  draftSites.value.splice(i, 1)
+}
+
+function saveSites() {
+  const cleaned = []
+  for (const row of draftSites.value) {
+    const url = (row.url || '').trim()
+    if (!url) continue
+    if (!/^https?:\/\//i.test(url)) {
+      showToast(t('home.speed.badUrl'), 'error')
+      return
+    }
+    const name = (row.name || '').trim()
+    cleaned.push({ name, url })
+    if (cleaned.length >= MAX_SITES) break
+  }
+  if (cleaned.length >= MAX_SITES && draftSites.value.length > MAX_SITES) {
+    showToast(tf('home.speed.maxSites', MAX_SITES), 'warning')
+  }
+  patchSettings({ speedSites: cleaned })
+  manageOpen.value = false
+  if (cleaned.length) testAllSites()
+}
+
+async function refreshIpInfo() {
+  if (ipBusy.value) return
+  ipBusy.value = true
+  try {
+    const info = await api.GetIPInfo()
+    if (info) Object.assign(ipInfo, info)
+  } catch (e) {
+    /* 查询失败时保留上次结果 */
+  }
+  ipBusy.value = false
+}
+
+const ipLocation = computed(() => {
+  const parts = [ipInfo.country, ipInfo.regionName, ipInfo.city].filter(Boolean)
+  return parts.join(' · ') || t('home.ip.unset')
+})
+
+const ispText = computed(() => {
+  const parts = [ipInfo.isp, ipInfo.as].filter(Boolean)
+  return parts.join(' · ') || t('home.ip.unset')
+})
+
+// IANA 时区名转 UTC 偏移展示（如 Asia/Shanghai → UTC+8），失败时只显示原名
+const timezoneText = computed(() => {
+  if (!ipInfo.timezone) return t('home.ip.unset')
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: ipInfo.timezone, timeZoneName: 'shortOffset' }).formatToParts(new Date())
+    const tz = parts.find((p) => p.type === 'timeZoneName')
+    const offset = tz ? tz.value.replace(/^GMT/, 'UTC') : ''
+    return offset ? `${ipInfo.timezone} (${offset})` : ipInfo.timezone
+  } catch (e) {
+    return ipInfo.timezone
+  }
+})
+
+async function copyText(text) {
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    showToast(t('toast.copied'), 'success')
+  } catch (e) {
+    // WebView2 未授予剪贴板权限时退回 execCommand
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    ta.remove()
+    showToast(ok ? t('toast.copied') : t('toast.copyFail'), ok ? 'success' : 'error')
+  }
+}
+
+// 有效在线由离线转在线（拨号成功/系统直连）后自动刷新 IP 信息，
+// 便于拨号后直接看到新出口归属；测速按用户要求不自动触发。
+watch(
+  () => state.online || state.sysOnline,
+  (live, was) => {
+    if (live && !was) refreshIpInfo()
+  }
+)
 
 // ------------------------------------------------------------ 状态卡片 ----
 
@@ -693,7 +1014,9 @@ const statCards = computed(() => {
   padding: 18px;
   height: 100%;
   min-height: 0;
-  overflow: hidden;
+  /* 新增两张卡片后内容更高：最小窗口高度下纵向滚动兜底，避免底部卡片被裁切 */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .home-header {
@@ -967,5 +1290,275 @@ const statCards = computed(() => {
   font-size: 10px;
   color: var(--c-hint);
   margin-top: 2px;
+}
+
+/* 网站测速 / IP 信息：双卡并排（窄窗自动换行为单列），Clash Verge 首页同款 */
+.duo-grid {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 14px;
+}
+
+.duo-card {
+  padding: 12px 16px 14px;
+  min-width: 0;
+}
+
+.duo-refresh {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--c-text-sub);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+}
+
+.duo-refresh:hover:not(:disabled) {
+  background: var(--c-hover);
+  color: var(--c-info);
+}
+
+.duo-refresh:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.spinning {
+  display: inline-block;
+  animation: duo-spin 1s linear infinite;
+}
+
+@keyframes duo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 测试点管理面板：行内增删改，保存写入设置 */
+.manage-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.manage-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.manage-row input {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.manage-name {
+  flex: 0 0 128px;
+}
+
+.manage-url {
+  flex: 1 1 auto;
+}
+
+.manage-del {
+  color: var(--c-hint);
+}
+
+.manage-del:hover:not(:disabled) {
+  color: var(--c-error);
+  background: var(--c-hover);
+}
+
+.manage-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.manage-link {
+  border: none;
+  background: transparent;
+  color: var(--c-info);
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 2px;
+}
+
+.manage-link:disabled {
+  color: var(--c-hint);
+  cursor: default;
+}
+
+.manage-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.manage-btns .btn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+/* 测速站点瓦片：品牌色圆角块内嵌白色官方图标（自建点回退首字母）+ 站点名 + 阈值配色延迟 */
+.lat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 6px;
+}
+
+.lat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 4px 8px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  min-width: 0;
+}
+
+.lat-item:hover:not(:disabled) {
+  background: var(--c-hover);
+}
+
+.lat-item:disabled {
+  cursor: default;
+}
+
+.lat-empty {
+  font-size: 12px;
+  color: var(--c-hint);
+  padding: 4px 0 2px;
+}
+
+.lat-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.lat-icon {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+.lat-name {
+  font-size: 11px;
+  color: var(--c-text-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.lat-ms {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.lat-ms i {
+  font-size: 12px;
+}
+
+.lat-ms.good {
+  color: var(--c-success);
+}
+
+.lat-ms.mid {
+  color: var(--c-warning);
+}
+
+.lat-ms.bad {
+  color: var(--c-error);
+}
+
+.lat-ms.pending {
+  color: var(--c-hint);
+  font-weight: 600;
+}
+
+/* IP 信息行：标签 + 值，IP 值可点击复制 */
+.ip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-top: 2px;
+}
+
+.ip-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ip-label {
+  flex: 0 0 auto;
+  width: 56px;
+  font-size: 11px;
+  color: var(--c-text-sub);
+}
+
+.ip-value {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 长运营商名可换行，不再截断 */
+.ip-value.wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.ip-value.mono {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  cursor: pointer;
+}
+
+.ip-value.mono:hover {
+  color: var(--c-info);
 }
 </style>

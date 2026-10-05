@@ -29,6 +29,8 @@ export function ExitProgram():Promise<void>;
 
 export function GetBroadband():Promise<main.BroadbandCredentialDTO>;
 
+export function GetIPInfo():Promise<main.IPInfoDTO>;
+
 export function GetPortalCredential():Promise<main.PortalCredentialDTO>;
 
 export function GetUILang():Promise<main.LangPayload>;
@@ -54,6 +56,8 @@ export function SetAutoStart(arg1:boolean):Promise<boolean>;
 export function SetUILang(arg1:string):Promise<string>;
 
 export function ShowWindow():Promise<void>;
+
+export function SiteLatencyCheck(arg1:Array<string>):Promise<Array<main.SiteLatencyDTO>>;
 
 export function TestPortalAuth():Promise<main.PortalTestResult>;
 
