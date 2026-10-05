@@ -9,7 +9,7 @@
   "info": {
     "companyName": "Lexo0522",
     "productName": "PPPoE校园网拨号工具",
-    "productVersion": "1.2.1",
+    "productVersion": "1.2.2",
     "copyright": "Copyright (C) 2026 Lexo0522",
     "comments": "PPPoE校园网一键拨号工具，支持断线重连、门户自动认证与流量统计"
   },
