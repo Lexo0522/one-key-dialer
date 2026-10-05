@@ -6,6 +6,13 @@
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
+  "info": {
+    "companyName": "Lexo0522",
+    "productName": "PPPoE校园网拨号工具",
+    "productVersion": "1.2.0",
+    "copyright": "Copyright (C) 2026 Lexo0522",
+    "comments": "PPPoE校园网一键拨号工具，支持断线重连、门户自动认证与流量统计"
+  },
   "author": {
     "name": "Lexo0522",
     "email": ""

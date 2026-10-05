@@ -66,6 +66,21 @@ jobs:
       - name: Run unit tests
         run: go test ./... -count=1
 
+      - name: Sync exe metadata version from version.txt
+        shell: pwsh
+        run: |
+          # wails.json 的 info.productVersion 渲染进 exe 的 Windows 属性
+          # （File/ProductVersion）。发布时以 version.txt 为准，避免两处漂移。
+          $rev = $env:APP_VERSION
+          $raw = Get-Content wails.json -Raw
+          if ($raw -notmatch '"productVersion"') {
+            Write-Error "wails.json missing info.productVersion - cannot sync version"
+            exit 1
+          }
+          $raw = $raw -replace '"productVersion"\s*:\s*"[^"]*"', "`"productVersion`": `"$rev`""
+          Set-Content wails.json $raw -Encoding utf8
+          Write-Host "wails.json info.productVersion -> $rev"
+
       - name: Build executable (wails)
         shell: pwsh
         run: |
@@ -73,6 +88,30 @@ jobs:
           wails build -platform windows/amd64 -clean
           if (-not (Test-Path build/bin/PPPoEDialer.exe)) {
             Write-Error "build/bin/PPPoEDialer.exe missing"
+            exit 1
+          }
+
+      - name: Verify exe metadata
+        shell: pwsh
+        run: |
+          # 用 Explorer 同款 Shell 属性系统读取（.NET 的 FileVersionInfo 对
+          # Go/WinRes 组合的 PE 存在读取兼容性问题，不能作为判据）
+          $rev = $env:APP_VERSION
+          $exe = "build/bin/PPPoEDialer.exe"
+          $shell = New-Object -ComObject Shell.Application
+          $folder = $shell.Namespace((Resolve-Path "build/bin").Path)
+          $file = $folder.ParseName("PPPoEDialer.exe")
+          $fileVersion = $folder.GetDetailsOf($file, 166)   # 文件版本
+          $productVersion = $folder.GetDetailsOf($file, 300) # 产品版本
+          $copyright = $folder.GetDetailsOf($file, 25)       # 版权
+          Write-Host "FileVersion=$fileVersion ProductVersion=$productVersion"
+          Write-Host "LegalCopyright=$copyright"
+          if ($fileVersion -notlike "$rev*" -or $productVersion -notlike "$rev*") {
+            Write-Error "exe version ($fileVersion / $productVersion) does not match version.txt ($rev)"
+            exit 1
+          }
+          if (-not $copyright) {
+            Write-Error "exe LegalCopyright is empty"
             exit 1
           }
 

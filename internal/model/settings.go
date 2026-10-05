@@ -77,10 +77,14 @@ type Settings struct {
 	SpeedSites []SpeedSite `json:"speedSites"`
 }
 
-// SpeedSite 自定义测速点（Clash 同款「自建测试点」）：展示名 + 完整 URL。
+// SpeedSite 测速点（Clash 同款「自建测试点」，内置站点同样以此为数据、
+// 可编辑可删除）：展示名 + 完整 URL + 可选图标地址。
 type SpeedSite struct {
 	Name string `json:"name"`
 	Url  string `json:"url"`
+	// Icon 图标图片地址（http/https/data:image），空 = 自动：
+	// 内置站点用打包图标，自建站点用名称首字母头像。
+	Icon string `json:"icon"`
 }
 
 // MaxSpeedSites 测试点数量上限（与 service 侧单次测速上限一致）。
@@ -145,9 +149,11 @@ func (s Settings) Normalize() Settings {
 	return s
 }
 
-// NormalizeSpeedSites 清洗自定义测试点：去空白、去无效 URL、去重（按 URL）、截断到上限。
+// NormalizeSpeedSites 清洗测速点：去空白、去无效 URL、去重（按 URL）、截断到上限。
+// nil（从未配置过）保持 nil = 前端使用内置默认站点；非 nil（含空列表）说明
+// 用户已接管列表（可删除全部站点），清洗后保留为非 nil 空切片。
 func NormalizeSpeedSites(sites []SpeedSite) []SpeedSite {
-	if len(sites) == 0 {
+	if sites == nil {
 		return nil
 	}
 	out := make([]SpeedSite, 0, len(sites))
@@ -155,17 +161,18 @@ func NormalizeSpeedSites(sites []SpeedSite) []SpeedSite {
 	for _, s := range sites {
 		s.Name = strings.TrimSpace(s.Name)
 		s.Url = strings.TrimSpace(s.Url)
+		s.Icon = strings.TrimSpace(s.Icon)
 		if !isProbeURL(s.Url) || seen[s.Url] {
 			continue
+		}
+		if s.Icon != "" && !isProbeURL(s.Icon) && !strings.HasPrefix(strings.ToLower(s.Icon), "data:image/") {
+			s.Icon = ""
 		}
 		seen[s.Url] = true
 		out = append(out, s)
 		if len(out) >= MaxSpeedSites {
 			break
 		}
-	}
-	if len(out) == 0 {
-		return nil
 	}
 	return out
 }

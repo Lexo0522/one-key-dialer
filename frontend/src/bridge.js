@@ -52,7 +52,7 @@ const MOCK_STATE = {
     portalBody: '',
     portalHeaders: '',
     portalSuccessHint: '',
-    speedSites: []
+    speedSites: null // null = 未配置过 → 前端展示内置默认站点
   },
   broadband: { username: '20210001', hasPassword: true },
   online: false,

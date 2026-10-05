@@ -74,13 +74,13 @@
 
     <!-- 网站测速 + IP 信息：Clash Verge 首页同款卡片 -->
     <div class="duo-grid">
-      <!-- 网站测速：不自动测，点刷新全测 / 点站点单测；测试点可在卡片内增删（Clash 同款） -->
+      <!-- 网站测速：不自动测；左键点瓦片单测，右键编辑/删除；+ 弹窗新增（Clash 同款自建测试点） -->
       <div class="card duo-card">
         <div class="card-head">
           <div class="card-title"><i class="fas fa-tachometer-alt"></i>{{ t('home.speed.title') }}</div>
           <div class="head-actions">
-            <button class="duo-refresh" :title="t('home.speed.manage')" @click="toggleManage">
-              <i class="fas fa-cog"></i>
+            <button class="duo-refresh" :title="t('home.speed.addTitle')" @click="openAdd">
+              <i class="fas fa-plus"></i>
             </button>
             <button class="duo-refresh" :disabled="latBusy || !siteList.length" :title="t('home.speed.refresh')"
                     @click="testAllSites">
@@ -89,31 +89,11 @@
           </div>
         </div>
 
-        <!-- 测试点管理面板：行内增删改，保存写入设置 -->
-        <div v-if="manageOpen" class="manage-panel">
-          <div v-for="(row, i) in draftSites" :key="i" class="manage-row">
-            <input v-model.trim="row.name" class="manage-name" :placeholder="t('home.speed.namePh')" spellcheck="false">
-            <input v-model.trim="row.url" class="manage-url" :placeholder="t('home.speed.urlPh')" spellcheck="false">
-            <button class="duo-refresh manage-del" :title="t('home.speed.delete')" @click="removeDraft(i)">
-              <i class="fas fa-times"></i>
-            </button>
-          </div>
-          <div class="manage-foot">
-            <button class="manage-link" :disabled="draftSites.length >= MAX_SITES" @click="addDraft">
-              <i class="fas fa-plus"></i>{{ t('home.speed.add') }}
-            </button>
-            <div class="manage-btns">
-              <button class="btn btn-primary" @click="saveSites">{{ t('home.speed.save') }}</button>
-              <button class="btn" @click="manageOpen = false">{{ t('home.speed.cancel') }}</button>
-            </div>
-          </div>
-        </div>
-
         <div v-if="siteList.length" class="lat-grid">
-          <button v-for="s in siteList" :key="s.url" class="lat-item" :title="s.url"
-                  :disabled="testingMap[s.url]" @click="testOneSite(s)">
+          <button v-for="(s, i) in siteList" :key="s.url + i" class="lat-item" :title="s.url"
+                  :disabled="testingMap[s.url]" @click="testOneSite(s)" @contextmenu.prevent="openCtx(i, $event)">
             <span class="lat-avatar" :style="{ background: siteColor(s) }">
-              <img v-if="s.icon" class="lat-icon" :src="s.icon" alt="">
+              <img v-if="resolveIcon(s)" class="lat-icon" :src="resolveIcon(s)" alt="">
               <template v-else>{{ siteMark(s) }}</template>
             </span>
             <span class="lat-name">{{ siteName(s) }}</span>
@@ -162,11 +142,53 @@
         </div>
       </div>
     </div>
+
+    <!-- 测试点右键菜单：编辑 / 删除（内置站点同样可操作） -->
+    <div v-if="ctx.visible" class="ctx-mask" @click="ctx.visible = false" @contextmenu.prevent="ctx.visible = false">
+      <div class="ctx-menu" :style="{ left: ctx.x + 'px', top: ctx.y + 'px' }" @click.stop>
+        <button class="ctx-item" @click="startEdit">
+          <i class="fas fa-pen"></i>{{ t('home.speed.edit') }}
+        </button>
+        <button class="ctx-item ctx-danger" @click="removeSite">
+          <i class="fas fa-trash-alt"></i>{{ t('home.speed.delete') }}
+        </button>
+      </div>
+    </div>
+
+    <!-- 新增/编辑测试点弹窗：灰色蒙版，点蒙版关闭；浮动标签表单 -->
+    <div v-if="modal.open" class="modal-mask" @click="modal.open = false">
+      <div class="modal-card" @click.stop>
+        <div class="modal-title">
+          {{ modal.editIndex >= 0 ? t('home.speed.editTitle') : t('home.speed.addTitle') }}
+        </div>
+        <div class="ff">
+          <input ref="nameInput" v-model.trim="modal.draft.name" placeholder=" " spellcheck="false"
+                 @keyup.enter="saveModal">
+          <label>{{ t('home.speed.fName') }}</label>
+        </div>
+        <div class="ff has-preview">
+          <span class="ff-preview" :style="modalPreviewStyle">
+            <img v-if="modalIconPreview" :src="modalIconPreview" alt="">
+            <template v-else>{{ modalMark }}</template>
+          </span>
+          <input v-model.trim="modal.draft.icon" placeholder=" " spellcheck="false">
+          <label>{{ t('home.speed.fIcon') }}</label>
+        </div>
+        <div class="ff">
+          <input v-model.trim="modal.draft.url" placeholder=" " spellcheck="false" @keyup.enter="saveModal">
+          <label>{{ t('home.speed.fUrl') }}</label>
+        </div>
+        <div class="modal-btns">
+          <button class="btn" @click="modal.open = false">{{ t('home.speed.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveModal">{{ t('home.speed.save') }}</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { state, doDial, doDisconnect, formatSpeed, formatBytes, formatDuration, showToast, patchSettings } from '../store'
 import { api } from '../bridge'
 import { t, tf } from '../i18n'
@@ -734,13 +756,15 @@ onBeforeUnmount(() => {
 
 // ---------------------------------------------------- 网站测速 / IP 信息（Clash Verge 同款） ----
 // 延迟与 IP 归属均由代理侧直连测量（不经设置内的代理），浏览器 dev 走 bridge mock。
-// 测速不自动触发（用户点刷新全测 / 点站点单测）；测试点可在卡片内增删（Clash 同款
-// 自建测试点），保存在设置 speedSites，为空时使用内置默认站点。
-// latencyMs: null 未测 | -1 失败 | >=0 毫秒；配色阈值与 CV 一致（<200 绿 / <500 橙 / 其余红）。
+// 测速不自动触发（点刷新全测 / 点瓦片单测）；测试点全部数据化存于设置 speedSites：
+// 未配置过（null）时显示内置默认站点；右键任一瓦片可编辑/删除（内置站点同样可操作）；
+// 点 + 弹窗新增，图标可选。latencyMs: null 未测 | -1 失败 | >=0 毫秒；
+// 配色阈值与 CV 一致（<200 绿 / <500 橙 / 其余红）。
 
 const MAX_SITES = 12
 
-// 内置默认测试点（icon 为本地打包的白色品牌 SVG，bg 为品牌底色）
+// 内置默认测试点（icon 为本地打包的白色品牌 SVG，bg 为品牌底色）；
+// 仅作为未配置时的展示种子与图标回退，任何编辑/删除/新增都会写入设置数据。
 const BUILTIN_SITES = [
   { name: 'Bilibili', url: 'https://www.bilibili.com', bg: '#FB7299', icon: iconBilibili },
   { name: 'Baidu', url: 'https://www.baidu.com', bg: '#2932E1', icon: iconBaidu },
@@ -756,17 +780,12 @@ const ipInfo = reactive({ ip: '', country: '', regionName: '', city: '', isp: ''
 const latResults = reactive({})
 const testingMap = reactive({})
 
-// 生效测试点列表：设置里保存过就完全以用户列表为准，否则内置默认。
-// 设置项只持久化 name/url，按 URL 补回内置站点的图标与品牌色。
+// 生效测试点列表：设置里配置过（非 null）就完全以用户数据为准（可为空），
+// 未配置过则展示内置默认站点。
 const siteList = computed(() => {
   const custom = state.settings?.speedSites
-  if (Array.isArray(custom) && custom.length) {
-    return custom.map((s) => {
-      const b = BUILTIN_SITES.find((x) => x.url === s.url)
-      return b ? { ...s, bg: b.bg, icon: b.icon } : s
-    })
-  }
-  return BUILTIN_SITES
+  if (custom == null) return BUILTIN_SITES
+  return Array.isArray(custom) ? custom : BUILTIN_SITES
 })
 
 function siteName(s) {
@@ -778,9 +797,18 @@ function siteMark(s) {
   return src ? src.charAt(0).toUpperCase() : '?'
 }
 
+// 站点图标：设置了 icon 用之；否则内置站点回退打包图标；自建站点回退首字母
+function resolveIcon(s) {
+  if (s.icon) return s.icon
+  const b = BUILTIN_SITES.find((x) => x.url === s.url)
+  return b ? b.icon : ''
+}
+
 function siteColor(s) {
-  if (s.bg) return s.bg
-  // 自建测试点：按名字/URL 哈希取色，保证同一点颜色稳定
+  const b = BUILTIN_SITES.find((x) => x.url === s.url)
+  if (b) return b.bg
+  if (s.icon) return '#fff' // 自定义图标：白底色块衬图片
+  // 无图标自建点：按名字/URL 哈希取色，保证同一点颜色稳定
   let h = 0
   for (const ch of siteName(s) + s.url) h = (h * 31 + ch.charCodeAt(0)) >>> 0
   return `hsl(${h % 360}, 52%, 44%)`
@@ -829,66 +857,131 @@ async function testOneSite(s) {
 
 function latencyText(s) {
   const ms = latResults[s.url]
-  if (ms === null || ms === undefined) return '--'
+  if (ms === null || ms === undefined) return t('home.speed.test')
   if (ms < 0) return t('home.speed.fail')
   return `${ms} ms`
 }
 
 function latencyClass(s) {
   const ms = latResults[s.url]
-  if (testingMap[s.url] || ms === null || ms === undefined) return 'pending'
+  if (testingMap[s.url]) return 'pending'
+  if (ms === null || ms === undefined) return 'todo'
   if (ms < 0) return 'bad'
   if (ms < 200) return 'good'
   if (ms < 500) return 'mid'
   return 'bad'
 }
 
-// ---- 测试点管理：草稿行内编辑，保存写入设置并立即按新列表重测 ----
+// ---- 测试点数据：右键编辑/删除 + 弹窗新增，全部写入设置 speedSites ----
 
-const manageOpen = ref(false)
-const draftSites = ref([])
-
-function toggleManage() {
-  if (manageOpen.value) {
-    manageOpen.value = false
-    return
-  }
-  // 草稿 = 当前生效列表的深拷贝（内置站点也允许编辑/删除）
-  draftSites.value = siteList.value.map((s) => ({ name: s.name || '', url: s.url }))
-  manageOpen.value = true
+// 把展示项收敛为持久化字段（name/url/icon）
+function persistSite(s) {
+  return { name: s.name || '', url: s.url, icon: s.icon || '' }
 }
 
-function addDraft() {
-  if (draftSites.value.length >= MAX_SITES) {
+function writeSites(list) {
+  patchSettings({ speedSites: list.map(persistSite) })
+}
+
+// 右键菜单
+const ctx = reactive({ visible: false, x: 0, y: 0, index: -1 })
+
+function openCtx(i, e) {
+  // 菜单约 120x84，贴近右/下边缘时向内收
+  ctx.x = Math.min(e.clientX, window.innerWidth - 136)
+  ctx.y = Math.min(e.clientY, window.innerHeight - 96)
+  ctx.index = i
+  ctx.visible = true
+}
+
+// 新增/编辑弹窗
+const modal = reactive({ open: false, editIndex: -1, draft: { name: '', icon: '', url: '' } })
+const nameInput = ref(null)
+
+function openAdd() {
+  if (siteList.value.length >= MAX_SITES) {
     showToast(tf('home.speed.maxSites', MAX_SITES), 'warning')
     return
   }
-  draftSites.value.push({ name: '', url: '' })
+  modal.editIndex = -1
+  modal.draft = { name: '', icon: '', url: '' }
+  modal.open = true
+  nextTick(() => nameInput.value?.focus())
 }
 
-function removeDraft(i) {
-  draftSites.value.splice(i, 1)
+function startEdit() {
+  ctx.visible = false
+  const s = siteList.value[ctx.index]
+  if (!s) return
+  // 打包图标只是内置站点的展示回退，不算数据：编辑时 icon 字段留空
+  const b = BUILTIN_SITES.find((x) => x.url === s.url)
+  const icon = !s.icon || (b && s.icon === b.icon) ? '' : s.icon
+  modal.editIndex = ctx.index
+  modal.draft = { name: s.name || '', icon, url: s.url }
+  modal.open = true
+  nextTick(() => nameInput.value?.focus())
 }
 
-function saveSites() {
-  const cleaned = []
-  for (const row of draftSites.value) {
-    const url = (row.url || '').trim()
-    if (!url) continue
-    if (!/^https?:\/\//i.test(url)) {
-      showToast(t('home.speed.badUrl'), 'error')
+// 删除右键选中的测试点（写入设置，内置站点同样可删）
+function removeSite() {
+  const i = ctx.index
+  ctx.visible = false
+  const next = siteList.value.map(persistSite)
+  if (i < 0 || i >= next.length) return
+  next.splice(i, 1)
+  writeSites(next)
+}
+
+// 弹窗「图标」预览：填了图标 URL 用之，否则内置站点回退打包图标，再回退首字母
+const modalIconPreview = computed(() => {
+  const d = modal.draft
+  if (d.icon) return d.icon
+  const b = BUILTIN_SITES.find((x) => x.url === d.url)
+  return b ? b.icon : ''
+})
+
+const modalMark = computed(() => (modal.draft.name || hostOf(modal.draft.url) || '?').charAt(0).toUpperCase())
+
+// 预览框底色：内置打包图标（白色 SVG）配品牌色，自定义图片配白底
+const modalPreviewStyle = computed(() => {
+  const d = modal.draft
+  if (!d.icon) {
+    const b = BUILTIN_SITES.find((x) => x.url === d.url)
+    if (b) return { background: b.bg }
+    return {}
+  }
+  return { background: '#fff' }
+})
+
+function saveModal() {
+  const url = modal.draft.url.trim()
+  if (!/^https?:\/\//i.test(url)) {
+    showToast(t('home.speed.badUrl'), 'error')
+    return
+  }
+  const icon = modal.draft.icon.trim()
+  if (icon && !/^https?:\/\//i.test(icon) && !/^data:image\//i.test(icon)) {
+    showToast(t('home.speed.badIcon'), 'error')
+    return
+  }
+  const next = siteList.value.map(persistSite)
+  const entry = { name: modal.draft.name.trim(), url, icon }
+  if (next.some((s, i) => s.url === url && i !== modal.editIndex)) {
+    showToast(t('home.speed.dupUrl'), 'error')
+    return
+  }
+  if (modal.editIndex >= 0) {
+    if (modal.editIndex >= next.length) return
+    next[modal.editIndex] = entry
+  } else {
+    if (next.length >= MAX_SITES) {
+      showToast(tf('home.speed.maxSites', MAX_SITES), 'warning')
       return
     }
-    const name = (row.name || '').trim()
-    cleaned.push({ name, url })
-    if (cleaned.length >= MAX_SITES) break
+    next.push(entry)
   }
-  if (cleaned.length >= MAX_SITES && draftSites.value.length > MAX_SITES) {
-    showToast(tf('home.speed.maxSites', MAX_SITES), 'warning')
-  }
-  patchSettings({ speedSites: cleaned })
-  manageOpen.value = false
-  if (cleaned.length) testAllSites()
+  writeSites(next)
+  modal.open = false
 }
 
 async function refreshIpInfo() {
@@ -1248,7 +1341,7 @@ const statCards = computed(() => {
 .stat-grid {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
   gap: 14px;
 }
 
@@ -1292,11 +1385,12 @@ const statCards = computed(() => {
   margin-top: 2px;
 }
 
-/* 网站测速 / IP 信息：双卡并排（窄窗自动换行为单列），Clash Verge 首页同款 */
+/* 网站测速 / IP 信息：双卡并排（窄窗自动换行为单列），Clash Verge 首页同款。
+   min(340px, 100%)：容器比 340px 窄时轨道跟随收缩，卡片不会向右溢出 */
 .duo-grid {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
   gap: 14px;
 }
 
@@ -1347,86 +1441,194 @@ const statCards = computed(() => {
   }
 }
 
-/* 测试点管理面板：行内增删改，保存写入设置 */
-.manage-panel {
+/* 右键菜单：编辑 / 删除（透明蒙版点击即关） */
+.ctx-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+}
+
+.ctx-menu {
+  position: fixed;
+  min-width: 120px;
+  padding: 4px;
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
 }
 
-.manage-row {
+.ctx-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.manage-row input {
-  height: 28px;
-  padding: 0 8px;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  color: var(--c-text);
   font-size: 12px;
-  min-width: 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
 }
 
-.manage-name {
-  flex: 0 0 128px;
+.ctx-item i {
+  width: 14px;
+  font-size: 11px;
+  color: var(--c-text-sub);
 }
 
-.manage-url {
-  flex: 1 1 auto;
-}
-
-.manage-del {
-  color: var(--c-hint);
-}
-
-.manage-del:hover:not(:disabled) {
-  color: var(--c-error);
+.ctx-item:hover {
   background: var(--c-hover);
 }
 
-.manage-foot {
+.ctx-item.ctx-danger:hover {
+  background: color-mix(in srgb, var(--c-error) 10%, transparent);
+}
+
+.ctx-item.ctx-danger:hover i {
+  color: var(--c-error);
+}
+
+/* 新增/编辑测试点弹窗：灰色蒙版 + 居中卡片 */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.42);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: center;
 }
 
-.manage-link {
-  border: none;
-  background: transparent;
-  color: var(--c-info);
-  font-size: 12px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 2px;
-}
-
-.manage-link:disabled {
-  color: var(--c-hint);
-  cursor: default;
-}
-
-.manage-btns {
+.modal-card {
+  width: 330px;
+  max-width: calc(100vw - 32px);
+  background: var(--c-card);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.24);
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.modal-btns {
+  display: flex;
+  justify-content: flex-end;
   gap: 8px;
+  margin-top: 2px;
 }
 
-.manage-btns .btn {
-  height: 28px;
-  padding: 0 12px;
+.modal-btns .btn {
+  height: 30px;
+  padding: 0 14px;
   font-size: 12px;
 }
 
-/* 测速站点瓦片：品牌色圆角块内嵌白色官方图标（自建点回退首字母）+ 站点名 + 阈值配色延迟 */
+/* 浮动标签输入框：聚焦/有值时标签浮到上边框线上 */
+.ff {
+  position: relative;
+  height: 40px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  background: var(--c-card);
+}
+
+.ff input {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--c-text);
+}
+
+.ff label {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 13px;
+  color: var(--c-hint);
+  pointer-events: none;
+  padding: 0 4px;
+  transition: all 0.14s ease;
+  white-space: nowrap;
+}
+
+.ff input:focus + label,
+.ff input:not(:placeholder-shown) + label {
+  top: 0;
+  font-size: 10px;
+  color: var(--c-info);
+  background: var(--c-card);
+}
+
+.ff input:focus {
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--c-info) inset;
+}
+
+/* 图标字段：左侧实时预览（图标图或首字母） */
+.ff.has-preview input {
+  padding-left: 44px;
+}
+
+.ff.has-preview label {
+  left: 44px;
+}
+
+.ff.has-preview input:focus + label,
+.ff.has-preview input:not(:placeholder-shown) + label {
+  left: 10px;
+}
+
+.ff-preview {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--c-hover);
+  color: var(--c-text-sub);
+  font-size: 11px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.ff-preview img {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  display: block;
+}
+
+/* 测速站点瓦片（品牌色圆角块内嵌白色官方图标 + 站点名 + 阈值配色延迟）：
+   列数随卡片宽度自适应——每列最小 ~104px（再窄会拥挤），行内铺满不留空；
+   窄卡 3 列、宽卡 4-7 列自然过渡，站点多时自动换行 */
 .lat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(104px, 100%), 1fr));
   gap: 6px;
+  /* 站点较多时瓦片区内部滚动（约 3 行高度），卡片头与右邻 IP 卡布局不受影响 */
+  max-height: 286px;
+  overflow-y: auto;
 }
 
 .lat-item {
@@ -1512,6 +1714,16 @@ const statCards = computed(() => {
 
 .lat-ms.pending {
   color: var(--c-hint);
+  font-weight: 600;
+}
+
+/* 未测速：显示「测试」胶囊，点击即测该站 */
+.lat-ms.todo {
+  color: var(--c-info);
+  background: var(--c-accent-soft);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
   font-weight: 600;
 }
 
