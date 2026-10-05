@@ -1660,23 +1660,26 @@ const statCards = computed(() => {
 }
 
 .lat-avatar {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1;
   flex: 0 0 auto;
+  overflow: hidden;
 }
 
 .lat-icon {
-  width: 15px;
-  height: 15px;
+  width: 24px;
+  height: 24px;
   display: block;
+  /* 彩色品牌 logo 自带构图，放大到 24px 才能看清，不做额外缩放 */
+  flex: 0 0 auto;
 }
 
 .lat-name {
