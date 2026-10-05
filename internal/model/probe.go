@@ -2,8 +2,23 @@ package model
 
 import (
 	"fmt"
-	"strings"
 	"time"
+)
+
+// 探测模式与内置默认值。
+// 探测设置曾开放 UI 配置（probeMode/probeHost 等五个 settings 字段），
+// UI 移除后字段已废弃删除;本项目不做兼容迁移,配置固定用以下默认值,
+// 仅代理出口仍跟随设置。
+const (
+	ProbeModeICMP = "icmp"
+	ProbeModeHTTP = "http"
+	ProbeModeAuto = "auto"
+
+	DefaultProbeHost     = "223.5.5.5"
+	DefaultProbeHTTPURL  = "http://connectivitycheck.gstatic.com/generate_204"
+	DefaultProbeAttempts = 3
+	DefaultProbeDelayMs  = 1000
+	DefaultHTTPTimeoutMs = 2500
 )
 
 // ProbeConfig 探测配置（对应旧版 ConnectivityConfirm.Config）。
@@ -17,14 +32,15 @@ type ProbeConfig struct {
 	Proxy         ProxyConfig
 }
 
-// ProbeConfigFromSettings 由设置快照构造探测配置（含代理出口）。
+// ProbeConfigFromSettings 由设置快照构造探测配置。
+// 探测目标等项固定为内置默认值,仅代理出口跟随设置。
 func ProbeConfigFromSettings(s Settings) ProbeConfig {
 	return ProbeConfig{
-		Mode:          NormalizeProbeMode(s.ProbeMode),
-		Host:          orDefault(s.ProbeHost, DefaultProbeHost),
-		HTTPUrl:       orDefault(s.ProbeHttpUrl, DefaultProbeHTTPURL),
-		Attempts:      maxInt(1, s.ProbeAttempts),
-		DelayMs:       maxInt(0, s.ProbeDelayMs),
+		Mode:          ProbeModeAuto,
+		Host:          DefaultProbeHost,
+		HTTPUrl:       DefaultProbeHTTPURL,
+		Attempts:      DefaultProbeAttempts,
+		DelayMs:       DefaultProbeDelayMs,
 		HTTPTimeoutMs: DefaultHTTPTimeoutMs,
 		Proxy:         s.ProxyConfig(),
 	}
@@ -81,18 +97,4 @@ func (c ProbeConfig) Summary() string {
 		base += " proxy=" + c.Proxy.Summary()
 	}
 	return base
-}
-
-func orDefault(v, def string) string {
-	if strings.TrimSpace(v) == "" {
-		return def
-	}
-	return strings.TrimSpace(v)
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

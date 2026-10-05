@@ -12,22 +12,6 @@ const (
 // MinIntervalSeconds 自动重连最小间隔。
 const MinIntervalSeconds = 5
 
-// 探测模式
-const (
-	ProbeModeICMP = "icmp"
-	ProbeModeHTTP = "http"
-	ProbeModeAuto = "auto"
-)
-
-// 探测默认值
-const (
-	DefaultProbeHost     = "223.5.5.5"
-	DefaultProbeHTTPURL  = "http://connectivitycheck.gstatic.com/generate_204"
-	DefaultProbeAttempts = 3
-	DefaultProbeDelayMs  = 1000
-	DefaultHTTPTimeoutMs = 2500
-)
-
 // Settings 是不可变设置快照的 Go 版载体；JSON 字段名与旧版完全一致，
 // 以保证已有 settings.json 可直接读取。
 type Settings struct {
@@ -35,11 +19,6 @@ type Settings struct {
 	AutoReconnect          bool   `json:"autoReconnect"`
 	AutoStart              bool   `json:"autoStart"`
 	StartMinimized         bool   `json:"startMinimized"`
-	ProbeMode              string `json:"probeMode"`
-	ProbeHost              string `json:"probeHost"`
-	ProbeHttpUrl           string `json:"probeHttpUrl"`
-	ProbeAttempts          int    `json:"probeAttempts"`
-	ProbeDelayMs           int    `json:"probeDelayMs"`
 	DisconnectOnNoInternet bool   `json:"disconnectOnNoInternet"`
 	UpdateCheckEnabled     bool   `json:"updateCheckEnabled"`
 	// 下载并校验通过后直接进入安装，不再要求用户再点一次「立即安装」。
@@ -104,11 +83,6 @@ func DefaultSettings() Settings {
 		AutoReconnect:          false,
 		AutoStart:              false,
 		StartMinimized:         false,
-		ProbeMode:              ProbeModeAuto,
-		ProbeHost:              DefaultProbeHost,
-		ProbeHttpUrl:           DefaultProbeHTTPURL,
-		ProbeAttempts:          DefaultProbeAttempts,
-		ProbeDelayMs:           DefaultProbeDelayMs,
 		DisconnectOnNoInternet: false,
 		UpdateCheckEnabled:     true,
 		AutoInstallUpdate:      true,
@@ -121,23 +95,6 @@ func DefaultSettings() Settings {
 func (s Settings) Normalize() Settings {
 	if s.IntervalSeconds < MinIntervalSeconds {
 		s.IntervalSeconds = MinIntervalSeconds
-	}
-	s.ProbeMode = NormalizeProbeMode(s.ProbeMode)
-	if strings.TrimSpace(s.ProbeHost) == "" {
-		s.ProbeHost = DefaultProbeHost
-	} else {
-		s.ProbeHost = strings.TrimSpace(s.ProbeHost)
-	}
-	if strings.TrimSpace(s.ProbeHttpUrl) == "" {
-		s.ProbeHttpUrl = DefaultProbeHTTPURL
-	} else {
-		s.ProbeHttpUrl = strings.TrimSpace(s.ProbeHttpUrl)
-	}
-	if s.ProbeAttempts < 1 {
-		s.ProbeAttempts = 1
-	}
-	if s.ProbeDelayMs < 0 {
-		s.ProbeDelayMs = 0
 	}
 	s.UITheme = NormalizeTheme(s.UITheme)
 	s.PppoePort = strings.TrimSpace(s.PppoePort)
@@ -196,19 +153,6 @@ func isProbeURL(u string) bool {
 // 未设置时由后端自动探测，行为与旧版本一致。
 func (s Settings) PppoeDeviceSet() bool {
 	return s.PppoePort != "" && s.PppoeDevice != ""
-}
-
-// NormalizeProbeMode 归一探测模式，非法值回退 auto。
-func NormalizeProbeMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case ProbeModeICMP:
-		return ProbeModeICMP
-	case ProbeModeHTTP:
-		return ProbeModeHTTP
-	case ProbeModeAuto:
-		return ProbeModeAuto
-	}
-	return ProbeModeAuto
 }
 
 // NormalizeTheme 归一主题，非法值回退 system。

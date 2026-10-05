@@ -287,13 +287,9 @@ export namespace model {
 	    autoReconnect: boolean;
 	    autoStart: boolean;
 	    startMinimized: boolean;
-	    probeMode: string;
-	    probeHost: string;
-	    probeHttpUrl: string;
-	    probeAttempts: number;
-	    probeDelayMs: number;
 	    disconnectOnNoInternet: boolean;
 	    updateCheckEnabled: boolean;
+	    autoInstallUpdate: boolean;
 	    uiTheme: string;
 	    pppoePort: string;
 	    pppoeDevice: string;
@@ -311,6 +307,7 @@ export namespace model {
 	    portalBody: string;
 	    portalHeaders: string;
 	    portalSuccessHint: string;
+	    portalPreset: string;
 	    speedSites: SpeedSite[];
 	
 	    static createFrom(source: any = {}) {
@@ -323,13 +320,9 @@ export namespace model {
 	        this.autoReconnect = source["autoReconnect"];
 	        this.autoStart = source["autoStart"];
 	        this.startMinimized = source["startMinimized"];
-	        this.probeMode = source["probeMode"];
-	        this.probeHost = source["probeHost"];
-	        this.probeHttpUrl = source["probeHttpUrl"];
-	        this.probeAttempts = source["probeAttempts"];
-	        this.probeDelayMs = source["probeDelayMs"];
 	        this.disconnectOnNoInternet = source["disconnectOnNoInternet"];
 	        this.updateCheckEnabled = source["updateCheckEnabled"];
+	        this.autoInstallUpdate = source["autoInstallUpdate"];
 	        this.uiTheme = source["uiTheme"];
 	        this.pppoePort = source["pppoePort"];
 	        this.pppoeDevice = source["pppoeDevice"];
@@ -347,6 +340,7 @@ export namespace model {
 	        this.portalBody = source["portalBody"];
 	        this.portalHeaders = source["portalHeaders"];
 	        this.portalSuccessHint = source["portalSuccessHint"];
+	        this.portalPreset = source["portalPreset"];
 	        this.speedSites = this.convertValues(source["speedSites"], SpeedSite);
 	    }
 	

@@ -146,12 +146,10 @@ func TestProxyConfigAndURL(t *testing.T) {
 
 func TestProbeConfigCarriesProxy(t *testing.T) {
 	cfg := ProbeConfigFromSettings(Settings{
-		ProbeMode:     "http",
-		ProxyEnabled:  true,
-		ProxyType:     "http",
-		ProxyHost:     "127.0.0.1",
-		ProxyPort:     "7890",
-		ProbeAttempts: 3,
+		ProxyEnabled: true,
+		ProxyType:    "http",
+		ProxyHost:    "127.0.0.1",
+		ProxyPort:    "7890",
 	})
 	if !cfg.Proxy.Enabled || cfg.Proxy.ProxyURL().String() != "http://127.0.0.1:7890" {
 		t.Fatalf("探测配置未携带代理: %+v", cfg.Proxy)
