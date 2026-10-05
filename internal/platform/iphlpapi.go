@@ -19,13 +19,14 @@ import (
 // 与 CPU 的持续损耗,原生调用一次 syscall 即可完成。
 
 var (
-	modiphlpapi         = windows.NewLazySystemDLL("iphlpapi.dll")
-	procGetIfTable      = modiphlpapi.NewProc("GetIfTable")
-	procGetIfTable2     = modiphlpapi.NewProc("GetIfTable2")
-	procFreeMibTable    = modiphlpapi.NewProc("FreeMibTable")
-	procIcmpCreateFile  = modiphlpapi.NewProc("IcmpCreateFile")
-	procIcmpSendEcho    = modiphlpapi.NewProc("IcmpSendEcho")
-	procIcmpCloseHandle = modiphlpapi.NewProc("IcmpCloseHandle")
+	modiphlpapi          = windows.NewLazySystemDLL("iphlpapi.dll")
+	procGetIfTable       = modiphlpapi.NewProc("GetIfTable")
+	procGetIfTable2      = modiphlpapi.NewProc("GetIfTable2")
+	procFreeMibTable     = modiphlpapi.NewProc("FreeMibTable")
+	procGetBestInterface = modiphlpapi.NewProc("GetBestInterface")
+	procIcmpCreateFile   = modiphlpapi.NewProc("IcmpCreateFile")
+	procIcmpSendEcho     = modiphlpapi.NewProc("IcmpSendEcho")
+	procIcmpCloseHandle  = modiphlpapi.NewProc("IcmpCloseHandle")
 )
 
 // mibIfRow 与 Win32 MIB_IFROW 布局一致(ifdef.h,MAX_INTERFACE_NAME_LEN=256、
@@ -147,33 +148,25 @@ type EthLink struct {
 	SpeedMbps uint64
 }
 
-// EthernetLinks 列出物理以太网口（仅真实网卡）及插线状态，基于 GetIfTable2。
-// 旧版 GetIfTable 的 MIB_IFROW 没有物理/虚拟标记，Hyper-V 虚拟交换网卡与
-// WAN Miniport 等软件接口的 dwType 同为 6（以太网），会全部混入；且同一张
-// 网卡会产生多行。这里改为 MIB_IF_ROW2 过滤：
-//   - HardwareInterface + ConnectorPresent 位域同时为真才视为物理网卡
-//     （即 Get-NetAdapter -Physical 的判定口径，虚拟交换机 VNIC 两者皆 0）；
-//   - ifType 取自 NET_LUID 高 16 位，仅保留以太网（6）；
-//   - 同一物理网卡（同描述 + 同 MAC）多行去重合并，链路状态取并集。
-func EthernetLinks() []EthLink {
+// walkPhysicalEthernetRows 遍历 GetIfTable2 中所有"物理以太网卡"行并逐行回调。
+// 口径与 Get-NetAdapter -Physical 一致：HardwareInterface + ConnectorPresent
+// 位域同时为真，且 NET_LUID 高 16 位类型为以太网（6）。
+// 返回表是否读取成功；读取失败时不回调，由调用方保守处理。
+func walkPhysicalEthernetRows(fn func(row *mibIfRow2)) bool {
 	if procGetIfTable2.Find() != nil {
-		return nil
+		return false
 	}
 	var tbl unsafe.Pointer
 	if r1, _, _ := procGetIfTable2.Call(uintptr(unsafe.Pointer(&tbl))); r1 != 0 || tbl == nil {
-		return nil
+		return false
 	}
 	defer procFreeMibTable.Call(uintptr(tbl))
 
 	// 表头为两个 ULONG：NumEntries / TotalNumEntries，行紧随其后
 	num := int(binary.LittleEndian.Uint32(unsafe.Slice((*byte)(tbl), 8)))
 	if num <= 0 || num > 4096 {
-		return nil
+		return false
 	}
-
-	type linkKey = string
-	out := make([]EthLink, 0, num)
-	index := make(map[linkKey]int, num)
 	for i := 0; i < num; i++ {
 		row := (*mibIfRow2)(unsafe.Add(tbl, uintptr(8+i*int(mibIfRow2Size))))
 		if uint16(row.InterfaceLuid>>48) != ifTypeEthernet {
@@ -183,9 +176,23 @@ func EthernetLinks() []EthLink {
 			flagHardwareInterface|flagConnectorPresent {
 			continue
 		}
+		fn(row)
+	}
+	return true
+}
+
+// EthernetLinks 列出物理以太网口（仅真实网卡）及插线状态，基于 GetIfTable2。
+// 旧版 GetIfTable 的 MIB_IFROW 没有物理/虚拟标记，Hyper-V 虚拟交换网卡与
+// WAN Miniport 等软件接口的 dwType 同为 6（以太网），会全部混入；且同一张
+// 网卡会产生多行。过滤口径见 walkPhysicalEthernetRows；同一物理网卡
+// （同描述 + 同 MAC）多行去重合并，链路状态取并集。
+func EthernetLinks() []EthLink {
+	out := make([]EthLink, 0, 8)
+	index := make(map[string]int, 8)
+	ok := walkPhysicalEthernetRows(func(row *mibIfRow2) {
 		descr := strings.TrimSpace(utf16Nul(row.Description[:]))
 		if descr == "" || !printableASCII(descr) {
-			continue // 步长异常时的防线：宁可少报也不输出乱码
+			return // 步长异常时的防线：宁可少报也不输出乱码
 		}
 		macLen := row.PhysAddrLength
 		if macLen > uint32(len(row.PhysicalAddress)) {
@@ -209,12 +216,41 @@ func EthernetLinks() []EthLink {
 			if len(descr) < len(out[at].Descr) {
 				out[at].Descr = descr // 裸网卡名优先于过滤层后缀名
 			}
-			continue
+			return
 		}
 		index[key] = len(out)
 		out = append(out, EthLink{Descr: descr, Up: up, SpeedMbps: speedMbps})
+	})
+	if !ok {
+		return nil
 	}
 	return out
+}
+
+// RoutedViaPhysicalNIC 判断访问 dst 的最优路由出口是否为物理以太网口。
+// 供"免拨号"判定：网线直连（如家庭宽带由路由器拨号后 DHCP 分配）时出口
+// 是物理网口；而 WiFi/VPN 出口联网时不影响用户继续走网口拨号，不算直连。
+// dst 支持域名（限时解析）。任何不确定——解析失败、路由查询失败、出口
+// 非物理网口——一律返回 false，由调用方保守地维持"需要拨号"的原判定。
+func RoutedViaPhysicalNIC(dst string) bool {
+	ip, ok := resolveIPv4(dst)
+	if !ok {
+		return false
+	}
+	var best uint32
+	// IPAddr 为网络字节序 DWORD:按小端打包即为 inet_addr 的返回值
+	addr := binary.LittleEndian.Uint32(ip[:])
+	if r1, _, _ := procGetBestInterface.Call(uintptr(addr),
+		uintptr(unsafe.Pointer(&best))); r1 != 0 || best == 0 {
+		return false
+	}
+	found := false
+	walkPhysicalEthernetRows(func(row *mibIfRow2) {
+		if row.InterfaceIndex == best {
+			found = true
+		}
+	})
+	return found
 }
 
 // utf16Nul 解码以 NUL 结尾的 UTF-16 序列。

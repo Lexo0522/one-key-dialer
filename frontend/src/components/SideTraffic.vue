@@ -46,7 +46,7 @@ let rafId = 0
 let lastFrame = 0
 const curveStyle = ref(true)
 
-const live = computed(() => state.online && state.prefs.sniffing)
+const live = computed(() => (state.online || state.sysOnline) && state.prefs.sniffing)
 
 /** "12.3 KB/s" → ["12.3", "KB/s"]，数值与单位分行展示。 */
 function splitSpeed(bytesPerSec) {
@@ -198,9 +198,9 @@ function loop(ts) {
   drawFrame()
 }
 
-/** 在线且开启嗅探时匀速左移；轻量化/离线时退化为按重绘节拍静态刷新。 */
+/** 有效在线（拨号 ∨ 系统直连）且开启嗅探时匀速左移；轻量化/离线时退化为按重绘节拍静态刷新。 */
 function syncLoop() {
-  const should = !!ctx && state.online && state.prefs.sniffing && !state.prefs.lightweight
+  const should = !!ctx && (state.online || state.sysOnline) && state.prefs.sniffing && !state.prefs.lightweight
   if (should && !rafId) {
     lastFrame = 0
     rafId = requestAnimationFrame(loop)
@@ -231,7 +231,7 @@ onUnmounted(() => {
 watch(() => state.renderTick, () => {
   if (!rafId) drawFrame()
 })
-watch(() => [state.online, state.prefs.sniffing, state.prefs.lightweight], syncLoop)
+watch(() => [state.online, state.sysOnline, state.prefs.sniffing, state.prefs.lightweight], syncLoop)
 </script>
 
 <style scoped>

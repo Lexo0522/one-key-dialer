@@ -44,6 +44,8 @@ export const state = reactive({
   // 宽带拨号凭据视图（明文密码不出后端）
   broadband: { username: '', hasPassword: false },
   online: false,
+  // 系统网口直连在线（免拨号，如家庭宽带路由器 DHCP）：统计按 online ∨ sysOnline 放行
+  sysOnline: false,
   dialBusy: false,
   dialLabel: '',
   logs: [],
@@ -210,6 +212,7 @@ export async function bootstrap() {
   state.settings = s.settings
   state.broadband = s.broadband || { username: '', hasPassword: false }
   state.online = s.online
+  state.sysOnline = !!s.sysOnline
   state.logs = s.logs || []
   state.autoStartEnabled = s.autoStartEnabled
   state.themePref = s.settings.uiTheme || 'system'
@@ -247,9 +250,10 @@ export function bindEvents() {
   on(EV.status, (p) => {
     if (!p) return
     state.online = !!p.online
+    state.sysOnline = !!p.sysOnline
     state.dialBusy = false
     state.dialLabel = ''
-    if (!p.online) {
+    if (!p.online && !p.sysOnline) {
       state.downSpeed = 0
       state.upSpeed = 0
       state.uptimeSeconds = -1
@@ -262,7 +266,8 @@ export function bindEvents() {
     if (!p) return
     state.downSpeed = p.down || 0
     state.upSpeed = p.up || 0
-    if (!state.online || !state.prefs.sniffing) return
+    // 有效在线（本应用拨号 ∨ 系统直连）才记录：采样入图、会话累计与峰值
+    if (!(state.online || state.sysOnline) || !state.prefs.sniffing) return
     const now = Date.now()
     state.samples.push({ t: now, up: state.upSpeed, down: state.downSpeed })
     // 丢弃窗口外样本，兜底截断长度

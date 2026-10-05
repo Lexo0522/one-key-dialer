@@ -56,6 +56,7 @@ type AppState struct {
 	Settings         model.Settings         `json:"settings"`
 	Broadband        BroadbandCredentialDTO `json:"broadband"`
 	Online           bool                   `json:"online"`
+	SysOnline        bool                   `json:"sysOnline"`
 	Logs             []service.LogLine      `json:"logs"`
 	AutoStartEnabled bool                   `json:"autoStartEnabled"`
 	Theme            string                 `json:"theme"`
@@ -65,9 +66,12 @@ type AppState struct {
 }
 
 // StatusPayload 连接状态事件负载。
+// SysOnline 表示系统已通过网口直连联网（非本应用拨号），流量监控按
+// Online ∨ SysOnline 的"有效在线"口径放行。
 type StatusPayload struct {
-	Online bool   `json:"online"`
-	Phase  string `json:"phase"`
+	Online    bool   `json:"online"`
+	SysOnline bool   `json:"sysOnline,omitempty"`
+	Phase     string `json:"phase"`
 }
 
 // SpeedPayload 速率事件负载。
@@ -173,17 +177,19 @@ type App struct {
 
 	updater *update.Module
 
-	mu            sync.Mutex
-	online        bool
-	connectTimeMs int64
-	sessionDown   int64
-	sessionUp     int64
-	baseDown      int64
-	baseUp        int64
-	downSpeed     int64
-	upSpeed       int64
-	pendingUser   string
-	pendingPass   []byte
+	mu               sync.Mutex
+	online           bool
+	connectTimeMs    int64
+	sysOnline        bool // 系统网口直连在线(免拨号,如家庭宽带路由器 DHCP)
+	sysConnectTimeMs int64
+	sessionDown      int64
+	sessionUp        int64
+	baseDown         int64
+	baseUp           int64
+	downSpeed        int64
+	upSpeed          int64
+	pendingUser      string
+	pendingPass      []byte
 
 	updateMu   sync.Mutex
 	updateBusy bool
@@ -193,6 +199,9 @@ type App struct {
 
 	// langStop 关闭后终止系统语言轮询（构造时创建，shutdown 时关闭）。
 	langStop chan struct{}
+
+	// sysProbeStop 关闭后终止系统直连在线探测循环（构造时创建，shutdown 时关闭）。
+	sysProbeStop chan struct{}
 
 	// ipcMu 保护 ipcSrv 的读写:emit 高频运行期读 与 shutdown 置 nil 并发。
 	ipcMu sync.Mutex
@@ -219,7 +228,7 @@ type App struct {
 
 // NewApp 构造应用门面。
 func NewApp() *App {
-	return &App{langStop: make(chan struct{}), memStop: make(chan struct{})}
+	return &App{langStop: make(chan struct{}), memStop: make(chan struct{}), sysProbeStop: make(chan struct{})}
 }
 
 // ============================ 生命周期 ============================
@@ -275,9 +284,9 @@ func (a *App) startup(ctx context.Context) {
 		a.logSvc)
 
 	a.monitor = service.NewNetworkMonitorService(
-		func() bool { return a.isOnline() },
+		func() bool { return a.effectiveOnline() },
 		func() (int64, int64) { return a.sampler.Sample() },
-		func() int64 { return a.connectTimeMs },
+		func() int64 { return a.effectiveConnectTimeMs() },
 		func(s service.SpeedSample) {
 			a.mu.Lock()
 			a.downSpeed, a.upSpeed = s.DownBytesPerSec, s.UpBytesPerSec
@@ -336,6 +345,7 @@ func (a *App) startup(ctx context.Context) {
 	})
 
 	a.monitor.Start()
+	a.startSysProbe()
 	a.startLangWatcher()
 	if a.settings.Current().AutoReconnect {
 		a.reconnect.Start(a.settings.Current().IntervalSeconds, true)
@@ -422,6 +432,10 @@ func (a *App) doShutdown(ctx context.Context) {
 		close(a.memStop)
 		a.memStop = nil
 	}
+	if a.sysProbeStop != nil {
+		close(a.sysProbeStop)
+		a.sysProbeStop = nil
+	}
 	a.settings.FlushPending()
 	a.logSvc.Flush()
 
@@ -468,6 +482,7 @@ func (a *App) Bootstrap() AppState {
 		Settings:         s,
 		Broadband:        a.broadbandView(),
 		Online:           a.isOnline(),
+		SysOnline:        a.isSysOnline(),
 		Logs:             a.logSvc.Snapshot(),
 		AutoStartEnabled: a.autoStart.IsEnabled(),
 		Theme:            a.resolvedTheme(),

@@ -26,12 +26,18 @@ var en = map[string]string{
 	"ui.agentUnavailable": "The background service failed to start. Please reopen the window. If this keeps happening, reboot and try again.",
 
 	"precheck.alreadyOnline":    "Already connected, no need to dial again",
+	"precheck.systemOnline":     "Already online via direct wired connection; no dialing needed",
 	"precheck.emptyUsername":    "Pre-dial check failed: username is empty",
 	"precheck.emptyPassword":    "Pre-dial check failed: password is empty",
+	"precheck.dialog.noDial":    "No dialing needed",
 	"precheck.dialog.user":      "Please enter the username",
 	"precheck.dialog.password":  "Please enter the password",
 	"precheck.dialog.alreadyOn": "Already connected",
+	"precheck.dialog.systemOn":  "You are already online via wired connection",
 	"precheck.dialog.default":   "Dial failed",
+
+	"sys.directOnline":  "Direct wired connection detected (dialed outside the app); traffic stats enabled",
+	"sys.directOffline": "Direct wired connection lost",
 
 	"dial.busy":                   "A connection operation is already running...",
 	"dial.disconnecting":          "Disconnecting...",

@@ -62,19 +62,134 @@ func (a *App) setOnline(online bool) {
 			a.connectTimeMs = time.Now().UnixMilli()
 			a.sessionDown, a.sessionUp = 0, 0
 		}
+		// 拨号接管后直连态失效：静默清除，探测循环不会再误标记
+		a.sysOnline = false
+		a.sysConnectTimeMs = 0
 	} else {
 		a.connectTimeMs = 0
 		a.sessionDown, a.sessionUp = 0, 0
 	}
 	a.mu.Unlock()
 	if changed {
-		a.emit(EvtStatus, StatusPayload{Online: online})
+		a.emit(EvtStatus, a.statusPayload())
 		a.refreshTray()
 	}
 }
 
+// statusPayload 组装连接状态事件负载（含系统直连在线口径）。
+func (a *App) statusPayload() StatusPayload {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return StatusPayload{Online: a.online, SysOnline: a.sysOnline}
+}
+
 func (a *App) probeConfig() model.ProbeConfig {
 	return model.ProbeConfigFromSettings(a.settings.Current())
+}
+
+// directOnline 系统是否已"免拨号"联网：外网可达，且默认路由出口为物理网口
+// （网线直连，如家庭宽带由路由器拨号后 DHCP 分配）。WiFi/VPN 等其它出口
+// 联网不算——此时用户可能仍想走网口拨号，不能据此免检凭据。
+func (a *App) directOnline() bool {
+	cfg := a.probeConfig()
+	if !service.QuickCheck(cfg) {
+		return false
+	}
+	return platform.RoutedViaPhysicalNIC(cfg.Host)
+}
+
+// sysProbeInterval 系统直连在线的低频探测周期。
+const sysProbeInterval = 15 * time.Second
+
+// setSysOnline 更新"系统直连在线"状态（仅在本应用未拨号在线时有意义）：
+// 变化时记录/清除会话起点、写日志并回推前端。拨号在线时一律视为否。
+func (a *App) setSysOnline(v bool) {
+	if a.isOnline() {
+		v = false
+	}
+	a.mu.Lock()
+	changed := a.sysOnline != v
+	a.sysOnline = v
+	if v {
+		if a.sysConnectTimeMs == 0 {
+			a.sysConnectTimeMs = time.Now().UnixMilli()
+		}
+	} else {
+		a.sysConnectTimeMs = 0
+	}
+	a.mu.Unlock()
+	if !changed {
+		return
+	}
+	if v {
+		a.logSvc.Info(i18n.T("sys.directOnline"))
+	} else {
+		a.logSvc.Info(i18n.T("sys.directOffline"))
+	}
+	a.emit(EvtStatus, a.statusPayload())
+}
+
+// startSysProbe 低频探测"系统直连在线"（家庭宽带免拨号场景），状态经
+// EvtStatus 回推前端。探测含 ICMP/HTTP，离线时单次最长约 3.5s，独立
+// 协程运行，与监控的 1s 采样互不阻塞。转离线需连续 2 次探测失败：
+// 单次偶发丢包不应清空正在记录的统计会话。
+func (a *App) startSysProbe() {
+	go func() {
+		ticker := time.NewTicker(sysProbeInterval)
+		defer ticker.Stop()
+		a.setSysOnline(a.directOnline()) // 启动先探测一次，尽快建立状态
+		misses := 0
+		for {
+			select {
+			case <-a.sysProbeStop:
+				return
+			case <-ticker.C:
+			}
+			if a.isOnline() {
+				misses = 0
+				a.setSysOnline(false) // 拨号在线时直连态无意义（内部幂等）
+				continue
+			}
+			if a.directOnline() {
+				misses = 0
+				a.setSysOnline(true)
+				continue
+			}
+			if !a.isSysOnline() {
+				continue
+			}
+			misses++
+			if misses >= 2 {
+				misses = 0
+				a.setSysOnline(false)
+			}
+		}
+	}()
+}
+
+// isSysOnline 返回当前"系统直连在线"标志（不触发探测）。
+func (a *App) isSysOnline() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.sysOnline
+}
+
+// effectiveOnline 有效在线：本应用拨号在线，或系统网口直连在线。
+// 流量监控按此口径放行——直连场景同样记录速率与会话流量。
+func (a *App) effectiveOnline() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.online || a.sysOnline
+}
+
+// effectiveConnectTimeMs 有效会话起点：优先本应用拨号时刻，其次直连检测时刻。
+func (a *App) effectiveConnectTimeMs() int64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.connectTimeMs > 0 {
+		return a.connectTimeMs
+	}
+	return a.sysConnectTimeMs
 }
 
 // ---------- 宽带凭据 ----------
@@ -292,7 +407,9 @@ func (v dialView) Notify(title, message, tone string) {
 }
 
 func (v dialView) OnDialPhase(phase string) {
-	v.a.emit(EvtStatus, StatusPayload{Online: v.a.isOnline(), Phase: phase})
+	p := v.a.statusPayload()
+	p.Phase = phase
+	v.a.emit(EvtStatus, p)
 }
 
 func (v dialView) OnConnectionState(online bool) { v.a.setOnline(online) }
@@ -321,11 +438,20 @@ func (v dialView) ValidateInput(interactive bool) bool {
 		}
 	}
 
-	failure := precheckFailure(v.a.isOnline(), username, password)
+	failure := precheckFailure(v.a.isOnline(), username, password, v.a.directOnline)
 	if failure == "" {
 		// 校验通过：把凭据放回待取区，供 CaptureCredentials 使用
 		v.a.setPending(username, string(password))
 		return true
+	}
+	if isPrecheckOnlineNote(failure) {
+		// 已在线/已直连联网是"无需动作"的提示而非失败
+		v.a.logSvc.Log(service.LevelInfo, failure)
+		if interactive {
+			v.a.emit(EvtNotify, map[string]string{"title": i18n.T("precheck.dialog.noDial"),
+				"body": dialogMessage(failure), "tone": service.ToneInfo})
+		}
+		return false
 	}
 	v.a.logSvc.Log(service.LevelWarning, failure)
 	if interactive {
@@ -344,17 +470,28 @@ func (v dialView) CaptureCredentials() *model.DialCredentials {
 	return creds
 }
 
-func precheckFailure(online bool, username string, password []byte) string {
+// precheckFailure 返回预检失败文案，通过返回空串。
+// 凭据缺失时先探测系统是否已"网口直连"联网（如家庭宽带免拨号场景）：
+// 已直连联网则无需拨号，不应再要求账号；只有确实不联网才报凭据缺失。
+func precheckFailure(online bool, username string, password []byte, directOnline func() bool) string {
 	if online {
 		return i18n.T("precheck.alreadyOnline")
+	}
+	if strings.TrimSpace(username) != "" && len(strings.TrimSpace(string(password))) > 0 {
+		return ""
+	}
+	if directOnline != nil && directOnline() {
+		return i18n.T("precheck.systemOnline")
 	}
 	if strings.TrimSpace(username) == "" {
 		return i18n.T("precheck.emptyUsername")
 	}
-	if len(strings.TrimSpace(string(password))) == 0 {
-		return i18n.T("precheck.emptyPassword")
-	}
-	return ""
+	return i18n.T("precheck.emptyPassword")
+}
+
+// isPrecheckOnlineNote 预检结果是否为"已在线"类提示（无需动作，非失败）。
+func isPrecheckOnlineNote(msg string) bool {
+	return msg == i18n.T("precheck.alreadyOnline") || msg == i18n.T("precheck.systemOnline")
 }
 
 func dialogMessage(logMessage string) string {
@@ -365,6 +502,8 @@ func dialogMessage(logMessage string) string {
 		return i18n.T("precheck.dialog.password")
 	case i18n.T("precheck.alreadyOnline"):
 		return i18n.T("precheck.dialog.alreadyOn")
+	case i18n.T("precheck.systemOnline"):
+		return i18n.T("precheck.dialog.systemOn")
 	}
 	return i18n.T("precheck.dialog.default")
 }

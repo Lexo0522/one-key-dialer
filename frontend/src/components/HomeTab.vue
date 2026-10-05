@@ -8,7 +8,7 @@
         <span class="account-chip" :class="{ unset: !hasAccount }" :title="accountText">
           <i class="fas fa-user"></i>{{ accountText }}
         </span>
-        <span v-if="state.online && state.uptimeSeconds >= 0" class="uptime-chip">
+        <span v-if="(state.online || state.sysOnline) && state.uptimeSeconds >= 0" class="uptime-chip">
           <i class="far fa-clock"></i>{{ t('home.uptime') }} {{ formatDuration(state.uptimeSeconds) }}
         </span>
       </div>
@@ -636,7 +636,8 @@ onBeforeUnmount(() => {
 // ------------------------------------------------------------ 状态卡片 ----
 
 const statCards = computed(() => {
-  const live = state.online && state.prefs.sniffing
+  // 有效在线（本应用拨号 ∨ 系统直连）即视为实时
+  const live = (state.online || state.sysOnline) && state.prefs.sniffing
   const speedUp = live ? formatSpeed(state.upSpeed) : '--'
   const speedDown = live ? formatSpeed(state.downSpeed) : '--'
   const peakUp = state.peakUp > 0 ? formatSpeed(state.peakUp) : '--'

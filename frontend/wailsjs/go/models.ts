@@ -20,6 +20,7 @@ export namespace main {
 	    settings: model.Settings;
 	    broadband: BroadbandCredentialDTO;
 	    online: boolean;
+	    sysOnline: boolean;
 	    logs: service.LogLine[];
 	    autoStartEnabled: boolean;
 	    theme: string;
@@ -38,6 +39,7 @@ export namespace main {
 	        this.settings = this.convertValues(source["settings"], model.Settings);
 	        this.broadband = this.convertValues(source["broadband"], BroadbandCredentialDTO);
 	        this.online = source["online"];
+	        this.sysOnline = source["sysOnline"];
 	        this.logs = this.convertValues(source["logs"], service.LogLine);
 	        this.autoStartEnabled = source["autoStartEnabled"];
 	        this.theme = source["theme"];

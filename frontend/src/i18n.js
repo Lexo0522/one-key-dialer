@@ -180,7 +180,7 @@ const zh = {
   'broadband.title': '宽带',
   'broadband.group.account': '宽带账号',
   'broadband.group.device': '拨号设备',
-  'broadband.username': '宽带账号（学号）',
+  'broadband.username': '宽带账号（如学号）',
   'broadband.password': '宽带密码',
   'broadband.pwKeepHint': '已保存，留空沿用',
   'broadband.save': '保存',

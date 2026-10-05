@@ -28,12 +28,19 @@ var zh = map[string]string{
 
 	// 拨号前置校验
 	"precheck.alreadyOnline":    "当前已连接，无需重复拨号",
-	"precheck.emptyUsername":    "拨号前校验失败: 学号/账号为空",
+	"precheck.systemOnline":     "系统已通过网口直连联网，无需拨号",
+	"precheck.emptyUsername":    "拨号前校验失败: 宽带账号为空",
 	"precheck.emptyPassword":    "拨号前校验失败: 密码为空",
-	"precheck.dialog.user":      "请输入学号/账号",
+	"precheck.dialog.noDial":    "无需拨号",
+	"precheck.dialog.user":      "请输入宽带账号",
 	"precheck.dialog.password":  "请输入密码",
 	"precheck.dialog.alreadyOn": "当前已连接",
+	"precheck.dialog.systemOn":  "当前已通过网口直连联网，无需拨号",
 	"precheck.dialog.default":   "拨号失败",
+
+	// 系统直连在线（免拨号场景的流量监控）
+	"sys.directOnline":  "检测到网口直连联网（非本应用拨号），已开始记录流量统计",
+	"sys.directOffline": "网口直连已断开",
 
 	// 拨号 / 断开
 	"dial.busy":                   "正在处理连接操作...",
