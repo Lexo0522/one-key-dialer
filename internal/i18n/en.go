@@ -117,6 +117,7 @@ var en = map[string]string{
 	"autostart.repairing":      "Auto-start entry looks broken, re-registering…",
 	"autostart.repairFailed":   "Auto-start repair failed; please re-check \"Start with Windows\" using the packaged PPPoEDialer.exe",
 	"autostart.repaired":       "Auto-start entry repaired",
+	"autostart.ephemeralPath":  "Running from a temporary or build-output directory; auto-start cannot be registered. Start the program from a permanent install folder.",
 
 	"store.settingsLoadFailed": "Failed to load settings (using defaults): {0}",
 	"store.settingsSaveFailed": "Failed to save settings: {0}",
@@ -218,6 +219,7 @@ var en = map[string]string{
 	"update.noPackage":        "No automatically installable Windows package was found in this release; please download it manually from the release page.",
 	"update.downloadBusy":     "A download is already running",
 	"update.installBusy":      "An installation is already running…",
+	"update.ephemeralInstall": "Running from a temporary or build-output directory; self-update is disabled. Start the program from a permanent install folder.",
 	"update.downloadTitle":    "Downloading update",
 	"update.preparing":        "Preparing download…",
 	"update.cancel":           "Cancel",

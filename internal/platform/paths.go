@@ -26,6 +26,16 @@ var (
 )
 
 // InstallDir 返回程序安装目录（打包版为 exe 所在目录）。
+//
+// 两个不能当安装目录的 exe：
+//   - 临时目录下的产物。Wails 的 GenerateBindings（pkg/commands/bindings/
+//     bindings.go）会把本项目编译成 %TEMP%\wailsbindings.exe 来生成 TS 绑定，
+//     那是本程序的完整二进制。若据此把安装目录定成 %TEMP%，更新脚本会把新版
+//     exe 写进 %TEMP% 并从那启动，之后开机自启动也指向 %TEMP%，本机从此被
+//     一个会被磁盘清理掉的副本接管。
+//   - go build 产物（go.exe / main.exe 等）。
+//
+// 二者一律回退到工作目录；工作目录仍不可信时由调用方各自的兜底处理。
 func InstallDir() string {
 	if installDir != "" {
 		return installDir
@@ -34,10 +44,8 @@ func InstallDir() string {
 	if exe, err := os.Executable(); err == nil {
 		abs, aerr := filepath.Abs(exe)
 		if aerr == nil {
-			name := strings.ToLower(filepath.Base(abs))
-			// java.exe/javaw.exe 之类启动器不算安装目录（旧版同理）
-			if strings.HasSuffix(name, ".exe") && name != "go.exe" {
-				dir = filepath.Dir(abs)
+			if d, ok := installDirFromExe(abs); ok {
+				dir = d
 			}
 		}
 	}
@@ -48,6 +56,50 @@ func InstallDir() string {
 	}
 	installDir = dir
 	return dir
+}
+
+// installDirFromExe 判断一个可执行路径能否作为安装目录。
+// 返回 false 表示这不是程序本体所在的安装目录（调用方应另找兜底）。
+func installDirFromExe(exe string) (string, bool) {
+	if exe == "" {
+		return "", false
+	}
+	name := strings.ToLower(filepath.Base(exe))
+	switch {
+	case name == "go.exe":
+		// go build 产物,不是安装目录
+		return "", false
+	case isUnderTemp(filepath.Dir(exe)):
+		// Wails bindings 临时构建产物,不是安装目录
+		return "", false
+	case strings.HasSuffix(name, ".exe"):
+		return filepath.Dir(exe), true
+	}
+	return "", false
+}
+
+// isEphemeralExePath 判断一个可执行路径是否处于"一次性、随时可能消失"的位置：
+// 临时目录下，或是源头构建产物（go build / Wails bindings 的临时 exe 都在这里）。
+//
+// 这类路径不允许作为"已安装程序"行事:
+//   - 不能注册开机自启动。指向 %TEMP% 的 Run 值会在磁盘清理后变成死链,
+//     用户看到的是"开机自启失效"而程序毫无线索。
+//   - 不能执行自我更新。把新版写进 %TEMP% 等于把安装位置搬到那里,
+//     此后每次启动都是那个随时会被删掉的副本。
+//
+// 对 Wails 而言这不是理论风险:GenerateBindings 会把本项目编译成
+// %TEMP%\wailsbindings.exe,那是本程序的完整二进制(见 wails v2
+// pkg/commands/bindings/bindings.go),一旦被误判为安装位置,上述两种
+// 后果都会真实发生。
+func isEphemeralExePath(exe string) bool {
+	if exe == "" {
+		return true
+	}
+	name := strings.ToLower(filepath.Base(exe))
+	if name == "go.exe" {
+		return true
+	}
+	return isUnderTemp(filepath.Dir(exe))
 }
 
 // DataDir 解析可写数据目录：程序目录（可写）→ 开发态工作目录 → %APPDATA%\PPoEDialer。

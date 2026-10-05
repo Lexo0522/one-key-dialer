@@ -124,6 +124,7 @@ var zh = map[string]string{
 	"autostart.repairing":      "检测到开机自启动配置异常，正在重新注册…",
 	"autostart.repairFailed":   "自动修复开机自启动失败，请用打包版 PPPoEDialer.exe 重新勾选「开机自动启动」",
 	"autostart.repaired":       "开机自启动已修复",
+	"autostart.ephemeralPath":  "程序运行在临时目录或构建产物中，不能注册开机自启动；请从固定安装目录启动正式版",
 
 	// 持久化
 	"store.settingsLoadFailed": "加载设置失败（使用默认设置）: {0}",
@@ -230,6 +231,7 @@ var zh = map[string]string{
 	"update.noPackage":        "当前 Release 未找到可自动安装的 Windows 包，请到网页手动下载。",
 	"update.downloadBusy":     "已有下载任务进行中",
 	"update.installBusy":      "更新安装已在进行中…",
+	"update.ephemeralInstall": "程序运行在临时目录或构建产物中，不能自我更新；请从固定安装目录启动正式版",
 	"update.downloadTitle":    "下载更新",
 	"update.preparing":        "准备下载…",
 	"update.cancel":           "取消",

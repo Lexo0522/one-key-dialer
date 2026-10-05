@@ -18,22 +18,41 @@ const AutoStartValueName = "PPoEDialer"
 // StartupService 通过 HKCU\...\Run 注册/注销开机自启动（以注册表为准）。
 type StartupService struct {
 	logger *LogService
+
+	// 注册表与本体路径经字段注入：测试用假实现替换，不碰真实 HKCU。
+	readRun      func(valueName string) string
+	writeRun     func(valueName, value string) error
+	deleteRun    func(valueName string) error
+	exePath      func() string
+	ephemeralExe func() bool
 }
 
-// NewStartupService 构造自启动服务。
+// NewStartupService 构造自启动服务（默认绑定真实注册表与进程路径）。
 func NewStartupService(logger *LogService) *StartupService {
-	return &StartupService{logger: logger}
+	s := &StartupService{logger: logger}
+	s.readRun = platform.ReadRunValue
+	s.writeRun = platform.WriteRunValue
+	s.deleteRun = platform.DeleteRunValue
+	s.exePath = platform.CurrentExePath
+	s.ephemeralExe = platform.IsEphemeralExePath
+	return s
 }
 
 // Enable 注册自启动；失败时上报并回滚 UI 选中态。
 func (s *StartupService) Enable() bool {
-	exe := platform.CurrentExePath()
+	// 临时目录/构建产物里的本体不许登记自启动:指向 %TEMP% 的 Run 值在磁盘
+	// 清理后就是死链,用户只会看到"开机自启失效",程序侧毫无线索。
+	if s.ephemeralExe() {
+		s.logger.Error(i18n.T("autostart.ephemeralPath"))
+		return false
+	}
+	exe := s.exePath()
 	if exe == "" || !fileExists(exe) || isGoBuildExe(exe) {
 		s.logger.Error(i18n.T("autostart.noTarget"))
 		return false
 	}
 	cmd := platform.BuildExeRunCommand(exe)
-	if err := platform.WriteRunValue(AutoStartValueName, cmd); err != nil {
+	if err := s.writeRun(AutoStartValueName, cmd); err != nil {
 		s.logger.Error(i18n.Tf("autostart.registerFailed", err.Error()))
 		return false
 	}
@@ -48,7 +67,7 @@ func (s *StartupService) Enable() bool {
 
 // Disable 取消自启动。
 func (s *StartupService) Disable() bool {
-	if err := platform.DeleteRunValue(AutoStartValueName); err != nil {
+	if err := s.deleteRun(AutoStartValueName); err != nil {
 		s.logger.Error(i18n.Tf("autostart.unregFailed", err.Error()))
 		return false
 	}
@@ -58,17 +77,17 @@ func (s *StartupService) Disable() bool {
 
 // IsEnabled 读取注册表判断当前是否启用（以注册表为准）。
 func (s *StartupService) IsEnabled() bool {
-	data := platform.ReadRunValue(AutoStartValueName)
+	data := s.readRun(AutoStartValueName)
 	return data != "" && platform.IsDirectLaunchCommand(data)
 }
 
 // IsHealthy 注册表值指向当前可执行文件且文件存在。
 func (s *StartupService) IsHealthy() bool {
-	data := platform.ReadRunValue(AutoStartValueName)
+	data := s.readRun(AutoStartValueName)
 	if data == "" || !platform.IsDirectLaunchCommand(data) {
 		return false
 	}
-	exe := platform.CurrentExePath()
+	exe := s.exePath()
 	if exe == "" || !fileExists(exe) {
 		return false
 	}
@@ -76,9 +95,17 @@ func (s *StartupService) IsHealthy() bool {
 }
 
 // EnsureHealthy 设置要求自启动但注册表异常时重新注册一次。
+//
+// 本体位于临时目录/构建产物时直接返回：这时 IsHealthy 会把 temp 路径和注册表
+// 里的 temp 路径互相比对而判"健康",自愈链就此失明——它每隔一次启动都"修好"
+// 一个错误的目标。宁可在这里承认不健康,也不要把 %TEMP% 写进 Run 值。
 func (s *StartupService) EnsureHealthy(wantAutoStart bool) bool {
 	if !wantAutoStart {
 		return s.IsHealthy()
+	}
+	if s.ephemeralExe() {
+		s.logger.Error(i18n.T("autostart.ephemeralPath"))
+		return false
 	}
 	if s.IsHealthy() {
 		return true

@@ -235,6 +235,17 @@ func (m *Module) writeZipApplyScript(installDir, payloadRoot string, pids []int)
 		wline(w, "  pause")
 		wline(w, "  exit /b 1")
 		wline(w, ")")
+		// 安装目录绝不能是临时目录。旧版 InstallDir() 会把 Wails 生成绑定时
+		// 编译出的 %TEMP%\wailsbindings.exe 当成程序本体,导致 DST 变成
+		// %TEMP% —— 新版 exe 被写进 %TEMP% 并从那里启动,开机自启动也指向
+		// 那,一个会被磁盘清理掉的副本就此接管。兜底拦住,即使脚本是旧版
+		// 生成、或 DST 因任何原因异常,也绝不往 %TEMP% 写。
+		// 用 findstr 而非 find:/I 模式串是正则,含 \ 与 . 都会失配。
+		wline(w, `echo "%DST%" | findstr /I /C:"%TEMP%" >nul 2>nul && (`)
+		wline(w, "  echo Refusing to install into a temporary directory.")
+		wline(w, "  pause")
+		wline(w, "  exit /b 1")
+		wline(w, ")")
 		wline(w, `rem Writability probe - a Program Files install must use the MSI`)
 		wline(w, `copy /y nul "%DST%\`+WritabilityProbeFile+`" >nul 2>nul`)
 		wline(w, "if errorlevel 1 (")

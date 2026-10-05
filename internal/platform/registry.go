@@ -111,3 +111,9 @@ func CurrentExePath() string {
 	}
 	return abs
 }
+
+// IsEphemeralExePath 当前进程是否处于一次性位置（临时目录 / 构建产物）。
+// 见 isEphemeralExePath 的说明：这类进程不应注册自启动或自我更新。
+func IsEphemeralExePath() bool {
+	return isEphemeralExePath(CurrentExePath())
+}

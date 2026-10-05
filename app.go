@@ -992,6 +992,15 @@ func (a *App) InstallUpdate() {
 
 	progress := updateProgress{a: a, stage: UpdateStagePrepare}
 	a.exec.SubmitLong(func() {
+		// 本体在临时目录/构建产物里时不安装:更新脚本的 DST 来自 InstallDir,
+		// 此时会把新版写进 %TEMP% 并从那里启动,安装位置就此被搬走。宁可拒绝,
+		// 也不制造第二个随时会被磁盘清理掉副本。
+		if platform.IsEphemeralExePath() {
+			a.logSvc.Error(i18n.T("update.ephemeralInstall"))
+			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
+				Message: i18n.T("update.ephemeralInstall")})
+			return
+		}
 		// 更新脚本需等全部相关进程退出后再覆盖 exe:代理自身 + 接入中的 UI 进程
 		waitPIDs := a.uiWaitPIDs()
 		prepared, err := a.updater.Prepare(pkg, progress, waitPIDs)
