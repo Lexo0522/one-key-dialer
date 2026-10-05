@@ -167,6 +167,9 @@ func ensureAgent() error {
 }
 
 // focusExistingUI 已有 UI 实例时经代理唤出其窗口(托盘「显示窗口」的等价操作)。
+// 调 FocusWindow 而非 ShowWindow:本进程刚被互斥体弹走,说明确有实例存在,
+// 代理只需广播唤窗;若调 ShowWindow 会重置自愈轮次并可能再拉起,极端情况下
+// 「拉起→弹走→再拉起」递归成拉起风暴。
 func focusExistingUI() {
 	if !ipc.Probe() {
 		return
@@ -175,7 +178,7 @@ func focusExistingUI() {
 	if err != nil {
 		return
 	}
-	_, _ = client.CallTimeout(2*time.Second, "ShowWindow")
+	_, _ = client.CallTimeout(2*time.Second, "FocusWindow")
 	client.Close()
 }
 

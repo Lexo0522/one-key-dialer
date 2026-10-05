@@ -235,9 +235,10 @@ type App struct {
 
 	// showMu 保护「显示窗口」的自愈状态:sys:show 回执与兜底拉起。
 	showMu      sync.Mutex
-	lastShowAck time.Time // UI 最近一次窗口浮现回执
-	lastShowReq time.Time // 最近一次 sys:show 广播时刻
-	lastSpawnAt time.Time // 最近一次兜底拉起 UI 时刻(冷却防重复)
+	lastShowAck time.Time // UI 最近一次窗口浮现回执(含新 UI 启动回执)
+	lastShowReq time.Time // 最近一次「显示窗口」请求时刻
+	lastSpawnAt time.Time // 最近一次兜底拉起 UI 时刻(间隔闸防拉起风暴)
+	showRound   int       // 当前请求已推进的自愈轮次
 
 	// 诊断与拨号结果结构化回显（app_diag.go）
 	diagBusy      atomic.Bool
@@ -1038,39 +1039,95 @@ func (a *App) ipcSnapshot() *ipc.Server {
 	return srv
 }
 
+// 「显示窗口」自愈参数。整体时序:前 showBroadcastRounds 轮对在线 UI 广播
+// sys:show(每轮等 showAckWait 确认回执),仍无回执说明连接是垂死 UI 的
+// 僵尸连接,之后每轮强制兜底拉起新 UI 进程(每轮等 showSpawnWait 给新 UI
+// 启动+握手+回执的时间),直到回执到达或 showMaxRounds 轮预算耗尽。
+const (
+	showBroadcastRounds = 3                       // 广播轮数,之后不再信任在线连接
+	showMaxRounds       = 6                       // 单次请求总轮次上限,防无限循环
+	showAckWait         = 800 * time.Millisecond  // 广播轮后的回执等待
+	showSpawnWait       = 2500 * time.Millisecond // 拉起轮后的回执等待(含进程启动)
+	showSpawnGap        = 2 * time.Second         // 两次拉起最小间隔,防拉起风暴/递归
+)
+
 // ShowWindow 显示主窗口（代理模式）:UI 进程在线时唤出既有窗口,并做
 // 有界回执确认;无回执说明连接陈旧或窗口已死,兜底拉起新 UI 进程。
 // 单实例互斥体保证兜底拉起只会 focus 既有窗口,不会开出第二个,
-// 因此任何情况下「点一次显示窗口」必定有窗口浮现。
+// 因此任何情况下「点一次显示窗口」必定有窗口浮现(或有界放弃后可重试)。
 func (a *App) ShowWindow() {
-	srv := a.ipcSnapshot()
-	if srv == nil || srv.ClientCount() == 0 {
-		a.spawnUI()
-		return
-	}
 	a.showMu.Lock()
 	a.lastShowReq = time.Now()
+	a.showRound = 0
 	a.showMu.Unlock()
-	srv.Broadcast(SysEventShow, nil)
-	// 给 UI 一段唤窗+回执的时间,再确认是否真的浮现
-	a.exec.Schedule(800*time.Millisecond, a.verifyWindowShown)
+	a.showStep()
 }
 
-// verifyWindowShown sys:show 广播后的确认:无回执则兜底拉起新 UI 进程。
-// 冷却期(5s)防重复:互斥体虽能挡住重复窗口,但反复 spawn 徒增进程抖动。
-func (a *App) verifyWindowShown() {
+// FocusWindow 被单实例互斥体弹走的 UI 进程经 IPC 的落点:仅向在线 UI
+// 广播唤窗,不拉起、不重置自愈轮次。重置轮次会让每个被弹走的进程刷新
+// 重试预算,僵尸 UI 占住互斥体时演变成无限拉起风暴;拉起由发起方
+// ShowWindow 的自愈链按预算驱动,这里只负责把已经活着的窗口唤到前台。
+func (a *App) FocusWindow() {
+	if srv := a.ipcSnapshot(); srv != nil && srv.ClientCount() > 0 {
+		srv.Broadcast(SysEventShow, nil)
+	}
+}
+
+// showStep 自愈链的一次推进:回执已到则收工;预算内先广播后拉起。
+// 由 ShowWindow 同步发起首轮,其后由 showVerify 经 exec.Schedule 驱动。
+func (a *App) showStep() {
 	a.showMu.Lock()
-	acked := !a.lastShowAck.Before(a.lastShowReq)
-	spawned := a.lastSpawnAt
-	a.showMu.Unlock()
-	if acked || time.Since(spawned) < 5*time.Second {
+	req := a.lastShowReq
+	if !a.lastShowAck.Before(req) {
+		// 回执时刻不早于请求时刻:窗口已浮现,收工
+		a.showMu.Unlock()
 		return
 	}
-	a.logSvc.Info("tray show: no ack from ui, fallback spawn")
-	a.spawnUI()
+	round := a.showRound
+	a.showRound++
+	a.showMu.Unlock()
+
+	var wait time.Duration
+	if round < showBroadcastRounds {
+		if srv := a.ipcSnapshot(); srv != nil && srv.ClientCount() > 0 {
+			srv.Broadcast(SysEventShow, nil)
+			// 广播的 writeTo 对断链同步报错并剔除连接:若剔除后归零,
+			// 说明在线列表全是死连接,不必再等回执,下轮直接拉起。
+			if srv.ClientCount() == 0 {
+				a.spawnUI()
+				wait = showSpawnWait
+			} else {
+				wait = showAckWait
+			}
+		} else {
+			a.spawnUI()
+			wait = showSpawnWait
+		}
+	} else if round < showMaxRounds {
+		a.spawnUI()
+		wait = showSpawnWait
+	} else {
+		a.logSvc.Warning("show window: give up after retries, no ack from ui")
+		return
+	}
+	a.exec.Schedule(wait, a.showVerify)
+}
+
+// showVerify 广播/拉起后的确认推进:回执未到则继续 showStep,直到回执
+// 到达或轮次预算耗尽。用户再次点击 ShowWindow 会重置轮次重新武装。
+func (a *App) showVerify() {
+	a.showMu.Lock()
+	acked := !a.lastShowAck.Before(a.lastShowReq)
+	a.showMu.Unlock()
+	if acked {
+		return
+	}
+	a.showStep()
 }
 
 // ReportWindowShown UI 进程唤出窗口后的回执(经管道反射暴露,前端不感知)。
+// 新拉起的 UI 在 startup 即回执一次:「窗口已在路上」,自愈链据此停轮,
+// 不会对正常启动中的 UI 重复拉起。
 func (a *App) ReportWindowShown() {
 	a.showMu.Lock()
 	a.lastShowAck = time.Now()
@@ -1119,8 +1176,15 @@ func (a *App) uiWaitPIDs() []int {
 }
 
 // spawnUI 按需拉起 UI 进程（同目录同一 exe,无参数即 UI 模式）。
+// 带最小间隔闸:被拉起的进程若被单实例互斥体弹走,会经 FocusWindow
+// 回到代理;没有间隔闸时「拉起→弹走→再拉起」会递归成拉起风暴
+// (僵尸 UI 占住互斥体的场景下每秒可弹起数十个进程)。
 func (a *App) spawnUI() {
 	a.showMu.Lock()
+	if time.Since(a.lastSpawnAt) < showSpawnGap {
+		a.showMu.Unlock()
+		return
+	}
 	a.lastSpawnAt = time.Now()
 	a.showMu.Unlock()
 	exe, err := currentExe()

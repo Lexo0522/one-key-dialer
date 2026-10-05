@@ -71,6 +71,13 @@ func (u *UIApp) startup(ctx context.Context) {
 	// 代理退出(含托盘退出/更新重启/崩溃)后,UI 进程没有存在意义,随即退出
 	u.client.OnDisconnect = u.quit
 
+	// 启动回执:告知代理「窗口已在路上」。代理侧「显示窗口」自愈链以
+	// 回执为收工条件,没有这份回执,兜底拉起会把正在正常启动的本进程
+	// 误判为无响应而继续拉起。异步:startup 回调里管道调用不能阻塞装配。
+	go func() {
+		_, _ = u.client.CallTimeout(2*time.Second, "ReportWindowShown")
+	}()
+
 	u.syncLocalLang()
 }
 
@@ -85,6 +92,12 @@ func (u *UIApp) shutdown(ctx context.Context) {
 func (u *UIApp) beforeClose(ctx context.Context) bool {
 	u.closing.Store(true)
 	u.windowShown.Store(false)
+	// 立即断开管道:从关闭动作发生的一刻起,代理就该把本进程从在线
+	// UI 中剔除。否则在 WebView2 销毁等退出收尾期间(可达数秒),代理
+	// 仍把本进程计为在线,托盘「显示窗口」的 sys:show 广播会喂进
+	// closing 的死连接被静默吞掉,窗口唤不出来。Close 幂等,shutdown
+	// 里重复调用无副作用。
+	u.client.Close()
 	return false
 }
 
