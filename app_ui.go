@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
@@ -20,8 +21,13 @@ type UIApp struct {
 	ctx    context.Context
 	client *ipc.Client
 
-	quitOnce    sync.Once
-	windowShown bool
+	quitOnce sync.Once
+	// windowShown/closing 会被 IPC 读循环、Wails 主线程、JS 绑定调用三个
+	// goroutine 并发访问,必须原子化。
+	windowShown atomic.Bool
+	// closing 置位后窗口正在销毁、进程即将退出:此后到达的 sys:show
+	// 不得再触碰已销毁的窗口句柄。
+	closing atomic.Bool
 }
 
 func newUIApp(client *ipc.Client) *UIApp {
@@ -33,17 +39,32 @@ func newUIApp(client *ipc.Client) *UIApp {
 // startup Wails 启动回调:接入事件桥。
 func (u *UIApp) startup(ctx context.Context) {
 	u.ctx = ctx
-	u.windowShown = true
+	u.windowShown.Store(true)
 
 	u.client.OnEvent = func(event string, payload json.RawMessage) {
 		switch event {
 		case SysEventShow:
-			u.windowShown = true
+			if u.closing.Load() {
+				// 窗口正在销毁:触碰已失效的窗口句柄无意义且危险
+				return
+			}
+			u.windowShown.Store(true)
+			if u.ctx == nil {
+				return
+			}
 			runtime.WindowShow(u.ctx)
 			runtime.WindowUnminimise(u.ctx)
+			// 异步回执「窗口已浮现」:本回调跑在 IPC 读循环 goroutine 里,
+			// 同步 Call 会阻塞应答分发造成自死锁,必须另起 goroutine。
+			go func() {
+				_, _ = u.client.CallTimeout(2*time.Second, "ReportWindowShown")
+			}()
 		case SysEventQuit:
 			u.quit()
 		default:
+			if u.closing.Load() {
+				return
+			}
 			runtime.EventsEmit(u.ctx, event, payload)
 		}
 	}
@@ -55,13 +76,15 @@ func (u *UIApp) startup(ctx context.Context) {
 
 // shutdown Wails 停机回调:断开管道。
 func (u *UIApp) shutdown(ctx context.Context) {
+	u.closing.Store(true)
 	u.client.Close()
 }
 
 // beforeClose 关闭窗口 = 退出 UI 进程(代理继续在托盘驻留)。
 // 返回 false 放行默认关闭,wails.Run 随之返回、进程结束。
 func (u *UIApp) beforeClose(ctx context.Context) bool {
-	u.windowShown = false
+	u.closing.Store(true)
+	u.windowShown.Store(false)
 	return false
 }
 
@@ -342,7 +365,10 @@ func (u *UIApp) UpdateBusy() bool {
 
 // ShowWindow 显示本进程的窗口。
 func (u *UIApp) ShowWindow() {
-	u.windowShown = true
+	if u.closing.Load() {
+		return
+	}
+	u.windowShown.Store(true)
 	if u.ctx == nil {
 		return
 	}
@@ -355,7 +381,7 @@ func (u *UIApp) ShowWindow() {
 func (u *UIApp) HideWindow() { u.quit() }
 
 // IsWindowVisible 窗口是否可见。
-func (u *UIApp) IsWindowVisible() bool { return u.windowShown }
+func (u *UIApp) IsWindowVisible() bool { return u.windowShown.Load() }
 
 // ExitProgram 通知代理有序退出(托盘退出/更新安装),随后本进程退出。
 func (u *UIApp) ExitProgram() {

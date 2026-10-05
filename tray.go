@@ -2,8 +2,10 @@ package main
 
 import (
 	_ "embed"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
@@ -15,9 +17,18 @@ import (
 //go:embed build/windows/icon.ico
 var trayIcon []byte
 
+// getlantern/systray v1.2.2 内部创建托盘窗口时使用的类名与
+// Shell_NotifyIcon 的 uID(见其 systray_windows.go 的 initInstance)。
+// stopTray 的兜底直删依赖这两个值定位图标;升级库版本时必须一并核对。
+const (
+	trayWinClass = "SystrayClass"
+	trayIconID   = 100
+)
+
 var (
 	trayMu      sync.Mutex
 	trayApp     *App
+	trayStarted bool
 	trayReady   bool
 	mItemShow   *systray.MenuItem
 	mItemDial   *systray.MenuItem
@@ -25,21 +36,52 @@ var (
 	mItemUpdate *systray.MenuItem
 	mItemExit   *systray.MenuItem
 
-	// trayExitCh 由托盘消息循环在图标删除完成后关闭（onTrayExit 在
-	// WM_DESTROY 的 nid.delete 之后回调），供 stopTray 有界等待落定。
+	// trayReadyCh 在 onTrayReady(图标与菜单装配完成)时关闭,
+	// 供 stopTray 有界等待托盘就绪后再投递退出。
+	trayReadyCh = make(chan struct{})
+
+	// trayExitCh 由托盘消息循环在图标删除完成后关闭(onTrayExit 在
+	// WM_DESTROY 的 nid.delete 之后回调),供 stopTray 有界等待落定。
 	trayExitCh   = make(chan struct{})
 	trayExitOnce sync.Once
+
+	// trayQuitReq 退出请求标志:退出可能先于托盘就绪(重复实例自退),
+	// 此时 systray.Quit 的 PostMessage 会因窗口尚未创建而丢失、quitOnce
+	// 已消耗,消息循环永远等不到 WM_CLOSE。置位后由 onTrayReady 自行 Quit。
+	trayQuitReq atomic.Bool
+
+	// refreshTray 的变更检测缓存(trayMu 保护):状态无变化时跳过
+	// SetTooltip/Enable/Disable,把跨线程菜单操作压到真实变化时才发生。
+	lastTooltip string
+	lastOnline  bool
+	lastBusy    bool
 )
 
 // initTray 启动托盘（独立 goroutine 中运行消息循环）。
 func initTray(a *App) {
 	trayMu.Lock()
 	trayApp = a
+	trayStarted = true
 	trayMu.Unlock()
-	go systray.Run(onTrayReady, onTrayExit)
+	go func() {
+		// Win32 消息循环线程亲和性:托盘窗口在哪个线程创建,GetMessageW
+		// 就必须在哪个线程泵。Go 调度器可能在阻塞唤醒后把本 goroutine 挪到
+		// 其它 OS 线程,一旦挪动,托盘窗口的消息永远无人处理——右键菜单
+		// 弹不出、菜单点击全部失灵,正是「幽灵图标」的首要根因。systray
+		// 库只在自己的 init(主 goroutine)里 LockOSThread,消息循环跑在
+		// 本 goroutine 上必须自行锁定,与 notify_windows.go 气泡窗口一致。
+		runtime.LockOSThread()
+		systray.Run(onTrayReady, onTrayExit)
+	}()
 }
 
 func onTrayReady() {
+	if trayQuitReq.Load() {
+		// 退出请求先于托盘就绪:窗口此刻已创建(stopTray 的 Quit 不再丢失),
+		// 立即自行退出,WM_DESTROY 仍会删图标并回调 onTrayExit。
+		systray.Quit()
+		return
+	}
 	trayMu.Lock()
 	app := trayApp
 	trayMu.Unlock()
@@ -111,6 +153,7 @@ func onTrayReady() {
 	trayMu.Lock()
 	trayReady = true
 	trayMu.Unlock()
+	close(trayReadyCh)
 	app.refreshTray()
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
@@ -134,15 +177,40 @@ func onTrayExit() {
 	trayExitOnce.Do(func() { close(trayExitCh) })
 }
 
-// stopTray 退出托盘并等待图标真正被删除（至多 1 秒）。
-// systray.Quit 只是向托盘消息循环投递 WM_CLOSE，图标的 NIM_DELETE 要等
-// 消息循环异步处理；若不等待，随后的 os.Exit（ExitProgram 的 5 秒硬超时）
-// 可能在删除落地前杀掉进程，任务栏残留幽灵图标（进程已消失、右键无响应）。
+// stopTray 退出托盘并保证图标被删除后才返回。
+//
+// 三级防线:
+//  1. 就绪等待:退出请求可能先于托盘就绪(重复实例自退),先等装配完成,
+//     onTrayReady 看到 trayQuitReq 会立即自行 Quit;
+//  2. 优雅退出:systray.Quit 投递 WM_CLOSE,由 WM_DESTROY 里的 NIM_DELETE
+//     异步删图标,onTrayExit 随后关闭 trayExitCh;
+//  3. 兜底直删:消息循环若已失效或卡死,WM_CLOSE 永不被处理,这里直接
+//     对托盘窗口执行 Shell_NotifyIconW(NIM_DELETE)——该调用不依赖消息
+//     循环存活,保证 ExitProgram 的硬杀(os.Exit)前图标一定落地删除,
+//     不残留「进程已消失、右键无响应」的幽灵图标。
 func stopTray() {
+	trayMu.Lock()
+	started := trayStarted
+	trayMu.Unlock()
+	if !started {
+		// 托盘从未启动(重复实例路径):没有图标可删
+		return
+	}
+	trayQuitReq.Store(true)
+
+	// 等托盘装配完成(至多 1.5s);若消息循环在此期间已自行退出
+	// (onTrayReady 见 trayQuitReq 后 Quit),直接放行。
+	select {
+	case <-trayReadyCh:
+	case <-trayExitCh:
+	case <-time.After(1500 * time.Millisecond):
+	}
+
 	systray.Quit()
 	select {
 	case <-trayExitCh:
 	case <-time.After(time.Second):
+		platform.DeleteTrayIcon(trayWinClass, trayIconID)
 	}
 }
 
@@ -158,31 +226,31 @@ func showTrayNotification(title, message string) {
 }
 
 // refreshTrayLabels 语言切换后重写托盘标题与静态菜单文案。
-// tooltip 由 refreshTray 的 3s 轮询负责，这里不重复处理。
+// tooltip 由 refreshTray 的 3s 轮询负责,这里清掉变更检测缓存让下一次
+// 轮询必然重写 tooltip。
 func refreshTrayLabels() {
 	trayMu.Lock()
-	ready := trayReady
-	show, dial, hangup, upd, exit := mItemShow, mItemDial, mItemHangup, mItemUpdate, mItemExit
-	trayMu.Unlock()
-	if !ready {
+	defer trayMu.Unlock()
+	if !trayReady {
 		return
 	}
 	systray.SetTitle(i18n.T("app.title"))
-	if show != nil {
-		show.SetTitle(i18n.T("tray.showWindow"))
+	if mItemShow != nil {
+		mItemShow.SetTitle(i18n.T("tray.showWindow"))
 	}
-	if dial != nil {
-		dial.SetTitle(i18n.T("home.dial.connect"))
+	if mItemDial != nil {
+		mItemDial.SetTitle(i18n.T("home.dial.connect"))
 	}
-	if hangup != nil {
-		hangup.SetTitle(i18n.T("home.dial.disconnect"))
+	if mItemHangup != nil {
+		mItemHangup.SetTitle(i18n.T("home.dial.disconnect"))
 	}
-	if upd != nil {
-		upd.SetTitle(i18n.T("tray.checkUpdates"))
+	if mItemUpdate != nil {
+		mItemUpdate.SetTitle(i18n.T("tray.checkUpdates"))
 	}
-	if exit != nil {
-		exit.SetTitle(i18n.T("tray.exit"))
+	if mItemExit != nil {
+		mItemExit.SetTitle(i18n.T("tray.exit"))
 	}
+	lastTooltip = ""
 }
 
 // tooltipMask 把账号掩码收敛到 8 字符内,避免长用户名把 tooltip 顶超 64 字符。
@@ -195,11 +263,13 @@ func tooltipMask(username string) string {
 }
 
 // refreshTray 刷新托盘图标、tooltip 与菜单项可用性。
+// 全程持 trayMu:菜单项字段读写与 Win32 调用不允许并发交叉;变更检测让
+// 3s 轮询在状态无变化时零 Win32 调用,避免与 TrackPopupMenu 的模态循环
+// (用户正打开着菜单)高频撞车。
 func (a *App) refreshTray() {
 	trayMu.Lock()
-	ready := trayReady
-	trayMu.Unlock()
-	if !ready {
+	defer trayMu.Unlock()
+	if !trayReady {
 		return
 	}
 	a.mu.Lock()
@@ -225,21 +295,36 @@ func (a *App) refreshTray() {
 	} else {
 		sb.WriteString(i18n.T("status.disconnected"))
 	}
-	systray.SetTooltip(sb.String())
+	tooltip := sb.String()
 
 	busy := a.lifecycle.IsBusy()
-	if mItemDial != nil {
-		if !online && !busy {
-			mItemDial.Enable()
-		} else {
-			mItemDial.Disable()
-		}
+	// tooltip 与菜单可用性分开检测:在线时速率几乎每轮都变(tooltip 跟随
+	// 刷新),而菜单可用性只取决于 online/busy——不能让速率跳动连带触发
+	// 跨线程菜单操作,那正是与 TrackPopupMenu 模态循环撞车的风险源。
+	tooltipChanged := tooltip != lastTooltip
+	menuChanged := online != lastOnline || busy != lastBusy
+	if !tooltipChanged && !menuChanged {
+		return
 	}
-	if mItemHangup != nil {
-		if online && !busy {
-			mItemHangup.Enable()
-		} else {
-			mItemHangup.Disable()
+	lastTooltip, lastOnline, lastBusy = tooltip, online, busy
+
+	if tooltipChanged {
+		systray.SetTooltip(tooltip)
+	}
+	if menuChanged {
+		if mItemDial != nil {
+			if !online && !busy {
+				mItemDial.Enable()
+			} else {
+				mItemDial.Disable()
+			}
+		}
+		if mItemHangup != nil {
+			if online && !busy {
+				mItemHangup.Enable()
+			} else {
+				mItemHangup.Disable()
+			}
 		}
 	}
 }

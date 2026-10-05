@@ -19,9 +19,10 @@ const (
 
 // emit 推送事件:代理模式下经命名管道广播给全部在线 UI 进程;
 // 无 UI 接入时为零成本空操作（高频速度/心跳事件自动省流）。
+// ipcSrv 经锁保护快照获取,与 shutdown 置 nil 并发安全。
 func (a *App) emit(name string, payload any) {
-	if a.ipcSrv != nil {
-		a.ipcSrv.Broadcast(name, payload)
+	if srv := a.ipcSnapshot(); srv != nil {
+		srv.Broadcast(name, payload)
 	}
 }
 

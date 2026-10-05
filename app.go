@@ -194,10 +194,22 @@ type App struct {
 	// langStop 关闭后终止系统语言轮询（构造时创建，shutdown 时关闭）。
 	langStop chan struct{}
 
+	// ipcMu 保护 ipcSrv 的读写:emit 高频运行期读 与 shutdown 置 nil 并发。
+	ipcMu sync.Mutex
 	// ipcSrv 代理进程的命名管道服务端（UI 进程按需接入）。
 	ipcSrv *ipc.Server
 	// memStop 关闭后终止周期性内存归还（构造时创建，shutdown 时关闭）。
 	memStop chan struct{}
+
+	// shutdownOnce 保证停机序列只执行一次:托盘退出与 UI 转发的
+	// ExitProgram 可能并发触发,重复 shutdown 会 close 已关闭的通道。
+	shutdownOnce sync.Once
+
+	// showMu 保护「显示窗口」的自愈状态:sys:show 回执与兜底拉起。
+	showMu      sync.Mutex
+	lastShowAck time.Time // UI 最近一次窗口浮现回执
+	lastShowReq time.Time // 最近一次 sys:show 广播时刻
+	lastSpawnAt time.Time // 最近一次兜底拉起 UI 时刻(冷却防重复)
 
 	// 诊断与拨号结果结构化回显（app_diag.go）
 	diagBusy      atomic.Bool
@@ -333,15 +345,9 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.wifiSvc.Configure(loaded.WifiAutoConnect, loaded.WifiPreferredSsid)
 
-	// 托盘
-	initTray(a)
-
-	// 启动静默检查更新
-	if a.settings.Current().UpdateCheckEnabled {
-		a.exec.Schedule(5*time.Second, func() { a.doCheckUpdate(false) })
-	}
-
-	// 命名管道服务端:UI 进程按需接入;先于一切 UI 拉起动作
+	// 命名管道服务端:UI 进程按需接入;先于一切 UI 拉起动作,也先于托盘
+	// ——重复实例在这里判定后直接退出,根本不创建托盘,消除「边建托盘
+	// 边退出」的乱序窗口(stopTray 面对一个尚未装配的托盘)。
 	handler := ipc.NewDispatcher(a).Handler()
 	srv, err := ipc.NewServer(handler, func(int) { a.refreshTray() })
 	if err != nil {
@@ -353,7 +359,15 @@ func (a *App) startup(ctx context.Context) {
 		}
 		a.logSvc.Error(i18n.Tf("log.appStarted", "ipc: "+err.Error()))
 	} else {
-		a.ipcSrv = srv
+		a.setIpcSrv(srv)
+	}
+
+	// 托盘
+	initTray(a)
+
+	// 启动静默检查更新
+	if a.settings.Current().UpdateCheckEnabled {
+		a.exec.Schedule(5*time.Second, func() { a.doCheckUpdate(false) })
 	}
 
 	// 代理进程内存紧致化:小堆 + 低 GC 目标 + 周期归还,
@@ -371,26 +385,31 @@ func (a *App) startup(ctx context.Context) {
 }
 
 // shutdown 有序停机:摘托盘 → 断 IPC → 持久化 → 停服务 → 清内存密码。
+// 幂等:托盘退出与 UI 转发的 ExitProgram 可能并发触发,只执行一次。
 func (a *App) shutdown(ctx context.Context) {
+	a.shutdownOnce.Do(func() { a.doShutdown(ctx) })
+}
+
+// doShutdown shutdown 的实际执行体(shutdownOnce 保护)。
+func (a *App) doShutdown(ctx context.Context) {
 	// 各阶段耗时留痕:停机卡顿时日志可定位是托盘、管道还是服务收尾。
 	t0 := time.Now()
 	mark := func(name string, at time.Time) string {
 		return fmt.Sprintf("%s=%dms", name, time.Since(at).Milliseconds())
 	}
 
-	// 最先摘托盘图标并断开管道。二者都必须赶在 ExitProgram 的 5 秒硬退出
-	// 之前完成:图标删除要经托盘消息循环异步落地(见 stopTray),此前排到
-	// 停机末尾,拨号/服务收尾一旦拖满 5 秒,进程会被硬杀在 NIM_DELETE 之前,
-	// 任务栏残留进程已消失、右键无响应的幽灵图标;管道同理,晚一秒断开,
-	// UI 进程就多挂一秒。
+	// 最先摘托盘图标并断开管道。二者都必须赶在 ExitProgram 的 8 秒硬退出
+	// 之前完成:图标删除正常路径要经托盘消息循环异步落地(见 stopTray,
+	// 消息循环失效时由兜底直删保证),此前排到停机末尾,拨号/服务收尾一旦
+	// 拖满硬杀时限,进程会被杀在 NIM_DELETE 之前,任务栏残留进程已消失、
+	// 右键无响应的幽灵图标;管道同理,晚一秒断开,UI 进程就多挂一秒。
 	stopAt := time.Now()
 	stopTray()
 	markTray := mark("tray", stopAt)
 
 	ipcAt := time.Now()
-	if a.ipcSrv != nil {
-		a.ipcSrv.Close() // 断开 UI 客户端,它们会自行退出
-		a.ipcSrv = nil
+	if srv := a.takeIpcSrv(); srv != nil {
+		srv.Close() // 断开 UI 客户端,它们会自行退出
 	}
 	markIpc := mark("ipc", ipcAt)
 
@@ -933,14 +952,67 @@ func (a *App) OpenReleasePage(url string) {
 
 // ============================ 窗口 / 退出 ============================
 
-// ShowWindow 显示主窗口（代理模式）:UI 进程在线时唤出既有窗口,
-// 否则按需拉起一个新的 UI 进程。窗口的销毁即 UI 进程退出,内存随之释放。
+// setIpcSrv 记录管道服务端(startup 一次性写入)。
+func (a *App) setIpcSrv(s *ipc.Server) {
+	a.ipcMu.Lock()
+	a.ipcSrv = s
+	a.ipcMu.Unlock()
+}
+
+// takeIpcSrv 取走并清空管道服务端(shutdown 用,幂等)。
+func (a *App) takeIpcSrv() *ipc.Server {
+	a.ipcMu.Lock()
+	srv := a.ipcSrv
+	a.ipcSrv = nil
+	a.ipcMu.Unlock()
+	return srv
+}
+
+// ipcSnapshot 取当前管道服务端快照(可能为 nil)。
+func (a *App) ipcSnapshot() *ipc.Server {
+	a.ipcMu.Lock()
+	srv := a.ipcSrv
+	a.ipcMu.Unlock()
+	return srv
+}
+
+// ShowWindow 显示主窗口（代理模式）:UI 进程在线时唤出既有窗口,并做
+// 有界回执确认;无回执说明连接陈旧或窗口已死,兜底拉起新 UI 进程。
+// 单实例互斥体保证兜底拉起只会 focus 既有窗口,不会开出第二个,
+// 因此任何情况下「点一次显示窗口」必定有窗口浮现。
 func (a *App) ShowWindow() {
-	if a.uiOnline() {
-		a.ipcSrv.Broadcast(SysEventShow, nil)
+	srv := a.ipcSnapshot()
+	if srv == nil || srv.ClientCount() == 0 {
+		a.spawnUI()
 		return
 	}
+	a.showMu.Lock()
+	a.lastShowReq = time.Now()
+	a.showMu.Unlock()
+	srv.Broadcast(SysEventShow, nil)
+	// 给 UI 一段唤窗+回执的时间,再确认是否真的浮现
+	a.exec.Schedule(800*time.Millisecond, a.verifyWindowShown)
+}
+
+// verifyWindowShown sys:show 广播后的确认:无回执则兜底拉起新 UI 进程。
+// 冷却期(5s)防重复:互斥体虽能挡住重复窗口,但反复 spawn 徒增进程抖动。
+func (a *App) verifyWindowShown() {
+	a.showMu.Lock()
+	acked := !a.lastShowAck.Before(a.lastShowReq)
+	spawned := a.lastSpawnAt
+	a.showMu.Unlock()
+	if acked || time.Since(spawned) < 5*time.Second {
+		return
+	}
+	a.logSvc.Info("tray show: no ack from ui, fallback spawn")
 	a.spawnUI()
+}
+
+// ReportWindowShown UI 进程唤出窗口后的回执(经管道反射暴露,前端不感知)。
+func (a *App) ReportWindowShown() {
+	a.showMu.Lock()
+	a.lastShowAck = time.Now()
+	a.showMu.Unlock()
 }
 
 // HideWindow 代理模式无窗口可隐藏:窗口归属 UI 进程（空操作,仅为方法面完整）。
@@ -950,8 +1022,9 @@ func (a *App) HideWindow() {}
 func (a *App) IsWindowVisible() bool { return a.windowVisible() }
 
 // ExitProgram 有序退出（托盘「退出」与更新安装前调用）。
-// 关机路径绝不允许挂死:给 shutdown 5 秒硬超时,超时(托盘/管道/RAS
-// 任一环节卡住)也保证进程一定退出,由 OS 回收其余资源。
+// 关机路径绝不允许挂死:给 shutdown 8 秒硬超时(优雅路径托盘至多 2.5 秒
+// + 服务收尾 5 秒,留余量),超时(托盘/管道/RAS 任一环节卡住)也保证进程
+// 一定退出;托盘图标已由 stopTray 的兜底直删先行保证删除。
 func (a *App) ExitProgram() {
 	go func() {
 		done := make(chan struct{})
@@ -962,25 +1035,32 @@ func (a *App) ExitProgram() {
 		}()
 		select {
 		case <-done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(8 * time.Second):
 		}
 		osExit(0)
 	}()
 }
 
 // uiOnline 是否有 UI 进程接入。
-func (a *App) uiOnline() bool { return a.ipcSrv != nil && a.ipcSrv.ClientCount() > 0 }
+func (a *App) uiOnline() bool {
+	srv := a.ipcSnapshot()
+	return srv != nil && srv.ClientCount() > 0
+}
 
 // uiWaitPIDs 更新脚本需要等待退出的全部进程:代理自身 + 接入中的 UI 进程。
 func (a *App) uiWaitPIDs() []int {
-	if a.ipcSrv == nil {
+	srv := a.ipcSnapshot()
+	if srv == nil {
 		return nil
 	}
-	return a.ipcSrv.ClientPIDs()
+	return srv.ClientPIDs()
 }
 
 // spawnUI 按需拉起 UI 进程（同目录同一 exe,无参数即 UI 模式）。
 func (a *App) spawnUI() {
+	a.showMu.Lock()
+	a.lastSpawnAt = time.Now()
+	a.showMu.Unlock()
 	exe, err := currentExe()
 	if err != nil {
 		a.logSvc.Error("spawn ui: " + err.Error())
