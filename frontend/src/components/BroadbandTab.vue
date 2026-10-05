@@ -57,12 +57,11 @@
           <div class="pw-wrap">
             <input v-model="form.password" :type="showPw ? 'text' : 'password'" autocomplete="new-password"
                    :placeholder="form.hasPassword ? t('broadband.pwKeepHint') : ''" @keydown.enter.prevent="save"/>
-            <button class="btn eye-btn" :title="showPw ? t('broadband.password') : t('broadband.password')"
+            <button class="btn eye-btn" :title="showPw ? t('broadband.pwHide') : t('broadband.pwShow')"
                     @click="showPw = !showPw">
               <i :class="showPw ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
             </button>
           </div>
-          <span v-if="form.hasPassword" class="pw-badge"><i class="fas fa-check-circle"></i></span>
         </div>
         <div class="row actions">
           <button class="btn btn-primary" :disabled="!dirty || !form.username.trim()" @click="save">
@@ -524,23 +523,35 @@ onUnmounted(stopPppPolling)
 
 /* 密码框 + 可见性切换 */
 .pw-wrap {
+  position: relative;
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .pw-wrap input {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
+  /* 右侧留出眼睛按钮的占位，避免文字被图标压住 */
+  padding-right: 34px;
 }
 
 .eye-btn {
-  flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
+  /* 绝对定位贴在输入框内右缘，去掉独立按钮的边框底色，
+     只保留悬停时的描边与图标着色反馈 */
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 26px;
   padding: 0;
+  background: transparent;
+  border-color: transparent;
+}
+
+.eye-btn:hover:not(:disabled) {
+  background: transparent;
+  border-color: var(--c-info);
+  color: var(--c-info);
 }
 
 .eye-btn i {
@@ -548,10 +559,8 @@ onUnmounted(stopPppPolling)
   color: var(--c-hint);
 }
 
-.pw-badge {
-  flex: 0 0 auto;
-  color: var(--c-success);
-  font-size: 12px;
+.eye-btn:hover:not(:disabled) i {
+  color: var(--c-info);
 }
 
 .pw-saved-hint {
