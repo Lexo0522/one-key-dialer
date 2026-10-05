@@ -182,6 +182,9 @@ var zh = map[string]string{
 	"portal.testSubmit":     "认证提交: HTTP {0}",
 	"portal.testOk":         "测试通过：门户已放行",
 	"portal.testFailed":     "测试未通过：门户仍然存在，请核对模板或凭据",
+	"portal.srunChallenge":  "获取 challenge",
+	"portal.srunLogin":      "srun 提交",
+	"portal.srunChallengeFailed": "获取 challenge 失败: {0}",
 
 	// 流量
 	"traffic.parseFailed": "netstat -e 输出解析失败，流量速度不可用",

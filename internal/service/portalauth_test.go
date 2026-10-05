@@ -27,6 +27,33 @@ func TestRenderPortalTemplate(t *testing.T) {
 	}
 }
 
+// 门户地址派生占位符:portalbase/query/queryenc/userip/acid。
+func TestRenderPortalTemplatePortalParams(t *testing.T) {
+	portal := "http://1.2.3.4:8080/eportal/index.jsp?wlanuserip=10.0.0.1&ac_id=3"
+	out := RenderPortalTemplate("{portalbase}do?a={userip}&ac={acid}&q={queryenc}", "u", "p", portal)
+	want := "http://1.2.3.4:8080/eportal/do?a=10.0.0.1&ac=3&q=wlanuserip%3D10.0.0.1%26ac_id%3D3"
+	if out != want {
+		t.Fatalf("门户派生占位符错误:\n got %s\nwant %s", out, want)
+	}
+
+	// 无查询串:query 为空、acid 缺省 1、目录为根路径。
+	raw := RenderPortalTemplate("{portalbase}|{query}|{acid}|{userip}", "u", "p", "http://10.1.1.55/login")
+	if raw != "http://10.1.1.55/||1|" {
+		t.Fatalf("无查询串占位符错误: %s", raw)
+	}
+
+	// userip/acid 的备选参数名。
+	out2 := RenderPortalTemplate("{userip}|{acid}", "u", "p", "http://p/x?userip=2.2.2.2&acid=9")
+	if out2 != "2.2.2.2|9" {
+		t.Fatalf("userip/acid 提取错误: %s", out2)
+	}
+
+	// 非法门户地址:派生参数为空,acid 缺省,由请求阶段兜底报错。
+	if out3 := RenderPortalTemplate("{portalbase}|{acid}", "u", "p", ""); out3 != "|1" {
+		t.Fatalf("非法地址应返回零值参数: %q", out3)
+	}
+}
+
 func TestParsePortalHeaders(t *testing.T) {
 	h := ParsePortalHeaders("Content-Type: application/json\nReferer:http://p/a\n\n  \nbroken-line")
 	if len(h) != 2 {

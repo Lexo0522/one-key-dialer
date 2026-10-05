@@ -55,4 +55,25 @@ func TestNormalizePortalMethod(t *testing.T) {
 	if NormalizePortalMethod("DELETE") != PortalMethodPost {
 		t.Fatal("非法值应回退 POST")
 	}
+	if NormalizePortalMethod(" srun ") != PortalMethodSrun {
+		t.Fatal("srun 应归一为 SRUN")
+	}
+}
+
+func TestNormalizePortalPreset(t *testing.T) {
+	if NormalizePortalPreset("") != PortalPresetGeneric {
+		t.Fatal("空值应回退 generic")
+	}
+	if NormalizePortalPreset(" SRUN ") != PortalPresetSrun {
+		t.Fatal("srun 应归一为 srun")
+	}
+	if NormalizePortalPreset("DrCom") != PortalPresetDrcom {
+		t.Fatal("DrCom 应归一为 drcom")
+	}
+	if NormalizePortalPreset("ruijie") != PortalPresetRuijie {
+		t.Fatal("ruijie 应保持 ruijie")
+	}
+	if NormalizePortalPreset("pfsense") != PortalPresetGeneric {
+		t.Fatal("非法值应回退 generic")
+	}
 }

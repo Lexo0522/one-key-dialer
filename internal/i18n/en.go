@@ -173,6 +173,9 @@ var en = map[string]string{
 	"portal.testSubmit":     "Auth submit: HTTP {0}",
 	"portal.testOk":         "Test passed: portal cleared",
 	"portal.testFailed":     "Test failed: portal still present, check the template or credentials",
+	"portal.srunChallenge":  "Get challenge",
+	"portal.srunLogin":      "srun submit",
+	"portal.srunChallengeFailed": "Failed to get challenge: {0}",
 
 	"traffic.parseFailed": "Failed to parse netstat -e output, traffic speed unavailable",
 	"traffic.readFailed":  "Failed to read interface traffic: {0}",

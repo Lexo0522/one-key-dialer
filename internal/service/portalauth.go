@@ -34,20 +34,75 @@ type PortalAuthOutcome struct {
 	Detail string
 }
 
+// portalTemplateParams 从检测到的门户地址派生的模板占位符参数。
+type portalTemplateParams struct {
+	portalBase string // {portalbase}: 去查询串与最后一段路径,保留目录(含尾斜杠)
+	query      string // {query}: 原始查询串(不含 ?)
+	queryEnc   string // {queryenc}: 查询串 URL 转义(嵌入 form body 用)
+	userIP     string // {userip}: 查询串 wlanuserip/userip/ip 首个非空值
+	acid       string // {acid}: 查询串 ac_id/acid,缺省 "1"
+}
+
+// derivePortalParams 解析门户地址派生占位符参数。
+// 地址非法或缺 host 时返回零值参数(仅 acid 缺省),由请求阶段报错兜底。
+func derivePortalParams(portalURL string) portalTemplateParams {
+	p := portalTemplateParams{acid: "1"}
+	u, err := url.Parse(strings.TrimSpace(portalURL))
+	if err != nil || u.Host == "" {
+		return p
+	}
+	p.query = u.RawQuery
+	p.queryEnc = url.QueryEscape(p.query)
+	base := *u
+	base.RawQuery = ""
+	base.Fragment = ""
+	if idx := strings.LastIndex(base.Path, "/"); idx >= 0 {
+		base.Path = base.Path[:idx+1]
+	} else {
+		base.Path = "/"
+	}
+	p.portalBase = base.String()
+	q := u.Query()
+	for _, key := range []string{"wlanuserip", "userip", "ip"} {
+		if v := q.Get(key); v != "" {
+			p.userIP = v
+			break
+		}
+	}
+	for _, key := range []string{"ac_id", "acid"} {
+		if v := q.Get(key); v != "" {
+			p.acid = v
+			break
+		}
+	}
+	return p
+}
+
 // portalTemplateRepl 的占位符集合：
 //   - {username} / {password}: 原样插入
 //   - {username:enc} / {password:enc}: URL 转义后插入（表单/查询参数用）
 //   - {portal}: 检测到的门户地址（本身是 URL,原样插入）
+//   - {portalbase}: 门户地址去查询串与最后一段路径,保留目录(含尾斜杠),
+//     用于拼接同目录下的登录接口(如锐捷 eportal 的 InterFace.do)
+//   - {query} / {queryenc}: 门户地址的查询串原文/URL 转义
+//   - {userip}: 查询串中的客户端 IP(wlanuserip/userip/ip)
+//   - {acid}: 查询串中的 ac_id,缺省 "1"(深澜用)
 //
 // 注意 Replacer 按"目标串中出现顺序"匹配,同一位置的候选按参数顺序取先命中者,
-// 因此 :enc 变体必须排在裸占位符之前。
+// 因此长占位符与 :enc 变体必须排在对应短占位符之前。
 func RenderPortalTemplate(tpl, username, password, portalURL string) string {
+	p := derivePortalParams(portalURL)
 	r := strings.NewReplacer(
+		"{portalbase}", p.portalBase,
+		"{queryenc}", p.queryEnc,
 		"{username:enc}", url.QueryEscape(username),
 		"{password:enc}", url.QueryEscape(password),
 		"{username}", username,
 		"{password}", password,
 		"{portal}", portalURL,
+		"{query}", p.query,
+		"{userip}", p.userIP,
+		"{acid}", p.acid,
 	)
 	return r.Replace(tpl)
 }
@@ -74,11 +129,22 @@ func ParsePortalHeaders(text string) [][2]string {
 	return out
 }
 
+// portalHTTPClient 构造门户请求用的 HTTP 客户端(代理出口 + 8 秒超时)。
+func portalHTTPClient(cfg PortalAuthConfig) *http.Client {
+	client := &http.Client{Transport: proxy.TransportFor(cfg.Proxy)}
+	client.Timeout = 8 * time.Second
+	return client
+}
+
 // ExecutePortalAuth 执行一次门户认证请求。
 // loginUrl/body 先做模板替换;响应判定:2xx/3xx 且（未配置提示词或包含提示词）。
+// Method 为 SRUN 时走深澜专用两步流程(见 portalsrun.go)。
 func ExecutePortalAuth(cfg PortalAuthConfig, portalURL, username, password string) PortalAuthOutcome {
 	fail := func(detail string) PortalAuthOutcome {
 		return PortalAuthOutcome{Success: false, Detail: detail}
+	}
+	if model.NormalizePortalMethod(cfg.Method) == model.PortalMethodSrun {
+		return executeSrunAuth(cfg, portalURL, username, password)
 	}
 	loginUrl := strings.TrimSpace(cfg.LoginUrl)
 	if loginUrl == "" {
@@ -114,8 +180,7 @@ func ExecutePortalAuth(cfg PortalAuthConfig, portalURL, username, password strin
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 
-	client := &http.Client{Transport: proxy.TransportFor(cfg.Proxy)}
-	client.Timeout = 8 * time.Second
+	client := portalHTTPClient(cfg)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fail(err.Error())

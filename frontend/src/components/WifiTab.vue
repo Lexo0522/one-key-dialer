@@ -99,6 +99,14 @@
           </div>
 
           <div class="row">
+            <label class="field-label">{{ t('wifi.auth.preset') }}</label>
+            <select v-model="portal.preset" @change="applyPreset">
+              <option v-for="p in PORTAL_PRESETS" :key="p.key" :value="p.key">{{ t('wifi.auth.preset.' + p.key) }}</option>
+            </select>
+          </div>
+          <div class="hint">{{ t('wifi.auth.presetHint') }}</div>
+
+          <div class="row">
             <label class="field-label">{{ t('wifi.auth.loginUrl') }}</label>
             <input v-model="portal.loginUrl" type="text" placeholder="http://10.1.1.55/login" @change="pushAuth"/>
           </div>
@@ -109,6 +117,7 @@
             <select v-model="portal.method" @change="pushAuth">
               <option value="POST">POST</option>
               <option value="GET">GET</option>
+              <option value="SRUN">SRUN</option>
             </select>
           </div>
 
@@ -116,7 +125,8 @@
             <label class="field-label">{{ t('wifi.auth.body') }}</label>
             <textarea v-model="portal.body" rows="3" spellcheck="false" @change="pushAuth"></textarea>
           </div>
-          <div class="hint">{{ t('wifi.auth.bodyHint') }}</div>
+          <div class="hint" v-if="portal.method === 'SRUN'">{{ t('wifi.auth.bodySrunHint') }}</div>
+          <div class="hint" v-else>{{ t('wifi.auth.bodyHint') }}</div>
 
           <div class="row">
             <label class="field-label">{{ t('wifi.auth.headers') }}</label>
@@ -166,6 +176,7 @@ import {
   loadPortalCredential, savePortalCredential, testPortalAuth, showToast
 } from '../store'
 import { t } from '../i18n'
+import { PORTAL_PRESETS, getPreset } from '../portalPresets'
 
 // ------------------------------------------------------------ WiFi 状态 ----
 
@@ -272,6 +283,7 @@ function pushAutoConnect() {
 
 const authEnabled = ref(!!state.settings?.portalAuthEnabled)
 const portal = reactive({
+  preset: state.settings?.portalPreset || 'generic',
   loginUrl: state.settings?.portalLoginUrl || '',
   method: state.settings?.portalMethod || 'POST',
   body: state.settings?.portalBody || '',
@@ -285,9 +297,23 @@ const portal = reactive({
 const testing = ref(false)
 const testResult = ref(null)
 
+/** 切换预设:按模板预填五个配置字段(通用档不预填),字段仍可手动修改。 */
+function applyPreset() {
+  const p = getPreset(portal.preset)
+  if (p.fill) {
+    portal.loginUrl = p.fill.loginUrl
+    portal.method = p.fill.method
+    portal.body = p.fill.body
+    portal.headers = p.fill.headers
+    portal.successHint = p.fill.successHint
+  }
+  pushAuth()
+}
+
 function pushAuth() {
   patchSettings({
     portalAuthEnabled: authEnabled.value,
+    portalPreset: portal.preset,
     portalLoginUrl: (portal.loginUrl || '').trim(),
     portalMethod: portal.method,
     portalBody: (portal.body || '').trim(),
@@ -325,6 +351,7 @@ watch(
     autoConnect.value = !!s.wifiAutoConnect
     preferredSsid.value = s.wifiPreferredSsid || ''
     authEnabled.value = !!s.portalAuthEnabled
+    portal.preset = s.portalPreset || 'generic'
     portal.loginUrl = s.portalLoginUrl || ''
     portal.method = s.portalMethod || 'POST'
     portal.body = s.portalBody || ''

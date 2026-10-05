@@ -48,6 +48,7 @@ const MOCK_STATE = {
     wifiAutoConnect: false,
     wifiPreferredSsid: '',
     portalAuthEnabled: false,
+    portalPreset: 'generic',
     portalLoginUrl: '',
     portalMethod: 'POST',
     portalBody: '',

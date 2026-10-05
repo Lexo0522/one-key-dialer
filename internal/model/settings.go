@@ -69,10 +69,14 @@ type Settings struct {
 	WifiPreferredSsid string `json:"wifiPreferredSsid"` // 首选 WiFi 的 SSID
 	PortalAuthEnabled bool   `json:"portalAuthEnabled"` // 启用门户自动认证
 	PortalLoginUrl    string `json:"portalLoginUrl"`    // 登录请求地址,支持 {portal} 占位符
-	PortalMethod      string `json:"portalMethod"`      // GET / POST
+	PortalMethod      string `json:"portalMethod"`      // GET / POST / SRUN
 	PortalBody        string `json:"portalBody"`        // 请求体模板,支持 {username} {password} {portal}
 	PortalHeaders     string `json:"portalHeaders"`     // 附加请求头,每行一个 "Key: Value"
 	PortalSuccessHint string `json:"portalSuccessHint"` // 响应包含该字符串视为成功(可空)
+	// 门户认证预设（generic/srun/drcom/ruijie），仅记录用户选的档位、
+	// 供前端回显;认证行为完全由上面的 URL/方式/请求体等字段决定。
+	// 旧版 settings.json 无此字段，零值经 Normalize 回退 generic，向后兼容。
+	PortalPreset string `json:"portalPreset"`
 
 	// 首页网站测速的自定义测试点。空列表 = 前端使用内置默认站点；
 	// 保存过就完全以前端提交的列表为准（可增删内置站点）。
@@ -149,6 +153,7 @@ func (s Settings) Normalize() Settings {
 	s.PortalBody = strings.TrimSpace(s.PortalBody)
 	s.PortalHeaders = strings.TrimSpace(s.PortalHeaders)
 	s.PortalSuccessHint = strings.TrimSpace(s.PortalSuccessHint)
+	s.PortalPreset = NormalizePortalPreset(s.PortalPreset)
 	s.SpeedSites = NormalizeSpeedSites(s.SpeedSites)
 	return s
 }
@@ -221,6 +226,9 @@ func NormalizeTheme(theme string) string {
 const (
 	PortalMethodGet  = "GET"
 	PortalMethodPost = "POST"
+	// PortalMethodSrun 深澜门户专用流程:先 get_challenge 取动态 challenge,
+	// 再按 srun 算法签名后提交 srun_portal;此时 PortalBody 不参与协议。
+	PortalMethodSrun = "SRUN"
 )
 
 // NormalizePortalMethod 归一门户请求方法，非法值/空值回退 POST。
@@ -230,8 +238,33 @@ func NormalizePortalMethod(method string) string {
 		return PortalMethodGet
 	case PortalMethodPost:
 		return PortalMethodPost
+	case PortalMethodSrun:
+		return PortalMethodSrun
 	}
 	return PortalMethodPost
+}
+
+// 门户认证预设档位。
+const (
+	PortalPresetGeneric = "generic" // 通用:手动填写模板
+	PortalPresetSrun    = "srun"    // 深澜(Srun)校园网门户
+	PortalPresetDrcom   = "drcom"   // Dr.COM(web 版)门户
+	PortalPresetRuijie  = "ruijie"  // 锐捷 eportal 门户
+)
+
+// NormalizePortalPreset 归一门户认证预设档位，非法值/空值回退 generic。
+func NormalizePortalPreset(preset string) string {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case PortalPresetGeneric:
+		return PortalPresetGeneric
+	case PortalPresetSrun:
+		return PortalPresetSrun
+	case PortalPresetDrcom:
+		return PortalPresetDrcom
+	case PortalPresetRuijie:
+		return PortalPresetRuijie
+	}
+	return PortalPresetGeneric
 }
 
 // WifiAutoConnectSet 判断自动连接 WiFi 是否具备完整条件（开关 + 首选 SSID）。
