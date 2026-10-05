@@ -7,9 +7,14 @@ import (
 )
 
 // version 为数字版本号（打包时可用 -ldflags 覆盖）。
+// 兜底值必须与 version.txt 保持一致：本地 wails build / go build 不注入时
+// 用它，注入缺失只会让版本号停在旧值，不会让界面变成空白。
 var version = "1.2.0"
 
-// SetVersion 由构建脚本通过 -ldflags 注入。
+// fallbackVersion 与 version.txt 同步的兜底版本号。
+const fallbackVersion = "1.2.0"
+
+// SetVersion 由构建脚本显式调用。
 func SetVersion(v string) {
 	if strings.TrimSpace(v) != "" {
 		version = strings.TrimSpace(v)
@@ -17,14 +22,21 @@ func SetVersion(v string) {
 }
 
 // Version 返回数字版本号，例如 1.2.0。
-func Version() string { return version }
+// -ldflags 的 -X 直接改写包变量、不经 SetVersion，空串注入会把版本打成 "";
+// 这里统一收敛成兜底值，保证 Version() 永远可用于更新比较与界面展示。
+func Version() string {
+	if strings.TrimSpace(version) == "" {
+		return fallbackVersion
+	}
+	return version
+}
 
 // Display 返回展示版本号，例如 v1.2.0。
 // 用 StripV 归一化：-ldflags 注入的值可能自带 v / V 前缀，直接拼接会出现 vv1.x.x。
-func Display() string { return "v" + StripV(version) }
+func Display() string { return "v" + StripV(Version()) }
 
 // UserAgent 返回出站请求的 UA。
-func UserAgent() string { return "PPPoEDialer/" + version }
+func UserAgent() string { return "PPPoEDialer/" + Version() }
 
 const (
 	// GitHubRepo 更新检查用的仓库（owner/name）。

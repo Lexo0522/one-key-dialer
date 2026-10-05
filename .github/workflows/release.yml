@@ -85,7 +85,15 @@ jobs:
         shell: pwsh
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@latest
-          wails build -platform windows/amd64 -clean
+          # version.txt 是版本号的唯一来源，必须经 -ldflags 注入 Go 变量：
+          # wails.json 的 productVersion 只渲染进 exe 的 Windows 属性，
+          # 界面显示的版本号与更新比较用的是 model.Version()，缺了注入
+          # 就会停在 version.go 里写死的兜底值，与 tag / exe 属性三方漂移。
+          # SetVersion 只接受非空白值，注入空串会被忽略，不会把版本打成空。
+          $rev = $env:APP_VERSION
+          wails build -platform windows/amd64 -clean `
+            -ldflags "-X `"github.com/Lexo0522/one-key-dialer/internal/model.version=$rev`""
+          if ($LASTEXITCODE -ne 0) { Write-Error "wails build failed"; exit 1 }
           if (-not (Test-Path build/bin/PPPoEDialer.exe)) {
             Write-Error "build/bin/PPPoEDialer.exe missing"
             exit 1
@@ -214,6 +222,9 @@ jobs:
             "release/SHA256SUMS.txt")
           # Idempotent: a re-run (or a moved tag) hits an existing release —
           # refresh the assets instead of failing on `gh release create`.
+          # 正文不在这里生成：--generate-notes 建一个占位 release，发布说明由
+          # 人工在发布后补写。程序端（app:update → UpdateDialog）直接展示渠道
+          # 返回的 body，两侧不同步也不会互相覆盖。
           $existing = gh release view $tag --json tagName -q .tagName 2>$null
           if ($LASTEXITCODE -eq 0 -and $existing) {
             Write-Host "Release $tag already exists - refreshing assets"

@@ -34,6 +34,10 @@ const (
 	StagedDirPrefix          = "staged-"
 	ApplyScriptName          = "apply_update.bat"
 	WritabilityProbeFile     = "ppoe_update_probe.tmp"
+
+	// MaxReleaseNotesChars 渠道发布说明送往前端的长度上限。发布页正文是自由
+	// 文本，可能长到把对话框撑爆；截断保上限，正文只作阅读不作解析。
+	MaxReleaseNotesChars = 4000
 )
 
 var sha256SumLine = regexp.MustCompile(`(?i)^([0-9a-f]{64}) {2}([^\r\n]+)$`)
@@ -242,6 +246,10 @@ type CheckResult struct {
 	SourceID        string   `json:"sourceId"`
 	SourceName      string   `json:"sourceName"`
 	Release         *Release `json:"release"`
+	// Notes 渠道发布页正文（Release.Body 归一化后），供界面原样展示；
+	// 与 Message 的区别：Message 是程序生成的状态文案（含版本号/线路/建议），
+	// Notes 是发布者自己写的说明，两者都要给用户看。
+	Notes string `json:"notes"`
 
 	err error
 }
@@ -513,6 +521,7 @@ func (m *Module) checkOnce(src *Source, current string) CheckResult {
 	out.LatestTag = rel.TagName
 	out.ReleaseURL = rel.HTMLURL
 	out.Release = &rel
+	out.Notes = ReleaseNotes(rel.Body)
 	if model.CompareNumeric(current, rel.TagName) >= 0 {
 		out.UpdateAvailable = false
 		out.Message = i18n.Tf("update.upToDate", model.Display(), src.DisplayName)
@@ -539,6 +548,36 @@ func (m *Module) checkOnce(src *Source, current string) CheckResult {
 	out.Message = msg
 	return out
 }
+
+// ReleaseNotes 归一化渠道返回的发布说明，供界面原样展示。
+//
+// 渠道正文是第三方自由文本，不能假设它干净：GitHub/Gitee 的 body 里可能有
+// HTML 标签、CRLF、BOM、首尾空白。这里只做「能安全显示」的最小处理——
+//   - 去掉平台常见的 UTF-8 BOM（JSON 里罕见但 Gitee 手工填写会出现）
+//   - 统一换行为 \n，避免对话框里出现双倍行距
+//   - 收敛连续空行，去掉首尾空白
+//   - 超长截断，避免把对话框撑爆
+//
+// 刻意不做 HTML 剥离或实体解码：正文由前端以纯文本渲染（white-space: pre-wrap），
+// 标签会原样显示而不被执行，保留原貌比猜着清洗更安全。
+func ReleaseNotes(body string) string {
+	s := strings.TrimPrefix(body, "\ufeff")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	// 3 个以上连续换行收敛为 2 个：保留分段，去掉「空行里夹空白行」的观感
+	s = multiBlankLine.ReplaceAllString(s, "\n\n")
+	s = strings.TrimSpace(s)
+	if len(s) > MaxReleaseNotesChars {
+		// 按 rune 截断：渠道正文常含中文，按字节切会截出半个 UTF-8 序列
+		r := []rune(s)
+		if len(r) > MaxReleaseNotesChars {
+			s = string(r[:MaxReleaseNotesChars]) + "\n…"
+		}
+	}
+	return s
+}
+
+var multiBlankLine = regexp.MustCompile(`\n{3,}`)
 
 func failedCheck(name, detail string) string {
 	if name != "" {

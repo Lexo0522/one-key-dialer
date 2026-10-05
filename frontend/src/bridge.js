@@ -205,9 +205,10 @@ const mockApi = {
         kind: 'result',
         updateAvailable: true,
         canInstall: true,
-        title: '发现新版本 V1.2.0',
-        body: '当前 V1.2.0',
-        assetName: 'PPoEDialer-1.2.0.zip',
+        // 与后端字段对应：message = 生成的状态行，body = 渠道发布说明正文
+        message: '发现新版本 1.2.1（当前 1.2.0，线路 Gitee）\n可下载: PPPoEDialer-1.2.1-windows.zip',
+        body: '## 1.2.1\n\n- 修复：托盘左键误弹菜单\n- 新增：网站测速与 IP 信息卡片',
+        assetName: 'PPoEDialer-1.2.1-windows.zip',
         assetSize: 12 * 1024 * 1024,
         releaseUrl: 'https://example.invalid/releases/latest'
       })

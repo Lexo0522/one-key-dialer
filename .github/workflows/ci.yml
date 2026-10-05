@@ -43,6 +43,33 @@ jobs:
           Add-Content $env:GITHUB_ENV "APP_VERSION=$rev"
           Write-Host "Canonical version: $rev"
 
+          # 版本号三处声明必须与 version.txt 一致，任一处漂移都在这里失败：
+          #   internal/model/version.go  兜底值与包变量（本地构建不注入时的版本）
+          #   wails.json info.productVersion  渲染进 exe 的 Windows 属性
+          #   frontend/package.json  version  前端侧声明
+          # 漂移的后果不是 cosmetic：界面版本走 model.Version()，
+          # 它同时是更新比较的「当前版本」基准。
+          $goSrc = Get-Content internal/model/version.go -Raw
+          # 不用 (?m)^ 锚定：Windows PowerShell 5.1 对 -Raw 读入的 CRLF 文本
+          # 加该锚点会匹配不上（pwsh 7 下却可以），去掉锚点更稳。
+          $goFallback = [regex]::Match($goSrc, 'const fallbackVersion = "([^"]+)"').Groups[1].Value
+          $goVar = [regex]::Match($goSrc, 'var version = "([^"]+)"').Groups[1].Value
+          $wails = [regex]::Match(
+            (Get-Content wails.json -Raw), '"productVersion"\s*:\s*"([^"]+)"').Groups[1].Value
+          $pkg = [regex]::Match(
+            (Get-Content frontend/package.json -Raw), '"version"\s*:\s*"([^"]+)"').Groups[1].Value
+
+          $drift = @()
+          if ($goFallback -ne $rev) { $drift += "internal/model/version.go fallbackVersion = '$goFallback'" }
+          if ($goVar -ne $rev) { $drift += "internal/model/version.go var version = '$goVar'" }
+          if ($wails -ne $rev) { $drift += "wails.json productVersion = '$wails'" }
+          if ($pkg -ne $rev) { $drift += "frontend/package.json version = '$pkg'" }
+          if ($drift.Count -gt 0) {
+            Write-Error ("version.txt is '$rev' but these disagree:`n  " + ($drift -join "`n  "))
+            exit 1
+          }
+          Write-Host "All version declarations agree with version.txt ($rev)"
+
       - name: gofmt check
         shell: pwsh
         run: |
@@ -68,7 +95,11 @@ jobs:
         shell: pwsh
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@latest
-          wails build -platform windows/amd64
+          # 与 release 流程一致地注入 version.txt：CI 构建的 exe 里
+          # 界面版本号不应停在 version.go 的兜底值
+          wails build -platform windows/amd64 `
+            -ldflags "-X `"github.com/Lexo0522/one-key-dialer/internal/model.version=$env:APP_VERSION`""
+          if ($LASTEXITCODE -ne 0) { Write-Error "wails build failed"; exit 1 }
           if (-not (Test-Path build/bin/PPPoEDialer.exe)) {
             Write-Error "build/bin/PPPoEDialer.exe missing"
             exit 1

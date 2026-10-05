@@ -214,7 +214,7 @@ const zh = {
   'broadband.title': '宽带',
   'broadband.group.account': '宽带账号',
   'broadband.group.device': '拨号设备',
-  'broadband.username': '宽带账号（如学号）',
+  'broadband.username': '宽带账号',
   'broadband.password': '宽带密码',
   'broadband.pwKeepHint': '已保存，留空沿用',
   'broadband.save': '保存',
@@ -280,6 +280,7 @@ const zh = {
   'update.cancelling': '正在取消…',
   'update.canceled': '下载已取消',
   'update.unknownSize': '总大小未知',
+  'update.noNotes': '该版本发布页未填写说明',
 
   'common.confirm': '确认',
   'common.ok': '确定',
@@ -562,6 +563,7 @@ const en = {
   'update.cancelling': 'Cancelling…',
   'update.canceled': 'Download cancelled',
   'update.unknownSize': 'Total size unknown',
+  'update.noNotes': 'No description was provided on the release page',
 
   'common.confirm': 'Confirm',
   'common.ok': 'OK',

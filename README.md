@@ -76,8 +76,9 @@ frontend/          Vue 3 + Vite；左右布局（侧栏：首页/WiFi/宽带/日
 # 开发模式（热重载）
 wails dev
 
-# 构建 Windows 可执行文件
-wails build                    # → build/bin/PPPoEDialer.exe
+# 构建 Windows 可执行文件（版本号从 version.txt 注入）
+wails build -ldflags "-X github.com/Lexo0522/one-key-dialer/internal/model.version=$(cat version.txt)"
+# → build/bin/PPPoEDialer.exe
 
 # 单独构建前端（浏览器 dev 模式会自动降级到 mock 后端）
 cd frontend && npm install && npm run dev
@@ -86,7 +87,9 @@ cd frontend && npm install && npm run dev
 gofmt -l . && go vet ./... && go test ./...
 ```
 
-`version.txt` 是版本号的唯一来源（裸 semver，如 `1.1.11`），构建时经 `-ldflags` 注入。发布标签必须是 `v<version.txt>`，例如 `v1.1.11`——CI 会校验一致性。
+`version.txt` 是版本号的唯一来源（裸 semver，如 `1.1.11`），必须经 `-ldflags` 注入 `internal/model` 的 `version` 变量。发布标签必须是 `v<version.txt>`，例如 `v1.1.11`——CI 会校验一致性，并校验 `version.go` 兜底值、`wails.json` 的 `productVersion`、`frontend/package.json` 三处声明都与它一致。
+
+不注入也能构建，此时界面版本号停在 `version.go` 的兜底值；但该值同时是更新比较的「当前版本」基准，发版时务必注入，否则新版 exe 会认为自己是旧版。
 
 
 ## 在线更新验证

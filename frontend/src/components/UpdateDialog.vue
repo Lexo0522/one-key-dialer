@@ -16,7 +16,13 @@
           <div v-if="hint" class="hint">{{ hint }}</div>
         </template>
         <template v-else>
-          <div>{{ u.body }}</div>
+          <!-- 发布说明取自渠道 Release 的 body（Gitee / GitHub 哪个渠道查到更新就
+               用哪个的正文），是发布者自己写的内容，原样展示不做加工。
+               u.message 是程序生成的状态行（含版本号、线路、安装包建议），
+               有新版时一并显示，避免正文里读不到「新旧版本对比」。 -->
+          <div v-if="u.message" class="status-line">{{ u.message }}</div>
+          <div v-if="u.body" class="release-notes">{{ u.body }}</div>
+          <div v-else-if="!u.message" class="release-notes empty">{{ t('update.noNotes') }}</div>
           <div v-if="u.assetName" class="asset">
             <div>{{ assetName }}</div>
             <div class="hint">{{ assetSize }}</div>
@@ -132,6 +138,26 @@ function openPage() {
 <style scoped>
 .status {
   margin-bottom: 8px;
+}
+
+/* 后端生成的状态行（版本号 / 线路 / 安装包建议）：与渠道正文区分，
+   弱化为主次关系里的「次」，让发布者写的说明占据视觉主体。 */
+.status-line {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--c-border);
+  font-size: 12px;
+  color: var(--c-text-sub);
+}
+
+/* 渠道发布说明：预填宽度由 pre-wrap 保留，与 .dialog-body 一致 */
+.release-notes {
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+
+.release-notes.empty {
+  color: var(--c-text-sub);
 }
 
 .bar {

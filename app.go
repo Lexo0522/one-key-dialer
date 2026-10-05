@@ -880,11 +880,17 @@ func (a *App) doCheckUpdate(interactive bool) {
 		Kind:            "result",
 		Stage:           UpdateStageCheck,
 		Message:         result.Message,
+		Body:            result.Notes,
 		UpdateAvailable: result.UpdateAvailable,
 		CanInstall:      canInstall,
 		AssetName:       assetName,
 		AssetSize:       assetSize,
 		ReleaseURL:      result.ReleaseURL,
+	}
+	// 标题本地化为「发现新版本」：不给的话对话框会落到通用的「更新」二字上。
+	// 发布者写的说明走 result.Notes（已放入 Body 字段），由对话框正文区展示。
+	if result.UpdateAvailable {
+		payload.Title = i18n.T("update.newVersion")
 	}
 	if !result.SourceOK {
 		a.logSvc.Warning(result.Message)

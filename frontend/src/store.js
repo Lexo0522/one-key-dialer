@@ -100,6 +100,7 @@ export const state = reactive({
     canInstall: false,
     busy: false,
     title: '',
+    message: '',
     body: '',
     assetName: '',
     assetSize: 0,
@@ -441,6 +442,9 @@ function applyUpdatePayload(p) {
       u.available = !!p.updateAvailable
       u.canInstall = !!p.canInstall
       u.title = p.title || ''
+      // message = 后端生成的状态行（版本号/线路/安装包建议）
+      u.message = p.message || ''
+      // body = 渠道 Release 的发布说明正文，发布者自己写的内容
       u.body = p.body || ''
       u.assetName = p.assetName || ''
       u.assetSize = p.assetSize || 0
