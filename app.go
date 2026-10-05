@@ -144,6 +144,8 @@ type IPInfoDTO struct {
 // UpdatePayload 更新流程事件负载。
 // Kind: checking | result | status | progress | canceled | error | done | installing。
 // Stage: UpdateStage* 之一，用于区分同一条进度通道上的不同阶段。
+// Interactive 标记本次检查由用户主动发起（托盘菜单 / 设置页按钮）：前端据此
+// 决定「无新版」结果是否弹出提示——静默检查只需要它复位「正在检查更新…」。
 type UpdatePayload struct {
 	Kind            string `json:"kind"`
 	Stage           string `json:"stage,omitempty"`
@@ -151,6 +153,7 @@ type UpdatePayload struct {
 	Title           string `json:"title"`
 	Body            string `json:"body"`
 	Tray            bool   `json:"tray"`
+	Interactive     bool   `json:"interactive,omitempty"`
 	Downloaded      int64  `json:"downloaded"`
 	Total           int64  `json:"total"`
 	UpdateAvailable bool   `json:"updateAvailable"`
@@ -876,6 +879,8 @@ func (a *App) doCheckUpdate(interactive bool) {
 			assetSize = p.SizeBytes
 		}
 	}
+	// 检查态由 checking/result 这一对事件收敛，两条都得发。无新版时这个
+	// result 对托盘没有意义，但对界面是复位信号，不能只对有新版才发。
 	payload := UpdatePayload{
 		Kind:            "result",
 		Stage:           UpdateStageCheck,
@@ -886,6 +891,7 @@ func (a *App) doCheckUpdate(interactive bool) {
 		AssetName:       assetName,
 		AssetSize:       assetSize,
 		ReleaseURL:      result.ReleaseURL,
+		Interactive:     interactive,
 	}
 	// 标题本地化为「发现新版本」：不给的话对话框会落到通用的「更新」二字上。
 	// 发布者写的说明走 result.Notes（已放入 Body 字段），由对话框正文区展示。
@@ -899,10 +905,11 @@ func (a *App) doCheckUpdate(interactive bool) {
 	} else {
 		a.logSvc.Success(result.Message)
 	}
+	// 静默检查同样要把 result 推给前端：界面的「正在检查更新…」完全由
+	// checking → result 这对事件收敛，缺了后半截按钮就永远停在转圈态。
+	// 无新版时该结果没有 UI 价值，frontend 对 updateAvailable=false 的
+	// 非交互结果只复位状态、不弹提示（见 store.js applyUpdatePayload）。
 	if !interactive {
-		if !result.UpdateAvailable {
-			return
-		}
 		payload.Tray = !a.windowVisible()
 	}
 	a.emit(EvtUpdate, payload)

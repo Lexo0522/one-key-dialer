@@ -9,10 +9,10 @@ import (
 // version 为数字版本号（打包时可用 -ldflags 覆盖）。
 // 兜底值必须与 version.txt 保持一致：本地 wails build / go build 不注入时
 // 用它，注入缺失只会让版本号停在旧值，不会让界面变成空白。
-var version = "1.2.0"
+var version = "1.2.1"
 
 // fallbackVersion 与 version.txt 同步的兜底版本号。
-const fallbackVersion = "1.2.0"
+const fallbackVersion = "1.2.1"
 
 // SetVersion 由构建脚本显式调用。
 func SetVersion(v string) {

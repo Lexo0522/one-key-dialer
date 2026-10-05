@@ -43,7 +43,6 @@
         </template>
         <template v-else>
           <button v-if="u.canInstall" class="btn btn-primary" :disabled="u.busy" @click="download">{{ t('update.download') }}</button>
-          <button v-if="u.releaseUrl" class="btn" @click="openPage">{{ t('update.openPage') }}</button>
           <button class="btn" @click="close">{{ u.available ? t('update.later') : t('update.close') }}</button>
         </template>
       </div>
@@ -128,10 +127,6 @@ async function install() {
   } catch (e) {
     abortUpdateRequest(t('update.error'))
   }
-}
-
-function openPage() {
-  if (u.value.releaseUrl) api.OpenReleasePage(u.value.releaseUrl)
 }
 </script>
 

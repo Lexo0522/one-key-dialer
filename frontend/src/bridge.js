@@ -34,8 +34,8 @@ export function on(event, handler) {
 // ---------------------------------------------------------------- mock ----
 
 const MOCK_STATE = {
-  version: '1.2.0',
-  displayVersion: 'v1.2.0',
+  version: '1.2.1',
+  displayVersion: 'v1.2.1',
   settings: {
     intervalSeconds: 30,
     autoReconnect: false,
@@ -198,11 +198,14 @@ const mockApi = {
       ? `电话簿条目已重写 → ${device} / ${port}`
       : `已记住设备 ${device} / ${port}（下次创建条目时使用）`
   },
-  CheckUpdate() {
-    mockBus.emit(EV.update, { kind: 'checking', message: '正在检查更新…' })
+  CheckUpdate(interactive) {
+    mockBus.emit(EV.update, { kind: 'checking', message: '正在检查更新…', interactive: !!interactive })
     setTimeout(() => {
+      // 与后端一致：有新版与无新版都要回 result，前端靠它复位 checking 态；
+      // interactive 决定无新版时是否弹提示（静默检查不打扰用户）。
       mockBus.emit(EV.update, {
         kind: 'result',
+        interactive: !!interactive,
         updateAvailable: true,
         canInstall: true,
         // 与后端字段对应：message = 生成的状态行，body = 渠道发布说明正文
@@ -219,7 +222,6 @@ const mockApi = {
   },
   CancelUpdateDownload() {},
   InstallUpdate() {},
-  OpenReleasePage() {},
   ShowWindow() {},
   HideWindow() {},
   async IsWindowVisible() {

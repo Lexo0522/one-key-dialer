@@ -209,6 +209,10 @@ const zh = {
   'settings.update.checking': '正在检查更新…',
   'settings.update.upToDate': '已是最新版本',
   'settings.saveFail': '保存失败，请重试',
+  // 侧栏版本号旁的更新快捷按钮（hover 展开为胶囊后的文字）
+  'settings.update.action': '更新',
+  'settings.update.action.title': '发现新版本，点击更新',
+  'update.checkTimeout': '检查更新超时，请重试',
 
   // 宽带
   'broadband.title': '宽带',
@@ -265,7 +269,6 @@ const zh = {
   // 更新
   'update.title': '更新',
   'update.download': '下载并安装',
-  'update.openPage': '打开发布页',
   'update.later': '稍后',
   'update.close': '关闭',
   'update.cancel': '取消',
@@ -493,6 +496,10 @@ const en = {
   'settings.update.checking': 'Checking for updates…',
   'settings.update.upToDate': 'Up to date',
   'settings.saveFail': 'Failed to save, please try again',
+  // Sidebar update shortcut button (label shown when the pill expands on hover)
+  'settings.update.action': 'Update',
+  'settings.update.action.title': 'A new version is available — click to update',
+  'update.checkTimeout': 'Update check timed out, please try again',
 
   // Broadband
   'broadband.title': 'Broadband',
@@ -548,7 +555,6 @@ const en = {
 
   'update.title': 'Update',
   'update.download': 'Download & install',
-  'update.openPage': 'Open release page',
   'update.later': 'Later',
   'update.close': 'Close',
   'update.cancel': 'Cancel',

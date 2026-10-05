@@ -223,7 +223,6 @@ var zh = map[string]string{
 	"update.trayHint":         "{0}\n打开托盘菜单选择「检查更新」即可下载安装。",
 	"update.quietPrefix":      "启动检查：",
 	"update.downloadBtn":      "下载并安装",
-	"update.openPage":         "打开发布页",
 	"update.later":            "稍后",
 	"update.close":            "关闭",
 	"update.recommend":        "推荐安装包: {0}",

@@ -211,7 +211,6 @@ var en = map[string]string{
 	"update.trayHint":         "{0}\nOpen the tray menu and choose \"Check for updates\" to download and install.",
 	"update.quietPrefix":      "Startup check: ",
 	"update.downloadBtn":      "Download and install",
-	"update.openPage":         "Open release page",
 	"update.later":            "Later",
 	"update.close":            "Close",
 	"update.recommend":        "Recommended package: {0}",

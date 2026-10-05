@@ -364,6 +364,27 @@ const STAGE_DOWNLOAD = 'download'
 const STAGE_PREPARE = 'prepare'
 const STAGE_INSTALL = 'install'
 
+// 检查更新的兜底时限：后端可能因代理重启 / IPC 断开而不再回任何事件，
+// 此时界面若停在「正在检查更新…」会永久锁死按钮。超时即本地复位。
+const CHECK_WATCHDOG_MS = 90 * 1000
+let checkWatchdog = null
+
+function armCheckWatchdog() {
+  clearCheckWatchdog()
+  checkWatchdog = setTimeout(() => {
+    checkWatchdog = null
+    const u = state.update
+    if (u.checking) abortUpdateRequest(t('update.checkTimeout'))
+  }, CHECK_WATCHDOG_MS)
+}
+
+function clearCheckWatchdog() {
+  if (checkWatchdog !== null) {
+    clearTimeout(checkWatchdog)
+    checkWatchdog = null
+  }
+}
+
 /** 清空上一次的进度数值，避免重试或再次打开时残留旧百分比。 */
 export function resetUpdateProgress() {
   const u = state.update
@@ -372,6 +393,12 @@ export function resetUpdateProgress() {
   u.total = 0
   lastProgressStage = ''
   lastDownloaded = 0
+}
+
+/** 复位检查态（ settling / 取消 / 看门狗 共用），避免散落的赋值漏掉字段。 */
+function finishUpdateCheck() {
+  state.update.checking = false
+  clearCheckWatchdog()
 }
 
 // 进度单调保护：同一阶段内字节数不应该变小。续传遇到 HTTP 416 时服务端会清空本地
@@ -391,6 +418,8 @@ export function beginUpdateDownload() {
   u.stage = STAGE_DOWNLOAD
   u.status = t('update.preparing')
   u.visible = true
+  // 下载接手后检查态失去意义：撤掉看门狗，否则它会误判一次正常的下载
+  clearCheckWatchdog()
 }
 
 /** RPC 请求本身没送达后端时的收尾：后续不会有事件回来，必须在本地方复位，
@@ -403,6 +432,7 @@ export function abortUpdateRequest(toastMessage) {
   u.installing = false
   u.status = ''
   resetUpdateProgress()
+  clearCheckWatchdog()
   if (toastMessage) showToast(toastMessage, 'error')
 }
 
@@ -416,6 +446,7 @@ export function beginUpdateInstall() {
   u.stage = STAGE_PREPARE
   u.status = t('update.installing')
   u.visible = true
+  clearCheckWatchdog()
 }
 
 /**
@@ -431,14 +462,15 @@ function applyUpdatePayload(p) {
       u.checking = true
       u.stage = stage
       u.status = p.message || ''
+      armCheckWatchdog()
       break
     case 'result':
-      u.checking = false
       u.busy = false
       u.downloading = false
       u.installing = false
       u.stage = stage
       resetUpdateProgress()
+      finishUpdateCheck()
       u.available = !!p.updateAvailable
       u.canInstall = !!p.canInstall
       u.title = p.title || ''
@@ -454,8 +486,9 @@ function applyUpdatePayload(p) {
       if (p.updateAvailable) {
         u.visible = true
       } else {
-        // 无可用更新（仅交互式检查会到达此处）：后端消息自带版本号，作为胶囊标题
-        showToast(p.message || t('settings.update.upToDate'), 'success')
+        // 无可用更新：交互式检查（点「立即检查」）由后端消息带版本号，
+        // 作为胶囊标题提示；启动静默检查的结果没有 UI 价值，只静默复位。
+        if (p.interactive) showToast(p.message || t('settings.update.upToDate'), 'success')
       }
       break
     case 'status':
@@ -488,24 +521,14 @@ function applyUpdatePayload(p) {
     }
     case 'canceled':
       // 用户主动取消不是失败：复位到可操作态，用中性语气提示
-      u.checking = false
-      u.busy = false
-      u.downloading = false
-      u.installing = false
-      resetUpdateProgress()
+      abortUpdateRequest()
       showToast(p.message || t('update.canceled'), 'info')
       break
     case 'error':
       // 检查/下载/安装各阶段失败：Toast 明示，并把对话框从进行中态复位到可操作态
-      u.checking = false
-      u.busy = false
-      u.downloading = false
-      u.installing = false
-      resetUpdateProgress()
-      showToast(p.message || t('update.error'), 'error')
+      abortUpdateRequest(p.message || t('update.error'))
       break
     case 'done':
-      u.checking = false
       u.busy = false
       u.downloading = false
       u.installing = false
