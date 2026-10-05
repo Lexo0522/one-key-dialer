@@ -43,6 +43,7 @@ const MOCK_STATE = {
     startMinimized: false,
     disconnectOnNoInternet: false,
     updateCheckEnabled: true,
+    autoInstallUpdate: true,
     uiTheme: 'system',
     wifiAutoConnect: false,
     wifiPreferredSsid: '',
@@ -219,9 +220,34 @@ const mockApi = {
   },
   DownloadUpdate() {
     mockBus.emit(EV.update, { kind: 'status', message: '准备下载…' })
+    // 与后端一致：下载过程推 progress，校验通过后推 done，
+    // 前端据此进入「安装」态（自动安装开启时无需再点一次）
+    const total = 12 * 1024 * 1024
+    let done = 0
+    const timer = setInterval(() => {
+      done = Math.min(total, done + total / 8)
+      mockBus.emit(EV.update, {
+        kind: 'progress',
+        stage: 'download',
+        downloaded: Math.round(done),
+        total
+      })
+      if (done >= total) {
+        clearInterval(timer)
+        mockBus.emit(EV.update, {
+          kind: 'done',
+          stage: 'download',
+          path: 'C:\\Users\\mock\\AppData\\Roaming\\PPoEDialer\\updates\\PPoEDialer-1.2.1-windows.zip'
+        })
+      }
+    }, 250)
   },
-  CancelUpdateDownload() {},
-  InstallUpdate() {},
+  CancelUpdateDownload() {
+    mockBus.emit(EV.update, { kind: 'canceled', stage: 'download', message: '已取消下载' })
+  },
+  InstallUpdate() {
+    mockBus.emit(EV.update, { kind: 'installing', stage: 'install', message: '正在安装更新…' })
+  },
   ShowWindow() {},
   HideWindow() {},
   async IsWindowVisible() {

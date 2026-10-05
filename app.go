@@ -958,6 +958,60 @@ func (a *App) DownloadUpdate() {
 		a.updateMu.Unlock()
 		a.logSvc.Success(i18n.Tf("update.verified", pkg.File))
 		a.emit(EvtUpdate, UpdatePayload{Kind: "done", Stage: UpdateStageDownload, Path: pkg.File})
+		// 自动安装：下载校验通过后直接接着装，省掉用户再点一次「立即安装」。
+		// 关掉时保留原行为——对话框停在「立即安装 / 仅保留」两步确认。
+		if a.settings.Current().AutoInstallUpdate {
+			a.autoInstallPending()
+		}
+	})
+}
+
+// autoInstallPending 把「下载完成」直接接上「安装」，供自动安装链路复用。
+// 与 InstallUpdate 的区别：不重复校验 pendingPkg（刚下载完必有），
+// 也不受 updateBusy 互斥影响——下载态刚释放，此处必然可进入。
+func (a *App) autoInstallPending() {
+	a.updateMu.Lock()
+	if a.updateBusy {
+		a.updateMu.Unlock()
+		return
+	}
+	pkg := a.pendingPkg
+	if pkg == nil {
+		a.updateMu.Unlock()
+		return
+	}
+	a.updateBusy = true
+	a.updateMu.Unlock()
+
+	progress := updateProgress{a: a, stage: UpdateStagePrepare}
+	a.exec.SubmitLong(func() {
+		if platform.IsEphemeralExePath() {
+			a.logSvc.Error(i18n.T("update.ephemeralInstall"))
+			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
+				Message: i18n.T("update.ephemeralInstall")})
+			return
+		}
+		waitPIDs := a.uiWaitPIDs()
+		prepared, err := a.updater.Prepare(pkg, progress, waitPIDs)
+		a.updateMu.Lock()
+		a.updateBusy = false
+		a.updateMu.Unlock()
+		if err != nil {
+			a.logSvc.Error(i18n.Tf("update.prepareFailed", err.Error()))
+			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
+				Message: i18n.Tf("update.prepareFailed", err.Error())})
+			return
+		}
+		a.logSvc.Info(i18n.Tf("update.applying", prepared.ApplyScript))
+		a.flushBeforeUpdate()
+		if !a.updater.LaunchInstall(prepared) {
+			a.logSvc.Error(i18n.T("update.launchFailed"))
+			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
+				Message: i18n.T("update.launchFailedDlg")})
+			return
+		}
+		a.emit(EvtUpdate, UpdatePayload{Kind: "installing", Stage: UpdateStageInstall})
+		a.ExitProgram()
 	})
 }
 

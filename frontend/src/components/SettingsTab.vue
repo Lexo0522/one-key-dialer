@@ -130,6 +130,12 @@
           <span class="switch"><input v-model="updateCheckEnabled" type="checkbox" @change="pushUpdateCheck"/><span class="track"></span></span>
         </div>
 
+        <div class="switch-row">
+          <label class="label"><span class="t">{{ t('settings.update.autoInstall') }}</span></label>
+          <span class="switch"><input v-model="autoInstallUpdate" type="checkbox" @change="pushAutoInstall"/><span class="track"></span></span>
+        </div>
+        <div class="hint">{{ t('settings.update.autoInstallHint') }}</div>
+
         <div class="row">
           <label class="field-label">{{ t('settings.update.current') }}</label>
           <span class="ver-value">{{ versionLabel() }}</span>
@@ -189,6 +195,7 @@ const autoReconnect = ref(!!state.settings?.autoReconnect)
 const intervalSeconds = ref(state.settings?.intervalSeconds ?? 30)
 const disconnectOnNoInternet = ref(!!state.settings?.disconnectOnNoInternet)
 const updateCheckEnabled = ref(state.settings?.updateCheckEnabled ?? true)
+const autoInstallUpdate = ref(state.settings?.autoInstallUpdate ?? true)
 // 低内存渲染:UI 进程启动时读取,改动需下次打开窗口生效
 const lowMemRender = ref(!!state.settings?.lowMemRender)
 
@@ -216,6 +223,7 @@ watch(
     intervalSeconds.value = s.intervalSeconds
     disconnectOnNoInternet.value = s.disconnectOnNoInternet
     updateCheckEnabled.value = s.updateCheckEnabled
+    autoInstallUpdate.value = s.autoInstallUpdate ?? true
     lowMemRender.value = !!s.lowMemRender
     proxy.enabled = !!s.proxyEnabled
     proxy.type = s.proxyType || 'http'
@@ -293,6 +301,10 @@ function pushDisconnect() {
 
 function pushUpdateCheck() {
   patchSettings({ updateCheckEnabled: updateCheckEnabled.value })
+}
+
+function pushAutoInstall() {
+  patchSettings({ autoInstallUpdate: autoInstallUpdate.value })
 }
 
 // 低内存渲染写入后端设置;UI 进程在窗口创建前读取 settings.json,

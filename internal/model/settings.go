@@ -42,7 +42,10 @@ type Settings struct {
 	ProbeDelayMs           int    `json:"probeDelayMs"`
 	DisconnectOnNoInternet bool   `json:"disconnectOnNoInternet"`
 	UpdateCheckEnabled     bool   `json:"updateCheckEnabled"`
-	UITheme                string `json:"uiTheme"`
+	// 下载并校验通过后直接进入安装，不再要求用户再点一次「立即安装」。
+	// 旧版 settings.json 无此字段，零值即"关闭"，向后兼容。
+	AutoInstallUpdate bool   `json:"autoInstallUpdate"`
+	UITheme           string `json:"uiTheme"`
 	// PPPoE 拨号设备（写入 RAS 电话簿的 PreferredPort / PreferredDevice）。
 	// 旧版 settings.json 无这两个字段，空串即"自动探测"，向后兼容。
 	PppoePort   string `json:"pppoePort"`
@@ -104,6 +107,7 @@ func DefaultSettings() Settings {
 		ProbeDelayMs:           DefaultProbeDelayMs,
 		DisconnectOnNoInternet: false,
 		UpdateCheckEnabled:     true,
+		AutoInstallUpdate:      true,
 		UITheme:                ThemeSystem,
 		ProxyType:              ProxyTypeHTTP,
 	}

@@ -529,15 +529,29 @@ function applyUpdatePayload(p) {
       abortUpdateRequest(p.message || t('update.error'))
       break
     case 'done':
-      u.busy = false
-      u.downloading = false
-      u.installing = false
-      u.status = ''
-      resetUpdateProgress()
       u.path = p.path || ''
       u.visible = true
-      // 对话框提供安装入口；此处仅作完成提示（胶囊形态不嵌按钮）
-      showToast(t('update.doneTitle'), 'success')
+      // 自动安装开启时，下载完成即直接进入安装：省掉再一次点击。
+      // 后端会自行衔接 Prepare/LaunchInstall，这里只把界面切到安装态。
+      // 关闭时保留原两步确认，对话框停在「立即安装 / 仅保留」。
+      // 缺字段视为开启：后端存储层已对旧 settings.json 补齐默认值，
+      // 这里再兜一层，避免 IPC 时序导致的界面与后端行为不一致。
+      if (state.settings?.autoInstallUpdate !== false) {
+        u.busy = true
+        u.downloading = false
+        u.installing = true
+        u.stage = STAGE_PREPARE
+        u.status = t('update.installing')
+        showToast(t('update.doneTitle'), 'success')
+      } else {
+        u.busy = false
+        u.downloading = false
+        u.installing = false
+        u.status = ''
+        resetUpdateProgress()
+        // 对话框提供安装入口；此处仅作完成提示（胶囊形态不嵌按钮）
+        showToast(t('update.doneTitle'), 'success')
+      }
       break
     case 'installing':
       u.busy = false
