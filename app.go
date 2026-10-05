@@ -354,13 +354,6 @@ func (a *App) startup(ctx context.Context) {
 
 	a.exec.Submit(func() {
 		service.NewStartupSelfCheck(a.logSvc, a.dataDir).Run()
-		if removed, err := platform.RemoveLegacyAppBinary(); removed {
-			if err != nil {
-				a.logSvc.Warning("remove legacy binary " + model.LegacyAppName + ": " + err.Error())
-			} else {
-				a.logSvc.Info("removed legacy binary " + model.LegacyAppName)
-			}
-		}
 		s := a.settings.Current()
 		a.autoStart.EnsureHealthy(s.AutoStart)
 		a.emit(EvtSettings, s)

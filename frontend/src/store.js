@@ -11,9 +11,7 @@ const PREFS_KEY = 'okd.ui.prefs.v1'
 const SNIFF_WINDOW_MS = 10 * 60 * 1000 // 折线图统计窗口：10 分钟
 const SNIFF_MAX_POINTS = 620
 
-/** 本地偏好（无后端字段支持的界面设置）：语言覆盖 / 流量嗅探 / 轻量化。
- *  代理已迁移为后端设置（settings.json，随 SaveSettings 持久化并实时生效），
- *  这里只在加载时清理旧版本残留的本地代理偏好。 */
+/** 本地偏好（无后端字段支持的界面设置）：语言覆盖 / 流量嗅探 / 轻量化。 */
 function defaultPrefs() {
   return {
     lang: '', // '' = 跟随后端探测到的语言
@@ -27,10 +25,7 @@ function loadPrefs() {
   try {
     const raw = localStorage.getItem(PREFS_KEY)
     if (!raw) return base
-    const saved = JSON.parse(raw)
-    // 旧版本把代理存在本地偏好且不生效；丢弃残留避免与新设置混淆
-    const { proxy: _legacyProxy, ...rest } = saved || {}
-    return { ...base, ...rest }
+    return { ...base, ...JSON.parse(raw) }
   } catch (e) {
     return base
   }
@@ -163,14 +158,12 @@ export function versionLabel() {
 }
 
 /** 把前端的语言覆盖同步给后端（托盘菜单 / 通知 / 日志文案）。
- *  '' / 'auto' / 'system' 表示跟随系统；dev mock 或旧版后端缺失该方法时静默忽略。 */
+ *  '' / 'auto' / 'system' 表示跟随系统；失败静默忽略，避免未捕获拒绝。 */
 export function syncLangToBackend() {
   try {
-    if (typeof api.SetUILang !== 'function') return
-    // 返回 Promise，失败（旧版后端未绑定该方法）静默吞掉，避免未捕获拒绝
     Promise.resolve(api.SetUILang(state.prefs.lang || '')).catch(() => {})
   } catch (e) {
-    /* 非 Wails 环境时忽略 */
+    /* 同步失败不影响界面 */
   }
 }
 

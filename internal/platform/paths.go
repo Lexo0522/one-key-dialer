@@ -188,30 +188,6 @@ func RelaunchExe() string {
 	return filepath.Join(InstallDir(), model.AppName)
 }
 
-// RemoveLegacyAppBinary 删除安装目录里改名前的旧主程序（PPoEDialer.exe）。
-// exe 统一更名为 PPPoEDialer.exe 后，存量安装（手动覆盖、旧更新脚本）
-// 会残留旧文件并可能继续被旧的自启动路径拉起；更新脚本已包含此清理，
-// 这里兜底覆盖其余路径。仅当前进程是改名后的新主程序时执行；
-// 文件被旧实例占用时返回错误，由调用方记日志、下次启动重试。
-func RemoveLegacyAppBinary() (removed bool, err error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return false, nil
-	}
-	abs, err := filepath.Abs(exe)
-	if err != nil || !strings.EqualFold(filepath.Base(abs), model.AppName) {
-		return false, nil // 开发态/非新名进程不做清理
-	}
-	legacy := filepath.Join(filepath.Dir(abs), model.LegacyAppName)
-	if _, err := os.Stat(legacy); err != nil {
-		return false, nil // 旧文件不存在:无需清理
-	}
-	if err := os.Remove(legacy); err != nil {
-		return true, err
-	}
-	return true, nil
-}
-
 // PhonebookFile 返回 RAS 电话簿路径。
 func PhonebookFile() string {
 	appData := os.Getenv("APPDATA")

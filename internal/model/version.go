@@ -50,8 +50,6 @@ const (
 	// AppName 主程序可执行文件名（更新脚本钉住此名）。
 	// 历史上构建产物误拼为 PPoEDialer，自 exe 统一改名起与产物一致。
 	AppName = "PPPoEDialer.exe"
-	// LegacyAppName 改名前的历史产物名；更新脚本与启动清理用它识别并移除旧文件。
-	LegacyAppName = "PPoEDialer.exe"
 	// ConnectionName 固定 RAS 连接名。
 	ConnectionName = "pppoe_native_java"
 )

@@ -261,8 +261,6 @@ func (m *Module) writeZipApplyScript(installDir, payloadRoot string, pids []int)
 		wline(w, "  exit /b 1")
 		wline(w, ")")
 		wline(w, `echo Applying PPPoEDialer update...`)
-		// The binary was called PPoEDialer.exe before the rename; sweep it.
-		wline(w, `if exist "%DST%\`+model.LegacyAppName+`" del /f /q "%DST%\`+model.LegacyAppName+`"`)
 		writeRelaunch(w, installDir)
 		wline(w, "endlocal")
 	})
