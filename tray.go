@@ -8,18 +8,19 @@ import (
 	"sync/atomic"
 	"time"
 
+	"fyne.io/systray"
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
 	"github.com/Lexo0522/one-key-dialer/internal/platform"
 	"github.com/Lexo0522/one-key-dialer/internal/util"
-	"github.com/getlantern/systray"
 )
 
 //go:embed build/windows/icon.ico
 var trayIcon []byte
 
-// getlantern/systray v1.2.2 内部创建托盘窗口时使用的类名与
-// Shell_NotifyIcon 的 uID(见其 systray_windows.go 的 initInstance)。
-// stopTray 的兜底直删依赖这两个值定位图标;升级库版本时必须一并核对。
+// fyne.io/systray v1.12.2(getlantern/systray 的维护 fork,模块规范路径
+// fyne.io/systray)内部创建托盘窗口时使用的类名与 Shell_NotifyIcon 的
+// uID(见其 systray_windows.go 的 initInstance)。stopTray 的兜底直删
+// 依赖这两个值定位图标;升级库版本时必须一并核对。
 const (
 	trayWinClass = "SystrayClass"
 	trayIconID   = 100
@@ -90,6 +91,19 @@ func onTrayReady() {
 	}
 	systray.SetIcon(trayIcon)
 	systray.SetTitle(i18n.T("app.title"))
+	// 左键单击直接唤起主窗口(Windows 常规托盘交互);右键保持弹出菜单
+	// (库的默认行为,SetOnSecondaryTapped 不设置即回退 showMenu)。
+	// 回调跑在托盘消息循环线程,必须立即返回,实际动作移交 goroutine。
+	systray.SetOnTapped(func() {
+		go func() {
+			trayMu.Lock()
+			a := trayApp
+			trayMu.Unlock()
+			if a != nil {
+				a.ShowWindow()
+			}
+		}()
+	})
 
 	mItemShow = systray.AddMenuItem(i18n.T("tray.showWindow"), "")
 	mItemDial = systray.AddMenuItem(i18n.T("home.dial.connect"), "")

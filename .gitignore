@@ -57,3 +57,5 @@ CLAUDE.md
 .DS_Store
 Thumbs.db
 *.log
+# UI 进程侧的 webview2/启动看门狗诊断日志(go-webview2 与看门狗的重定向输出)
+ui_log.txt

@@ -28,15 +28,25 @@ type UIApp struct {
 	// closing 置位后窗口正在销毁、进程即将退出:此后到达的 sys:show
 	// 不得再触碰已销毁的窗口句柄。
 	closing atomic.Bool
+
+	// bootReady 标记「DOM 已就绪」:Wails 的 OnStartup 早于 WebView2 环境
+	// 创建,环境创建若因用户数据目录锁竞争失败(上一实例刚关闭数秒内重启
+	// 的典型场景),startup 里的一切都不能证明窗口可用。回执与 sys:show
+	// 响应以 bootReady 为前提,杜绝向代理谎报「窗口已浮现」。
+	bootReady atomic.Bool
+	// bootDone 供启动看门狗等待;DOM 就绪或进入关闭流程时关闭一次。
+	bootDone chan struct{}
+	bootOnce sync.Once
 }
 
 func newUIApp(client *ipc.Client) *UIApp {
-	return &UIApp{client: client}
+	return &UIApp{client: client, bootDone: make(chan struct{})}
 }
 
 // ============================ 生命周期 ============================
 
-// startup Wails 启动回调:接入事件桥。
+// startup Wails 启动回调:接入事件桥。注意此处早于 WebView2 环境创建,
+// 一切「窗口已可用」的信号都只能等 domReady。
 func (u *UIApp) startup(ctx context.Context) {
 	u.ctx = ctx
 	u.windowShown.Store(true)
@@ -46,6 +56,11 @@ func (u *UIApp) startup(ctx context.Context) {
 		case SysEventShow:
 			if u.closing.Load() {
 				// 窗口正在销毁:触碰已失效的窗口句柄无意义且危险
+				return
+			}
+			if !u.bootReady.Load() {
+				// WebView2 尚未就绪:无法唤窗也不回执,让代理的自愈链
+				// 继续按轮次驱动,而不是被谎报的回执提前收工。
 				return
 			}
 			u.windowShown.Store(true)
@@ -71,14 +86,22 @@ func (u *UIApp) startup(ctx context.Context) {
 	// 代理退出(含托盘退出/更新重启/崩溃)后,UI 进程没有存在意义,随即退出
 	u.client.OnDisconnect = u.quit
 
-	// 启动回执:告知代理「窗口已在路上」。代理侧「显示窗口」自愈链以
-	// 回执为收工条件,没有这份回执,兜底拉起会把正在正常启动的本进程
-	// 误判为无响应而继续拉起。异步:startup 回调里管道调用不能阻塞装配。
+	u.syncLocalLang()
+}
+
+// domReady Wails DOM 就绪回调:webview 存活且页面已加载,此刻窗口必然
+// 可用——在这里向代理回执才是诚实信号。此前回执挂在 startup 上,会在
+// WebView2 环境创建失败时谎报成功,自愈链提前收工,窗口永远出不来。
+func (u *UIApp) domReady(ctx context.Context) {
+	if u.closing.Load() {
+		return
+	}
+	u.bootReady.Store(true)
+	u.windowShown.Store(true)
+	u.bootOnce.Do(func() { close(u.bootDone) })
 	go func() {
 		_, _ = u.client.CallTimeout(2*time.Second, "ReportWindowShown")
 	}()
-
-	u.syncLocalLang()
 }
 
 // shutdown Wails 停机回调:断开管道。
@@ -92,6 +115,9 @@ func (u *UIApp) shutdown(ctx context.Context) {
 func (u *UIApp) beforeClose(ctx context.Context) bool {
 	u.closing.Store(true)
 	u.windowShown.Store(false)
+	// 解除启动看门狗:快速关窗时 DOM 可能尚未就绪,进程本身正在正常退出,
+	// 不能让看门狗再插一脚。
+	u.bootOnce.Do(func() { close(u.bootDone) })
 	// 立即断开管道:从关闭动作发生的一刻起,代理就该把本进程从在线
 	// UI 中剔除。否则在 WebView2 销毁等退出收尾期间(可达数秒),代理
 	// 仍把本进程计为在线,托盘「显示窗口」的 sys:show 广播会喂进

@@ -91,9 +91,10 @@ type Server struct {
 }
 
 type serverConn struct {
-	conn    net.Conn
-	writeMu sync.Mutex
-	pid     int
+	conn      net.Conn
+	writeMu   sync.Mutex
+	pid       int
+	connectAt time.Time // 接入时刻,供代理区分「正在启动」与「接入已久仍无回执」
 }
 
 // NewServer 创建并监听管道;返回 ErrAlreadyRunning 表示确有存活代理在监听。
@@ -189,7 +190,7 @@ func (s *Server) acceptLoop() {
 			}
 			continue
 		}
-		c := &serverConn{conn: conn}
+		c := &serverConn{conn: conn, connectAt: time.Now()}
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()
@@ -323,6 +324,21 @@ func (s *Server) ClientPIDs() []int {
 	out := make([]int, 0, len(s.clients))
 	for c := range s.clients {
 		if c.pid > 0 {
+			out = append(out, c.pid)
+		}
+	}
+	return out
+}
+
+// StaleClientPIDs 返回接入时长超过 minAge 的客户端进程 PID。
+// UI 进程的管道连接先于窗口创建:接入不久的客户端可能只是正在启动;
+// 接入已久却始终无回执的,是 WebView2 初始化卡死的僵尸,供代理清场。
+func (s *Server) StaleClientPIDs(minAge time.Duration) []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []int
+	for c := range s.clients {
+		if c.pid > 0 && time.Since(c.connectAt) >= minAge {
 			out = append(out, c.pid)
 		}
 	}

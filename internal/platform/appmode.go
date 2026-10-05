@@ -3,6 +3,7 @@ package platform
 import (
 	"errors"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -27,22 +28,32 @@ const (
 const errorAlreadyExists = syscall.Errno(183)
 
 // AcquireSingleInstance 获取命名互斥体(单实例标记)。
-// 已被占用时返回 acquired=false;调用方用完应调用 release。
-func AcquireSingleInstance(name string) (acquired bool, release func()) {
+// 已被占用时在 wait 时限内轮询等待持有者退出后重试,超时返回 acquired=false;
+// wait <= 0 表示一次尝试、不等待,立即返回结果。
+// UI 进程必须用等待语义:上一实例关闭后的收尾窗口期(WebView2 销毁可达
+// 数秒)内拉起的新实例,若被互斥体瞬间弹走,只能经 FocusWindow 空转退出,
+// 窗口永远出不来;等待旧实例退出后自然接位,拉起一次即成功。
+func AcquireSingleInstance(name string, wait time.Duration) (acquired bool, release func()) {
 	namePtr, err := windows.UTF16PtrFromString(name)
 	if err != nil {
 		return true, func() {} // 名称非法时按可获取处理,不阻塞启动
 	}
-	handle, _, callErr := procCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(namePtr)))
-	if handle == 0 {
-		// 真失败(极少):按可获取处理,不阻塞启动
-		return true, func() {}
-	}
-	if errors.Is(callErr, errorAlreadyExists) {
+	deadline := time.Now().Add(wait)
+	for {
+		handle, _, callErr := procCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(namePtr)))
+		if handle == 0 {
+			// 真失败(极少):按可获取处理,不阻塞启动
+			return true, func() {}
+		}
+		if !errors.Is(callErr, errorAlreadyExists) {
+			return true, func() { windows.CloseHandle(windows.Handle(handle)) }
+		}
 		windows.CloseHandle(windows.Handle(handle))
-		return false, func() {}
+		if wait <= 0 || !time.Now().Before(deadline) {
+			return false, func() {}
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	return true, func() { windows.CloseHandle(windows.Handle(handle)) }
 }
 
 // ShowErrorBox 弹一个原生错误框(UI 模式启动失败、无托盘可依赖时使用)。

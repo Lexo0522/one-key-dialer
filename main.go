@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -28,6 +29,12 @@ const (
 	uiInstanceMutex = `Local\PPoEDialerUI`
 	// agentWaitTimeout UI 启动时等待代理管道就绪的时长。
 	agentWaitTimeout = 8 * time.Second
+	// uiMutexWait 获取单实例互斥体的有界等待:上一实例关闭后的收尾
+	// 窗口期(WebView2 销毁)内拉起的新实例等旧实例退出后自然接位。
+	uiMutexWait = 4 * time.Second
+	// uiBootTimeout 启动看门狗:DOM 就绪的硬期限,超时视为 WebView2
+	// 初始化永久卡死,自尽把恢复权交回代理的自愈链。
+	uiBootTimeout = 20 * time.Second
 )
 
 // 默认尺寸按「侧栏 208px + 主内容区不挤压」反推：980 宽时首页四张统计
@@ -99,11 +106,32 @@ func runAgent(args []string) {
 // runUI UI 模式:确保代理运行 → 连接管道 → 打开 Wails 窗口。
 // 窗口关闭即进程退出,内存立刻归还;代理继续驻留托盘。
 func runUI() {
-	// UI 单实例:已有窗口在跑时,请代理唤出既有窗口,本进程让位
-	acquired, release := platform.AcquireSingleInstance(uiInstanceMutex)
+	// UI 进程没有控制台,go-webview2 经标准 log 输出的诊断信息(典型:
+	// 「WebView2 环境创建失败」——上一实例关闭后数秒内重启,其浏览器
+	// 进程尚未释放用户数据目录锁)默认丢弃不可见。重定向到数据目录
+	// ui_log.txt,「拉起失败/卡死」类问题才有追溯依据。
+	if f, err := os.OpenFile(filepath.Join(platform.DataDir(), "ui_log.txt"),
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+		defer f.Close()
+		log.SetOutput(f)
+	}
+
+	// UI 单实例:已有窗口在跑时,请代理唤出既有窗口,本进程让位。
+	// 互斥体被占时先区分两种情形:代理处有 UI 接入 → 健康 UI 在跑,
+	// 立即让位唤窗;无接入 → 持有者是关闭后仍在收尾/卡死的旧实例
+	// (管道已断,代理已把它剔除),有界等待其退出后自然接位,而不是
+	// 被弹走空转一次。
+	acquired, release := platform.AcquireSingleInstance(uiInstanceMutex, 0)
 	if !acquired {
-		focusExistingUI()
-		return
+		if uiVisibleViaProxy() {
+			focusExistingUI()
+			return
+		}
+		acquired, release = platform.AcquireSingleInstance(uiInstanceMutex, uiMutexWait)
+		if !acquired {
+			focusExistingUI()
+			return
+		}
 	}
 	defer release()
 
@@ -119,6 +147,20 @@ func runUI() {
 	}
 
 	ui := newUIApp(client)
+
+	// 启动看门狗:WebView2 环境创建与上一实例的浏览器进程回收竞争时可能
+	// 永久卡死——窗口出不来,本进程却占着单实例互斥体和管道连接,把代理
+	// 自愈链的后续拉起全部弹走。硬期限:DOM 一直未就绪则自尽,把恢复权
+	// 交回代理的下一次拉起。
+	go func() {
+		select {
+		case <-ui.bootDone:
+		case <-time.After(uiBootTimeout):
+			log.Printf("[UI] boot watchdog: dom ready not reached in %s, exiting", uiBootTimeout)
+			os.Exit(1)
+		}
+	}()
+
 	width, height := clampToWorkArea(windowWidth, windowHeight)
 
 	err = wails.Run(&options.App{
@@ -130,6 +172,7 @@ func runUI() {
 		AssetServer:      &assetserver.Options{Assets: assets},
 		BackgroundColour: &options.RGBA{R: 248, G: 249, B: 250, A: 1},
 		OnStartup:        ui.startup,
+		OnDomReady:       ui.domReady,
 		OnBeforeClose:    ui.beforeClose,
 		OnShutdown:       ui.shutdown,
 		Bind:             []interface{}{ui},
@@ -180,6 +223,24 @@ func focusExistingUI() {
 	}
 	_, _ = client.CallTimeout(2*time.Second, "FocusWindow")
 	client.Close()
+}
+
+// uiVisibleViaProxy 经代理查询是否有 UI 进程接入(有接入即有窗口)。
+// 用于区分互斥体的持有者是「健康 UI」还是「已断管道的垂死/卡死实例」。
+func uiVisibleViaProxy() bool {
+	if !ipc.Probe() {
+		return false
+	}
+	client, err := ipc.Dial(2 * time.Second)
+	if err != nil {
+		return false
+	}
+	defer client.Close()
+	raw, err := client.CallTimeout(2*time.Second, "IsWindowVisible")
+	if err != nil {
+		return false
+	}
+	return string(raw) == "true"
 }
 
 // readLowMemRender 窗口创建前直接读 settings.json,决定是否禁用 GPU 渲染。

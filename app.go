@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1041,14 +1042,19 @@ func (a *App) ipcSnapshot() *ipc.Server {
 
 // 「显示窗口」自愈参数。整体时序:前 showBroadcastRounds 轮对在线 UI 广播
 // sys:show(每轮等 showAckWait 确认回执),仍无回执说明连接是垂死 UI 的
-// 僵尸连接,之后每轮强制兜底拉起新 UI 进程(每轮等 showSpawnWait 给新 UI
-// 启动+握手+回执的时间),直到回执到达或 showMaxRounds 轮预算耗尽。
+// 僵尸连接,之后进入拉起轮(每轮等 showSpawnWait 给新 UI 等互斥体+启动
+// 的时间),直到回执到达或 showMaxRounds 轮预算耗尽。回执以 DOM 就绪为准,
+// UI 进程连接在先、窗口可用在后:拉起轮里接入未满 showBootGrace 的客户端
+// 视为正在启动,给宽限复查而不重复拉起;接入已满宽限仍无回执的视为
+// WebView2 初始化卡死,继续拉起,预算耗尽时清场终结并做最后一次兜底。
 const (
 	showBroadcastRounds = 3                       // 广播轮数,之后不再信任在线连接
 	showMaxRounds       = 6                       // 单次请求总轮次上限,防无限循环
 	showAckWait         = 800 * time.Millisecond  // 广播轮后的回执等待
-	showSpawnWait       = 2500 * time.Millisecond // 拉起轮后的回执等待(含进程启动)
+	showSpawnWait       = 4 * time.Second         // 拉起轮后的回执等待(等互斥体+启动+DOM)
 	showSpawnGap        = 2 * time.Second         // 两次拉起最小间隔,防拉起风暴/递归
+	showBootGrace       = 8 * time.Second         // 接入客户端的启动宽限,超宽限无回执视为卡死
+	showGraceWait       = 1500 * time.Millisecond // 启动宽限轮的复查间隔
 )
 
 // ShowWindow 显示主窗口（代理模式）:UI 进程在线时唤出既有窗口,并做
@@ -1104,17 +1110,32 @@ func (a *App) showStep() {
 			wait = showSpawnWait
 		}
 	} else if round < showMaxRounds {
-		a.spawnUI()
-		wait = showSpawnWait
+		srv := a.ipcSnapshot()
+		stale := 0
+		if srv != nil {
+			stale = len(srv.StaleClientPIDs(showBootGrace))
+		}
+		switch {
+		case srv == nil || srv.ClientCount() == 0 || stale > 0:
+			// 无客户端,或接入已久仍无回执(WebView2 卡死):拉起
+			a.spawnUI()
+			wait = showSpawnWait
+		default:
+			// 有客户端但接入未满启动宽限:连接先于窗口创建,它可能
+			// 正在启动,再给一次宽限复查,不重复拉起徒增进程抖动。
+			wait = showGraceWait
+		}
 	} else {
-		a.logSvc.Warning("show window: give up after retries, no ack from ui")
+		a.logSvc.Warning("show window: no ack after retries")
+		a.killWedgedUI()
+		a.spawnUI() // 清场后再兜底一次;间隔闸未过时跳过,由下次点击接管
 		return
 	}
 	a.exec.Schedule(wait, a.showVerify)
 }
 
-// showVerify 广播/拉起后的确认推进:回执未到则继续 showStep,直到回执
-// 到达或轮次预算耗尽。用户再次点击 ShowWindow 会重置轮次重新武装。
+// showVerify 广播/拉起/宽限后的确认推进:回执未到则继续 showStep,直到
+// 回执到达或轮次预算耗尽。用户再次点击 ShowWindow 会重置轮次重新武装。
 func (a *App) showVerify() {
 	a.showMu.Lock()
 	acked := !a.lastShowAck.Before(a.lastShowReq)
@@ -1125,9 +1146,24 @@ func (a *App) showVerify() {
 	a.showStep()
 }
 
+// killWedgedUI 终结接入超过启动宽限仍无回执的 UI 进程。这类进程的
+// WebView2 初始化已永久卡死(用户数据目录锁竞争),占着单实例互斥体,
+// 后续拉起全部被弹走,只能清场。PID 来自 hello 握手,KillOwnProcess
+// 内部核对进程映像路径,杜绝 PID 复用误杀。
+func (a *App) killWedgedUI() {
+	srv := a.ipcSnapshot()
+	if srv == nil {
+		return
+	}
+	for _, pid := range srv.StaleClientPIDs(showBootGrace) {
+		if platform.KillOwnProcess(pid) {
+			a.logSvc.Warning("killed wedged ui process " + strconv.Itoa(pid))
+		}
+	}
+}
+
 // ReportWindowShown UI 进程唤出窗口后的回执(经管道反射暴露,前端不感知)。
-// 新拉起的 UI 在 startup 即回执一次:「窗口已在路上」,自愈链据此停轮,
-// 不会对正常启动中的 UI 重复拉起。
+// 回执在 UI 侧以 DOM 就绪为前提发出,是「窗口可用」的诚实信号。
 func (a *App) ReportWindowShown() {
 	a.showMu.Lock()
 	a.lastShowAck = time.Now()

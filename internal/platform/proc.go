@@ -1,8 +1,19 @@
 package platform
 
 import (
+	"os"
 	"os/exec"
+	"strings"
 	"syscall"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+var (
+	procOpenProcess                = modkernel32.NewProc("OpenProcess")
+	procQueryFullProcessImageNameW = modkernel32.NewProc("QueryFullProcessImageNameW")
+	procTerminateProcess           = modkernel32.NewProc("TerminateProcess")
 )
 
 // hiddenProcAttr 返回隐藏控制台窗口的进程属性（CREATE_NO_WINDOW）。
@@ -36,4 +47,42 @@ func LaunchGUI(command []string, workDir string) error {
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Dir = workDir
 	return cmd.Start()
+}
+
+// killOwnProcess 终结一个属于本程序的可疑 UI 进程。
+// PID 来自 IPC hello 握手,但终结前必须核对进程映像路径与当前进程一致:
+// 从握手到终结之间 PID 可能已经退出并被系统复用,绝不能凭 PID 杀进程。
+// 不是本程序的映像、或无法打开/终结时返回 false。
+func KillOwnProcess(pid int) bool {
+	const (
+		processQueryLimitedInformation = 0x1000
+		processTerminate               = 0x0001
+	)
+	if pid <= 0 {
+		return false
+	}
+	h, _, err := procOpenProcess.Call(
+		processQueryLimitedInformation|processTerminate,
+		0, uintptr(pid))
+	if h == 0 {
+		return false
+	}
+	defer windows.CloseHandle(windows.Handle(h))
+
+	self, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	var buf [1024]uint16
+	n := uint32(len(buf))
+	r, _, _ := procQueryFullProcessImageNameW.Call(
+		h, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n)))
+	if r == 0 || n == 0 {
+		return false
+	}
+	if !strings.EqualFold(windows.UTF16ToString(buf[:n]), self) {
+		return false
+	}
+	ret, _, _ := procTerminateProcess.Call(h, 1)
+	return ret != 0
 }

@@ -179,7 +179,11 @@ function onLightweight() {
 // ------------------------------------------------------------ 后端设置 ----
 
 const themePref = ref(state.settings?.uiTheme || 'system')
-const autoStart = ref(!!(state.autoStartEnabled || state.settings?.autoStart))
+// 开机自启以 state.settings.autoStart 为唯一事实源:每次 app:settings
+// 事件回推都会刷新它。不能再 OR 上 state.autoStartEnabled——那是
+// Bootstrap 时读一次的陈旧快照,不会随后续事件更新,会把用户刚关掉的
+// 开关又掰回开启态(表现为要点两下才生效)。
+const autoStart = ref(!!state.settings?.autoStart)
 const startMinimized = ref(!!state.settings?.startMinimized)
 const autoReconnect = ref(!!state.settings?.autoReconnect)
 const intervalSeconds = ref(state.settings?.intervalSeconds ?? 30)
@@ -198,12 +202,15 @@ const proxy = reactive({
   bypass: state.settings?.proxyBypass || ''
 })
 
+// 全部以 state.settings 为唯一事实源(Bootstrap 与每次 app:settings
+// 事件都刷新它),不再读 state.autoStartEnabled:后者是启动时的快照,
+// 不随后续事件更新,曾导致自启开关被陈旧值覆盖、需要点两下才生效。
 watch(
   () => state.settings,
   (s) => {
     if (!s) return
     themePref.value = s.uiTheme || 'system'
-    autoStart.value = state.autoStartEnabled || s.autoStart
+    autoStart.value = s.autoStart
     startMinimized.value = s.startMinimized
     autoReconnect.value = s.autoReconnect
     intervalSeconds.value = s.intervalSeconds
@@ -242,9 +249,11 @@ async function onAutoStart() {
       showToast(t('settings.autostart.fail'), 'error')
       return
     }
-    // 先同步本地状态，后端随后会通过 app:settings 事件回推最终设置。
-    state.autoStartEnabled = requested
+    // 后端已在 SetAutoStart 内把最终值写回 settings 并广播 app:settings,
+    // watch 会据此同步开关。这里只补一次本地乐观更新,防止事件乱序时
+    // 开关短暂停在旧值;不可反向覆盖(seen 控制见 watch 上方注释)。
     if (state.settings) state.settings.autoStart = requested
+    autoStart.value = requested
     showToast(
       t(requested ? 'settings.autostart.enabled' : 'settings.autostart.disabled'),
       'success'
