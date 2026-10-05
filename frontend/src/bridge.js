@@ -307,7 +307,8 @@ const mockApi = {
       'https://www.baidu.com': 12,
       'https://github.com': 189,
       'https://www.bing.com': 45,
-      'https://www.douyin.com': 67
+      'https://www.douyin.com': 67,
+      'https://www.google.com': 88
     }
     await new Promise((r) => setTimeout(r, 600 + Math.random() * 500))
     return (Array.isArray(urls) ? urls : []).map((url) => ({

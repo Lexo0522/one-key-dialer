@@ -197,6 +197,7 @@ import iconBaidu from '../assets/sites/baidu.svg'
 import iconGithub from '../assets/sites/github.svg'
 import iconBing from '../assets/sites/bing.svg'
 import iconDouYin from '../assets/sites/douyin.svg'
+import iconGoogle from '../assets/sites/google.svg'
 
 // ------------------------------------------------------------ 宽带账号与拨号 ----
 
@@ -763,14 +764,16 @@ onBeforeUnmount(() => {
 
 const MAX_SITES = 12
 
-// 内置默认测试点（icon 为本地打包的白色品牌 SVG，bg 为品牌底色）；
-// 仅作为未配置时的展示种子与图标回退，任何编辑/删除/新增都会写入设置数据。
+// 内置默认测试点（icon 为本地打包的品牌 SVG）；仅作为未配置时的展示种子与
+// 图标回退，任何编辑/删除/新增都会写入设置数据。
+// 图标自带配色（彩色 logo），统一白底色块衬图，故这里不再需要 bg 字段。
 const BUILTIN_SITES = [
-  { name: 'Bilibili', url: 'https://www.bilibili.com', bg: '#FB7299', icon: iconBilibili },
-  { name: 'Baidu', url: 'https://www.baidu.com', bg: '#2932E1', icon: iconBaidu },
-  { name: 'GitHub', url: 'https://github.com', bg: '#24292F', icon: iconGithub },
-  { name: 'Bing', url: 'https://www.bing.com', bg: '#008373', icon: iconBing },
-  { name: 'DouYin', url: 'https://www.douyin.com', bg: '#161823', icon: iconDouYin }
+  { name: 'Bilibili', url: 'https://www.bilibili.com', icon: iconBilibili },
+  { name: 'Baidu', url: 'https://www.baidu.com', icon: iconBaidu },
+  { name: 'GitHub', url: 'https://github.com', icon: iconGithub },
+  { name: 'Bing', url: 'https://www.bing.com', icon: iconBing },
+  { name: 'DouYin', url: 'https://www.douyin.com', icon: iconDouYin },
+  { name: 'Google', url: 'https://www.google.com', icon: iconGoogle }
 ]
 
 const latBusy = ref(false)
@@ -805,9 +808,8 @@ function resolveIcon(s) {
 }
 
 function siteColor(s) {
-  const b = BUILTIN_SITES.find((x) => x.url === s.url)
-  if (b) return b.bg
-  if (s.icon) return '#fff' // 自定义图标：白底色块衬图片
+  // 图标自带配色的站点（内置 + 自定义 URL 图标）：白底色块衬图
+  if (resolveIcon(s)) return '#fff'
   // 无图标自建点：按名字/URL 哈希取色，保证同一点颜色稳定
   let h = 0
   for (const ch of siteName(s) + s.url) h = (h * 31 + ch.charCodeAt(0)) >>> 0
@@ -942,15 +944,12 @@ const modalIconPreview = computed(() => {
 
 const modalMark = computed(() => (modal.draft.name || hostOf(modal.draft.url) || '?').charAt(0).toUpperCase())
 
-// 预览框底色：内置打包图标（白色 SVG）配品牌色，自定义图片配白底
+// 预览框底色：图标自带配色（彩色 logo）统一白底衬图
 const modalPreviewStyle = computed(() => {
   const d = modal.draft
-  if (!d.icon) {
-    const b = BUILTIN_SITES.find((x) => x.url === d.url)
-    if (b) return { background: b.bg }
-    return {}
-  }
-  return { background: '#fff' }
+  if (d.icon) return { background: '#fff' }
+  const b = BUILTIN_SITES.find((x) => x.url === d.url)
+  return b ? { background: '#fff' } : {}
 })
 
 function saveModal() {
