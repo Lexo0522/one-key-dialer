@@ -15,12 +15,12 @@ const MinIntervalSeconds = 5
 // Settings 是不可变设置快照的 Go 版载体；JSON 字段名与旧版完全一致，
 // 以保证已有 settings.json 可直接读取。
 type Settings struct {
-	IntervalSeconds        int    `json:"intervalSeconds"`
-	AutoReconnect          bool   `json:"autoReconnect"`
-	AutoStart              bool   `json:"autoStart"`
-	StartMinimized         bool   `json:"startMinimized"`
-	DisconnectOnNoInternet bool   `json:"disconnectOnNoInternet"`
-	UpdateCheckEnabled     bool   `json:"updateCheckEnabled"`
+	IntervalSeconds        int  `json:"intervalSeconds"`
+	AutoReconnect          bool `json:"autoReconnect"`
+	AutoStart              bool `json:"autoStart"`
+	StartMinimized         bool `json:"startMinimized"`
+	DisconnectOnNoInternet bool `json:"disconnectOnNoInternet"`
+	UpdateCheckEnabled     bool `json:"updateCheckEnabled"`
 	// 下载并校验通过后直接进入安装，不再要求用户再点一次「立即安装」。
 	// 旧版 settings.json 无此字段，零值即"关闭"，向后兼容。
 	AutoInstallUpdate bool   `json:"autoInstallUpdate"`

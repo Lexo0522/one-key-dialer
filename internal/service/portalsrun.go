@@ -114,12 +114,12 @@ func srunXEncode(content, key string) []byte {
 		e := (d >> 2) & 3
 		for p := 0; p < n; p++ {
 			y := pwd[p+1]
-			m := (z>>5 ^ y<<2) + ((y>>3 ^ z<<4) ^ (d^y)) + (pwdk[uint32(p&3)^e] ^ z)
+			m := (z>>5 ^ y<<2) + ((y>>3 ^ z<<4) ^ (d ^ y)) + (pwdk[uint32(p&3)^e] ^ z)
 			pwd[p] += m
 			z = pwd[p]
 		}
 		y := pwd[0]
-		m := (z>>5 ^ y<<2) + ((y>>3 ^ z<<4) ^ (d^y)) + (pwdk[uint32(n&3)^e] ^ z)
+		m := (z>>5 ^ y<<2) + ((y>>3 ^ z<<4) ^ (d ^ y)) + (pwdk[uint32(n&3)^e] ^ z)
 		pwd[n] += m
 		z = pwd[n]
 	}
