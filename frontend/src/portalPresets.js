@@ -2,10 +2,19 @@
 // (同一厂商不同学校的部署差异大,模板只是起点)。
 // 填充值支持后端模板占位符:{portal} {portalbase} {query} {queryenc}
 // {userip} {acid} {username} {password}(及其 :enc 转义变体)。
-// generic = 通用,不预填,保留手动模板。
+// generic = 通用,切换时清空回初始状态(POST + 空),供手动抓包填写。
 
 export const PORTAL_PRESETS = [
-  { key: 'generic', fill: null },
+  {
+    key: 'generic',
+    fill: {
+      loginUrl: '',
+      method: 'POST',
+      body: '',
+      headers: '',
+      successHint: ''
+    }
+  },
   {
     // 深澜(Srun):两步 challenge 协议由后端 SRUN 模式实现,
     // 登录地址填门户根地址即可,请求体不参与协议。

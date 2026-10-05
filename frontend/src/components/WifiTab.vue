@@ -297,7 +297,7 @@ const portal = reactive({
 const testing = ref(false)
 const testResult = ref(null)
 
-/** 切换预设:按模板预填五个配置字段(通用档不预填),字段仍可手动修改。 */
+/** 切换预设:按模板覆盖五个配置字段(通用档 = 清空回初始状态),字段仍可手动修改。 */
 function applyPreset() {
   const p = getPreset(portal.preset)
   if (p.fill) {
