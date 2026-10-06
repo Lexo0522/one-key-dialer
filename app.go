@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,126 +42,6 @@ const (
 	UpdateStagePrepare  = "prepare"
 	UpdateStageInstall  = "install"
 )
-
-// BroadbandCredentialDTO 宽带拨号凭据视图（明文密码不出后端）。
-type BroadbandCredentialDTO struct {
-	Username    string `json:"username"`
-	HasPassword bool   `json:"hasPassword"`
-}
-
-// AppState 前端首帧需要的全部状态。
-type AppState struct {
-	Version          string                 `json:"version"`
-	DisplayVersion   string                 `json:"displayVersion"`
-	Settings         model.Settings         `json:"settings"`
-	Broadband        BroadbandCredentialDTO `json:"broadband"`
-	Online           bool                   `json:"online"`
-	SysOnline        bool                   `json:"sysOnline"`
-	Logs             []service.LogLine      `json:"logs"`
-	AutoStartEnabled bool                   `json:"autoStartEnabled"`
-	Theme            string                 `json:"theme"`
-	Lang             string                 `json:"lang"`
-	DataDir          string                 `json:"dataDir"`
-	UpdatesDir       string                 `json:"updatesDir"`
-}
-
-// StatusPayload 连接状态事件负载。
-// SysOnline 表示系统已通过网口直连联网（非本应用拨号），流量监控按
-// Online ∨ SysOnline 的"有效在线"口径放行。
-type StatusPayload struct {
-	Online    bool   `json:"online"`
-	SysOnline bool   `json:"sysOnline,omitempty"`
-	Phase     string `json:"phase"`
-}
-
-// SpeedPayload 速率事件负载。
-type SpeedPayload struct {
-	Down int64 `json:"down"`
-	Up   int64 `json:"up"`
-}
-
-// LangPayload 界面语言状态：生效语言 / 系统语言 / 是否跟随系统。
-type LangPayload struct {
-	Lang   string `json:"lang"`
-	System string `json:"system"`
-	Auto   bool   `json:"auto"`
-}
-
-// WifiNetworkDTO 前端 WiFi 扫描行。
-type WifiNetworkDTO struct {
-	Ssid          string `json:"ssid"`
-	SignalQuality int    `json:"signalQuality"` // 0-100
-	Secured       bool   `json:"secured"`
-	Connected     bool   `json:"connected"`
-	HasProfile    bool   `json:"hasProfile"`
-	Auth          string `json:"auth"`
-}
-
-// WifiStatusDTO 前端 WiFi 状态（含可用性与自动连接配置回显）。
-// Phase: idle/connecting/connected/disconnecting。
-type WifiStatusDTO struct {
-	Available     bool   `json:"available"`
-	Connected     bool   `json:"connected"`
-	Ssid          string `json:"ssid"`
-	SignalQuality int    `json:"signalQuality"`
-	Phase         string `json:"phase"`
-	AutoConnect   bool   `json:"autoConnect"`
-	PreferredSsid string `json:"preferredSsid"`
-}
-
-// PortalCredentialDTO 门户认证凭据视图（明文密码不出后端）。
-type PortalCredentialDTO struct {
-	Username    string `json:"username"`
-	HasPassword bool   `json:"hasPassword"`
-}
-
-// PortalTestResult 手动测试门户认证的结果（Detail 为多行分步明细）。
-type PortalTestResult struct {
-	Ok     bool   `json:"ok"`
-	Detail string `json:"detail"`
-}
-
-// SiteLatencyDTO 网站测速单站点结果；LatencyMs 为 -1 表示失败或超时。
-// 站点列表由前端配置（settings.speedSites），按 URL 对应回结果。
-type SiteLatencyDTO struct {
-	Url       string `json:"url"`
-	LatencyMs int64  `json:"latencyMs"`
-}
-
-// IPInfoDTO 公网出口 IP 与归属信息（直连查询，不含代理出口）。
-type IPInfoDTO struct {
-	Ip         string `json:"ip"`
-	Country    string `json:"country"`
-	RegionName string `json:"regionName"`
-	City       string `json:"city"`
-	Isp        string `json:"isp"`
-	As         string `json:"as"`
-	Timezone   string `json:"timezone"`
-	LocalIp    string `json:"localIp"`
-}
-
-// UpdatePayload 更新流程事件负载。
-// Kind: checking | result | status | progress | canceled | error | done | installing。
-// Stage: UpdateStage* 之一，用于区分同一条进度通道上的不同阶段。
-// Interactive 标记本次检查由用户主动发起（托盘菜单 / 设置页按钮）：前端据此
-// 决定「无新版」结果是否弹出提示——静默检查只需要它复位「正在检查更新…」。
-type UpdatePayload struct {
-	Kind            string `json:"kind"`
-	Stage           string `json:"stage,omitempty"`
-	Message         string `json:"message"`
-	Title           string `json:"title"`
-	Body            string `json:"body"`
-	Tray            bool   `json:"tray"`
-	Interactive     bool   `json:"interactive,omitempty"`
-	Downloaded      int64  `json:"downloaded"`
-	Total           int64  `json:"total"`
-	UpdateAvailable bool   `json:"updateAvailable"`
-	CanInstall      bool   `json:"canInstall"`
-	AssetName       string `json:"assetName"`
-	AssetSize       int64  `json:"assetSize"`
-	ReleaseURL      string `json:"releaseUrl"`
-	Path            string `json:"path"`
-}
 
 // App 是 Wails 绑定门面：持有全部服务并把状态变化推送到前端。
 type App struct {
@@ -632,11 +511,18 @@ func (a *App) SaveBroadband(username, password string) bool {
 	if username == a.bbCred.Username && password == "" && a.bbCred.HasPassword() {
 		cred.SetPassword(a.bbCred.Password())
 	}
+	// 替换前清零旧凭据的密码字节：直接覆盖指针会让旧密码留在堆上直到 GC。
+	// SetPassword 复制的是新密码，与旧对象的字节数组无关，清零旧对象是安全的。
+	a.bbCred.ClearPassword()
 	a.bbCred = cred
 	a.bbCredMu.Unlock()
 	a.exec.Submit(func() {
 		if err := a.broadbandStore.Save(cred); err != nil {
-			a.logSvc.Error(i18n.Tf("broadband.saveFailed", err.Error()))
+			msg := i18n.Tf("broadband.saveFailed", err.Error())
+			a.logSvc.Error(msg)
+			// 落盘失败必须让用户看见：之前只记日志，前端无感知，
+			// 用户会误以为已保存成功，下次启动凭据丢失还找不到原因。
+			a.notify(i18n.T("broadband.saveFailedTitle"), msg, service.ToneError)
 		} else {
 			a.logSvc.Info(i18n.T("broadband.saved"))
 		}
@@ -657,15 +543,6 @@ func (a *App) Dial() bool {
 
 // Disconnect 用户断开。返回 false 表示未受理（忙）。
 func (a *App) Disconnect() bool { return a.orch.DisconnectUser() }
-
-// DeviceOption 可选择的 PPPoE 设备。
-type DeviceOption struct {
-	Port     string `json:"port"`
-	Device   string `json:"device"`
-	Existing bool   `json:"existing"`
-	Default  bool   `json:"default"`
-	Current  bool   `json:"current"`
-}
 
 // DiagListDevices 列出可选 PPPoE 设备，并标出当前生效项（current），
 // 供设置页下拉框回显固定值。
@@ -776,7 +653,11 @@ func (a *App) SavePortalCredential(username, password string) bool {
 	a.portalCredMu.Unlock()
 	a.exec.Submit(func() {
 		if err := a.portalStore.Save(cred); err != nil {
-			a.logSvc.Error(i18n.Tf("portal.credSaveFailed", err.Error()))
+			msg := i18n.Tf("portal.credSaveFailed", err.Error())
+			a.logSvc.Error(msg)
+			// 落盘失败必须让用户看见：之前只记日志，前端无感知，
+			// 用户会误以为已保存成功。
+			a.notify(i18n.T("portal.credSaveFailedTitle"), msg, service.ToneError)
 		} else {
 			a.logSvc.Info(i18n.T("portal.credSaved"))
 		}
@@ -841,240 +722,6 @@ func (a *App) GetIPInfo() IPInfoDTO {
 	}
 }
 
-// ============================ 在线更新 ============================
-
-// CheckUpdate 检查更新（结果通过 app:update 事件返回）。
-func (a *App) CheckUpdate(interactive bool) {
-	a.exec.Submit(func() { a.doCheckUpdate(interactive) })
-}
-
-func (a *App) doCheckUpdate(interactive bool) {
-	if !a.updateMu.TryLock() {
-		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStageCheck, Message: i18n.T("update.busy")})
-		return
-	}
-	defer a.updateMu.Unlock()
-	a.emit(EvtUpdate, UpdatePayload{Kind: "checking", Stage: UpdateStageCheck, Message: i18n.T("update.checking")})
-
-	result := a.updater.Check(model.Version())
-	a.lastCheck = &result
-
-	writable := platform.IsDirWritable(platform.InstallDir())
-	canInstall := update.HasInstallableAsset(&result, writable)
-	assetName := ""
-	var assetSize int64
-	if result.Release != nil {
-		if p := result.Release.PreferredWindowsAsset(writable); p != nil {
-			assetName = p.Name
-			assetSize = p.SizeBytes
-		}
-	}
-	// 检查态由 checking/result 这一对事件收敛，两条都得发。无新版时这个
-	// result 对托盘没有意义，但对界面是复位信号，不能只对有新版才发。
-	payload := UpdatePayload{
-		Kind:            "result",
-		Stage:           UpdateStageCheck,
-		Message:         result.Message,
-		Body:            result.Notes,
-		UpdateAvailable: result.UpdateAvailable,
-		CanInstall:      canInstall,
-		AssetName:       assetName,
-		AssetSize:       assetSize,
-		ReleaseURL:      result.ReleaseURL,
-		Interactive:     interactive,
-	}
-	// 标题本地化为「发现新版本」：不给的话对话框会落到通用的「更新」二字上。
-	// 发布者写的说明走 result.Notes（已放入 Body 字段），由对话框正文区展示。
-	if result.UpdateAvailable {
-		payload.Title = i18n.T("update.newVersion")
-	}
-	if !result.SourceOK {
-		a.logSvc.Warning(result.Message)
-	} else if result.UpdateAvailable {
-		a.logSvc.Warning(strings.ReplaceAll(result.Message, "\n", " "))
-	} else {
-		a.logSvc.Success(result.Message)
-	}
-	// 静默检查同样要把 result 推给前端：界面的「正在检查更新…」完全由
-	// checking → result 这对事件收敛，缺了后半截按钮就永远停在转圈态。
-	// 无新版时该结果没有 UI 价值，frontend 对 updateAvailable=false 的
-	// 非交互结果只复位状态、不弹提示（见 store.js applyUpdatePayload）。
-	if !interactive {
-		payload.Tray = !a.windowVisible()
-	}
-	a.emit(EvtUpdate, payload)
-}
-
-// DownloadUpdate 下载并校验更新包（进度通过 app:update 事件推送）。
-func (a *App) DownloadUpdate() {
-	a.updateMu.Lock()
-	if a.updateBusy {
-		a.updateMu.Unlock()
-		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStageDownload, Message: i18n.T("update.downloadBusy")})
-		return
-	}
-	// 检查结果缺失时不能解引用：宁可拒绝下载也不能让 goroutine panic。
-	result := a.lastCheck
-	if result == nil || !result.UpdateAvailable || result.Release == nil {
-		a.updateMu.Unlock()
-		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStageDownload, Message: i18n.T("update.noPackage")})
-		return
-	}
-	a.updateBusy = true
-	cancel := update.NewCancel()
-	a.cancelDl = cancel
-	// updateBusy 的复位统一交给闭包退出时的 defer：下载链路里的每个 return
-	// 都会走到这里，不会再有哪条早退分支把它永久留在 true（那会让前端
-	// 锁死在 busy、后续下载与安装全被拒）。
-	defer a.clearUpdateBusy()
-
-	progress := updateProgress{a: a, stage: UpdateStageDownload}
-	a.exec.SubmitLong(func() {
-		pkg, err := a.updater.DownloadWithFailover(*result, progress, cancel)
-		if err != nil {
-			// 用户主动取消不是失败，不能套用「下载失败」的错误文案与红色语气
-			if errors.Is(err, update.ErrCancelled) {
-				a.logSvc.Info(i18n.T("update.downloadCanceled"))
-				a.emit(EvtUpdate, UpdatePayload{Kind: "canceled", Stage: UpdateStageDownload,
-					Message: i18n.T("update.downloadCanceled")})
-				return
-			}
-			a.logSvc.Error(i18n.Tf("update.downloadFailed", err.Error()))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStageDownload,
-				Message: i18n.Tf("update.downloadErrDlg", err.Error())})
-			return
-		}
-		a.updateMu.Lock()
-		a.pendingPkg = pkg
-		a.updateMu.Unlock()
-		a.logSvc.Success(i18n.Tf("update.verified", pkg.File))
-		a.emit(EvtUpdate, UpdatePayload{Kind: "done", Stage: UpdateStageDownload, Path: pkg.File})
-		// 自动安装：下载校验通过后直接接着装，省掉用户再点一次「立即安装」。
-		// 关掉时保留原行为——对话框停在「立即安装 / 仅保留」两步确认。
-		if a.settings.Current().AutoInstallUpdate {
-			a.autoInstallPending()
-		}
-	})
-}
-
-// autoInstallPending 把「下载完成」直接接上「安装」，供自动安装链路复用。
-// 与 InstallUpdate 的区别：不重复校验 pendingPkg（刚下载完必有），
-// 也不受 updateBusy 互斥影响——下载态刚释放，此处必然可进入。
-func (a *App) autoInstallPending() {
-	a.updateMu.Lock()
-	if a.updateBusy {
-		a.updateMu.Unlock()
-		return
-	}
-	pkg := a.pendingPkg
-	if pkg == nil {
-		a.updateMu.Unlock()
-		return
-	}
-	a.updateBusy = true
-	defer a.clearUpdateBusy()
-	a.updateMu.Unlock()
-
-	progress := updateProgress{a: a, stage: UpdateStagePrepare}
-	a.exec.SubmitLong(func() {
-		if platform.IsEphemeralExePath() {
-			a.logSvc.Error(i18n.T("update.ephemeralInstall"))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.T("update.ephemeralInstall")})
-			return
-		}
-		waitPIDs := a.uiWaitPIDs()
-		prepared, err := a.updater.Prepare(pkg, progress, waitPIDs)
-		if err != nil {
-			a.logSvc.Error(i18n.Tf("update.prepareFailed", err.Error()))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.Tf("update.prepareFailed", err.Error())})
-			return
-		}
-		a.logSvc.Info(i18n.Tf("update.applying", prepared.ApplyScript))
-		a.flushBeforeUpdate()
-		if !a.updater.LaunchInstall(prepared) {
-			a.logSvc.Error(i18n.T("update.launchFailed"))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.T("update.launchFailedDlg")})
-			return
-		}
-		a.emit(EvtUpdate, UpdatePayload{Kind: "installing", Stage: UpdateStageInstall})
-		a.ExitProgram()
-	})
-}
-
-// CancelUpdateDownload 取消正在进行的下载。
-func (a *App) CancelUpdateDownload() {
-	a.updateMu.Lock()
-	c := a.cancelDl
-	a.updateMu.Unlock()
-	if c != nil {
-		c.Cancel()
-	}
-}
-
-// InstallUpdate 准备并启动安装；成功启动后退出程序。
-func (a *App) InstallUpdate() {
-	a.updateMu.Lock()
-	// 准备/安装阶段同样要占位：否则连点两次会生成两个 staged 目录、
-	// 覆盖同一个 apply_update.bat 并并行启动两个安装脚本。
-	if a.updateBusy {
-		a.updateMu.Unlock()
-		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare, Message: i18n.T("update.installBusy")})
-		return
-	}
-	pkg := a.pendingPkg
-	if pkg == nil {
-		a.updateMu.Unlock()
-		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare, Message: i18n.T("update.noPackageFile")})
-		return
-	}
-	a.updateBusy = true
-	defer a.clearUpdateBusy()
-	a.updateMu.Unlock()
-
-	progress := updateProgress{a: a, stage: UpdateStagePrepare}
-	a.exec.SubmitLong(func() {
-		// 本体在临时目录/构建产物里时不安装:更新脚本的 DST 来自 InstallDir,
-		// 此时会把新版写进 %TEMP% 并从那里启动,安装位置就此被搬走。宁可拒绝,
-		// 也不制造第二个随时会被磁盘清理掉副本。
-		if platform.IsEphemeralExePath() {
-			a.logSvc.Error(i18n.T("update.ephemeralInstall"))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.T("update.ephemeralInstall")})
-			return
-		}
-		// 更新脚本需等全部相关进程退出后再覆盖 exe:代理自身 + 接入中的 UI 进程
-		waitPIDs := a.uiWaitPIDs()
-		prepared, err := a.updater.Prepare(pkg, progress, waitPIDs)
-		if err != nil {
-			a.logSvc.Error(i18n.Tf("update.prepareFailed", err.Error()))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.Tf("update.prepareFailed", err.Error())})
-			return
-		}
-		a.logSvc.Info(i18n.Tf("update.applying", prepared.ApplyScript))
-		a.flushBeforeUpdate()
-		if !a.updater.LaunchInstall(prepared) {
-			a.logSvc.Error(i18n.T("update.launchFailed"))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.T("update.launchFailedDlg")})
-			return
-		}
-		a.emit(EvtUpdate, UpdatePayload{Kind: "installing", Stage: UpdateStageInstall})
-		a.ExitProgram()
-	})
-}
-
-// OpenReleasePage 在默认浏览器中打开发布页。
-func (a *App) OpenReleasePage(url string) {
-	if url == "" {
-		url = model.GitHubURL + "/releases/latest"
-	}
-	platform.OpenInBrowser(url)
-}
-
 // ============================ 窗口 / 退出 ============================
 
 // setIpcSrv 记录管道服务端(startup 一次性写入)。
@@ -1099,200 +746,4 @@ func (a *App) ipcSnapshot() *ipc.Server {
 	srv := a.ipcSrv
 	a.ipcMu.Unlock()
 	return srv
-}
-
-// 「显示窗口」自愈参数。整体时序:前 showBroadcastRounds 轮对在线 UI 广播
-// sys:show(每轮等 showAckWait 确认回执),仍无回执说明连接是垂死 UI 的
-// 僵尸连接,之后进入拉起轮(每轮等 showSpawnWait 给新 UI 等互斥体+启动
-// 的时间),直到回执到达或 showMaxRounds 轮预算耗尽。回执以 DOM 就绪为准,
-// UI 进程连接在先、窗口可用在后:拉起轮里接入未满 showBootGrace 的客户端
-// 视为正在启动,给宽限复查而不重复拉起;接入已满宽限仍无回执的视为
-// WebView2 初始化卡死,继续拉起,预算耗尽时清场终结并做最后一次兜底。
-const (
-	showBroadcastRounds = 3                       // 广播轮数,之后不再信任在线连接
-	showMaxRounds       = 6                       // 单次请求总轮次上限,防无限循环
-	showAckWait         = 800 * time.Millisecond  // 广播轮后的回执等待
-	showSpawnWait       = 4 * time.Second         // 拉起轮后的回执等待(等互斥体+启动+DOM)
-	showSpawnGap        = 2 * time.Second         // 两次拉起最小间隔,防拉起风暴/递归
-	showBootGrace       = 8 * time.Second         // 接入客户端的启动宽限,超宽限无回执视为卡死
-	showGraceWait       = 1500 * time.Millisecond // 启动宽限轮的复查间隔
-)
-
-// ShowWindow 显示主窗口（代理模式）:UI 进程在线时唤出既有窗口,并做
-// 有界回执确认;无回执说明连接陈旧或窗口已死,兜底拉起新 UI 进程。
-// 单实例互斥体保证兜底拉起只会 focus 既有窗口,不会开出第二个,
-// 因此任何情况下「点一次显示窗口」必定有窗口浮现(或有界放弃后可重试)。
-func (a *App) ShowWindow() {
-	a.showMu.Lock()
-	a.lastShowReq = time.Now()
-	a.showRound = 0
-	a.showMu.Unlock()
-	a.showStep()
-}
-
-// FocusWindow 被单实例互斥体弹走的 UI 进程经 IPC 的落点:仅向在线 UI
-// 广播唤窗,不拉起、不重置自愈轮次。重置轮次会让每个被弹走的进程刷新
-// 重试预算,僵尸 UI 占住互斥体时演变成无限拉起风暴;拉起由发起方
-// ShowWindow 的自愈链按预算驱动,这里只负责把已经活着的窗口唤到前台。
-func (a *App) FocusWindow() {
-	if srv := a.ipcSnapshot(); srv != nil && srv.ClientCount() > 0 {
-		srv.Broadcast(SysEventShow, nil)
-	}
-}
-
-// showStep 自愈链的一次推进:回执已到则收工;预算内先广播后拉起。
-// 由 ShowWindow 同步发起首轮,其后由 showVerify 经 exec.Schedule 驱动。
-func (a *App) showStep() {
-	a.showMu.Lock()
-	req := a.lastShowReq
-	if !a.lastShowAck.Before(req) {
-		// 回执时刻不早于请求时刻:窗口已浮现,收工
-		a.showMu.Unlock()
-		return
-	}
-	round := a.showRound
-	a.showRound++
-	a.showMu.Unlock()
-
-	var wait time.Duration
-	if round < showBroadcastRounds {
-		if srv := a.ipcSnapshot(); srv != nil && srv.ClientCount() > 0 {
-			srv.Broadcast(SysEventShow, nil)
-			// 广播的 writeTo 对断链同步报错并剔除连接:若剔除后归零,
-			// 说明在线列表全是死连接,不必再等回执,下轮直接拉起。
-			if srv.ClientCount() == 0 {
-				a.spawnUI()
-				wait = showSpawnWait
-			} else {
-				wait = showAckWait
-			}
-		} else {
-			a.spawnUI()
-			wait = showSpawnWait
-		}
-	} else if round < showMaxRounds {
-		srv := a.ipcSnapshot()
-		stale := 0
-		if srv != nil {
-			stale = len(srv.StaleClientPIDs(showBootGrace))
-		}
-		switch {
-		case srv == nil || srv.ClientCount() == 0 || stale > 0:
-			// 无客户端,或接入已久仍无回执(WebView2 卡死):拉起
-			a.spawnUI()
-			wait = showSpawnWait
-		default:
-			// 有客户端但接入未满启动宽限:连接先于窗口创建,它可能
-			// 正在启动,再给一次宽限复查,不重复拉起徒增进程抖动。
-			wait = showGraceWait
-		}
-	} else {
-		a.logSvc.Warning("show window: no ack after retries")
-		a.killWedgedUI()
-		a.spawnUI() // 清场后再兜底一次;间隔闸未过时跳过,由下次点击接管
-		return
-	}
-	a.exec.Schedule(wait, a.showVerify)
-}
-
-// showVerify 广播/拉起/宽限后的确认推进:回执未到则继续 showStep,直到
-// 回执到达或轮次预算耗尽。用户再次点击 ShowWindow 会重置轮次重新武装。
-func (a *App) showVerify() {
-	a.showMu.Lock()
-	acked := !a.lastShowAck.Before(a.lastShowReq)
-	a.showMu.Unlock()
-	if acked {
-		return
-	}
-	a.showStep()
-}
-
-// killWedgedUI 终结接入超过启动宽限仍无回执的 UI 进程。这类进程的
-// WebView2 初始化已永久卡死(用户数据目录锁竞争),占着单实例互斥体,
-// 后续拉起全部被弹走,只能清场。PID 来自 hello 握手,KillOwnProcess
-// 内部核对进程映像路径,杜绝 PID 复用误杀。
-func (a *App) killWedgedUI() {
-	srv := a.ipcSnapshot()
-	if srv == nil {
-		return
-	}
-	for _, pid := range srv.StaleClientPIDs(showBootGrace) {
-		if platform.KillOwnProcess(pid) {
-			a.logSvc.Warning("killed wedged ui process " + strconv.Itoa(pid))
-		}
-	}
-}
-
-// ReportWindowShown UI 进程唤出窗口后的回执(经管道反射暴露,前端不感知)。
-// 回执在 UI 侧以 DOM 就绪为前提发出,是「窗口可用」的诚实信号。
-func (a *App) ReportWindowShown() {
-	a.showMu.Lock()
-	a.lastShowAck = time.Now()
-	a.showMu.Unlock()
-}
-
-// HideWindow 代理模式无窗口可隐藏:窗口归属 UI 进程（空操作,仅为方法面完整）。
-func (a *App) HideWindow() {}
-
-// IsWindowVisible UI 进程是否在线（有窗口即视为可见）。
-func (a *App) IsWindowVisible() bool { return a.windowVisible() }
-
-// ExitProgram 有序退出（托盘「退出」与更新安装前调用）。
-// 关机路径绝不允许挂死:给 shutdown 8 秒硬超时(优雅路径托盘至多 2.5 秒
-// + 服务收尾 5 秒,留余量),超时(托盘/管道/RAS 任一环节卡住)也保证进程
-// 一定退出;托盘图标已由 stopTray 的兜底直删先行保证删除。
-func (a *App) ExitProgram() {
-	go func() {
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			defer func() { _ = recover() }()
-			a.shutdown(a.ctx)
-		}()
-		select {
-		case <-done:
-		case <-time.After(8 * time.Second):
-		}
-		osExit(0)
-	}()
-}
-
-// uiOnline 是否有 UI 进程接入。
-func (a *App) uiOnline() bool {
-	srv := a.ipcSnapshot()
-	return srv != nil && srv.ClientCount() > 0
-}
-
-// uiWaitPIDs 更新脚本需要等待退出的全部进程:代理自身 + 接入中的 UI 进程。
-func (a *App) uiWaitPIDs() []int {
-	srv := a.ipcSnapshot()
-	if srv == nil {
-		return nil
-	}
-	return srv.ClientPIDs()
-}
-
-// spawnUI 按需拉起 UI 进程（同目录同一 exe,无参数即 UI 模式）。
-// 带最小间隔闸:被拉起的进程若被单实例互斥体弹走,会经 FocusWindow
-// 回到代理;没有间隔闸时「拉起→弹走→再拉起」会递归成拉起风暴
-// (僵尸 UI 占住互斥体的场景下每秒可弹起数十个进程)。
-func (a *App) spawnUI() {
-	a.showMu.Lock()
-	if time.Since(a.lastSpawnAt) < showSpawnGap {
-		a.showMu.Unlock()
-		return
-	}
-	a.lastSpawnAt = time.Now()
-	a.showMu.Unlock()
-	exe, err := currentExe()
-	if err != nil {
-		a.logSvc.Error("spawn ui: " + err.Error())
-		return
-	}
-	a.logSvc.Info("launch ui: " + exe)
-	// 必须走 LaunchGUI:LaunchDetached 的 CREATE_NO_WINDOW 会让
-	// UI 进程的主窗口保持隐藏,窗口永远显示不出来。
-	if err := platform.LaunchGUI([]string{exe}, filepath.Dir(exe)); err != nil {
-		a.logSvc.Error("spawn ui: " + err.Error())
-	}
 }

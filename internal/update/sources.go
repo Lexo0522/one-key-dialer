@@ -4,6 +4,7 @@ package update
 
 import (
 	_ "embed"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -17,6 +18,33 @@ var embeddedProps string
 
 // OverrideFileName 数据目录下的外部覆盖文件名。
 const OverrideFileName = "update.properties"
+
+// allowedUpdateAPIHosts 更新源 API 的域名白名单。
+//
+// 背景：自动更新会下载并执行安装包，是权限最高的动作；而 SHA256SUMS.txt
+// 与安装包来自同一个更新源，源被劫持时哈希校验形同虚设；数据目录下的
+// update.properties 又可被任何以当前用户身份运行的进程改写。
+// 因此 source.*.api 只允许指向官方发布域名：内置默认值与外部覆盖一视
+// 同仁，命中白名单之外的一律拒绝并回退代码默认值，同时记日志警告。
+//
+// 后续强化方向：安装前校验安装包的 Authenticode 签名并钉死作者证书指纹。
+var allowedUpdateAPIHosts = map[string]struct{}{
+	"api.github.com": {},
+	"gitee.com":      {},
+}
+
+// isAllowedUpdateAPIHost 检查更新源 API 地址是否为 https 且域名在白名单内。
+func isAllowedUpdateAPIHost(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+	_, ok := allowedUpdateAPIHosts[strings.ToLower(u.Hostname())]
+	return ok
+}
 
 // Source 一条更新线路的配置。
 type Source struct {
@@ -124,6 +152,19 @@ func fromProperties(props map[string]string, warn func(string)) *Config {
 			s.DisplayName = v
 		}
 		if v := trimOr(props[p+"api"]); v != "" {
+			if !isAllowedUpdateAPIHost(v) {
+				// 非白名单域名：拒绝该覆盖并回退代码默认值，同时警告。
+				// 注意这也会拦截内置 update.properties 里的非法值，
+				// 属于 fail-closed，宁可更新不可用也不去未知域名拉包。
+				if warn != nil {
+					warn(i18n.Tf("update.apiHostBlocked", id, v))
+				}
+				v = defaultSource(id).API
+				if v == "" || !isAllowedUpdateAPIHost(v) {
+					// 未知线路没有可回退的官方地址：直接跳过该线路
+					continue
+				}
+			}
 			s.API = v
 		} else {
 			if warn != nil {

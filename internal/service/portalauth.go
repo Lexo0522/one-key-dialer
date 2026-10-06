@@ -16,6 +16,10 @@ import (
 // ============================ 认证请求构造 ============================
 
 // PortalAuthConfig 门户认证请求描述（由设置归一而来，不含凭据）。
+//
+// 安全注意：密码建议放在 POST 的 Body 模板里。GET 登录地址模板中若含
+// {password}，密码会进入 URL 查询串并留在服务端日志里（ExecutePortalAuth
+// 会对此给出警告；部分老旧门户只接受 GET 登录，故仅警告不阻断）。
 type PortalAuthConfig struct {
 	LoginUrl    string      // 登录地址，支持 {portal} 占位符
 	Method      string      // GET / POST
@@ -146,27 +150,49 @@ func ExecutePortalAuth(cfg PortalAuthConfig, portalURL, username, password strin
 	if model.NormalizePortalMethod(cfg.Method) == model.PortalMethodSrun {
 		return executeSrunAuth(cfg, portalURL, username, password)
 	}
-	loginUrl := strings.TrimSpace(cfg.LoginUrl)
-	if loginUrl == "" {
+	loginTpl := strings.TrimSpace(cfg.LoginUrl)
+	if loginTpl == "" {
 		// 未配置登录地址:退化为直接 GET 门户页(部分门户访问即触发)
 		if strings.TrimSpace(portalURL) == "" {
 			return fail(i18n.T("portal.noLoginUrl"))
 		}
-		loginUrl = portalURL
+		loginTpl = portalURL
 	}
-	loginUrl = RenderPortalTemplate(loginUrl, username, password, portalURL)
+	loginUrl := RenderPortalTemplate(loginTpl, username, password, portalURL)
 	if _, err := url.Parse(loginUrl); err != nil {
 		return fail("bad login url")
 	}
 
 	method := model.NormalizePortalMethod(cfg.Method)
+	// 模板级检测：GET 登录地址里出现 {password} 即告警（密码进查询串会
+	// 留在服务端 access log / 代理日志中）。按模板而非渲染结果判断，
+	// 避免短密码在查询串里偶然出现造成误报。
+	passwordInURL := method == model.PortalMethodGet && password != "" &&
+		(strings.Contains(loginTpl, "{password}") || strings.Contains(loginTpl, "{password:enc}"))
+	passwordWarn := ""
+	if passwordInURL {
+		passwordWarn = i18n.T("portal.passwordInUrlWarn")
+	}
+	// 警告随 Detail 回显：手动测试的明细与诊断日志都能看到。
+	attachWarn := func(out PortalAuthOutcome) PortalAuthOutcome {
+		if passwordWarn == "" {
+			return out
+		}
+		if out.Detail != "" {
+			out.Detail += " | " + passwordWarn
+		} else {
+			out.Detail = passwordWarn
+		}
+		return out
+	}
+
 	body := ""
 	if method == model.PortalMethodPost {
 		body = RenderPortalTemplate(cfg.Body, username, password, portalURL)
 	}
 	req, err := http.NewRequest(method, loginUrl, strings.NewReader(body))
 	if err != nil {
-		return fail("bad request: " + err.Error())
+		return attachWarn(fail("bad request: " + err.Error()))
 	}
 	req.Header.Set("User-Agent", model.UserAgent())
 	hasContentType := false
@@ -183,7 +209,7 @@ func ExecutePortalAuth(cfg PortalAuthConfig, portalURL, username, password strin
 	client := portalHTTPClient(cfg)
 	resp, err := client.Do(req)
 	if err != nil {
-		return fail(err.Error())
+		return attachWarn(fail(err.Error()))
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
@@ -195,15 +221,15 @@ func ExecutePortalAuth(cfg PortalAuthConfig, portalURL, username, password strin
 		outcome.Detail += " | " + snippet
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-		return outcome
+		return attachWarn(outcome)
 	}
 	if hint := strings.TrimSpace(cfg.SuccessHint); hint != "" {
 		outcome.Success = strings.Contains(string(raw), hint)
-		return outcome
+		return attachWarn(outcome)
 	}
 	// 未配置提示词:2xx 即认为已提交,由调用方复验门户是否消失
 	outcome.Success = true
-	return outcome
+	return attachWarn(outcome)
 }
 
 // firstLine 返回文本的首个非空行,超长截断。

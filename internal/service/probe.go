@@ -81,14 +81,18 @@ func httpReachable(client *http.Client, target string, timeoutMs int) bool {
 	}
 	req.Header.Set("User-Agent", model.UserAgent())
 	resp, err := client.Do(req)
-	if err == nil {
-		code := resp.StatusCode
-		resp.Body.Close()
-		if code >= 200 && code < 400 {
-			return true
+	if err != nil {
+		// err 非 nil 时 resp 仍可能非 nil（如 redirect 失败）：
+		// Body 必须关闭，否则泄漏底层连接。
+		if resp != nil {
+			resp.Body.Close()
 		}
-	} else {
 		return false
+	}
+	code := resp.StatusCode
+	resp.Body.Close()
+	if code >= 200 && code < 400 {
+		return true
 	}
 	// HEAD 被门户拒绝 → 退回 GET
 	ctx2, cancel2 := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Millisecond)

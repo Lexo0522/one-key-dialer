@@ -86,11 +86,12 @@ var zh = map[string]string{
 	"reconnect.monitorError": "监控异常: {0}: {1}",
 
 	// 宽带账号
-	"broadband.saved":       "宽带账号已保存",
-	"broadband.saveFailed":  "保存宽带账号失败: {0}",
-	"broadband.loadFailed":  "加载宽带账号失败（请重新填写）: {0}",
-	"broadband.cleared":     "已清除宽带账号与密码",
-	"broadband.clearFailed": "清除宽带账号失败: {0}",
+	"broadband.saved":           "宽带账号已保存",
+	"broadband.saveFailed":      "保存宽带账号失败: {0}",
+	"broadband.saveFailedTitle": "保存宽带账号失败",
+	"broadband.loadFailed":      "加载宽带账号失败（请重新填写）: {0}",
+	"broadband.cleared":         "已清除宽带账号与密码",
+	"broadband.clearFailed":     "清除宽带账号失败: {0}",
 
 	// 一键诊断（宽带页）
 	"diag.credOk":            "宽带凭据已配置（{0}）",
@@ -178,6 +179,8 @@ var zh = map[string]string{
 	"portal.noLoginUrl":          "未配置登录地址",
 	"portal.credSaved":           "认证账号已保存",
 	"portal.credSaveFailed":      "保存认证账号失败: {0}",
+	"portal.credSaveFailedTitle": "保存认证账号失败",
+	"portal.passwordInUrlWarn":   "警告：GET 登录地址模板中携带明文密码，密码会留在服务端日志里；建议改用 POST 并把密码放在请求体模板中",
 	"portal.credLoadFailed":      "加载认证账号失败（请重新填写）: {0}",
 	"portal.testNoPortal":        "未检测到认证门户，当前网络无需认证",
 	"portal.testSubmit":          "认证提交: HTTP {0}",
@@ -328,6 +331,7 @@ var zh = map[string]string{
 	"update.configFailed":     "内置更新配置读取失败，使用代码默认值: {0}",
 	"update.overrideFailed":   "外部更新配置 {0} 读取失败，忽略: {1}",
 	"update.lineNoApi":        "更新线路 {0} 缺少 source.{0}.api 配置，已跳过",
+	"update.apiHostBlocked":   "更新线路 {0} 的 source.{0}.api 指向非白名单域名，已拒绝并回退默认值: {1}",
 	"update.noLines":          "未配置任何可用更新线路，回退默认 gitee,github",
 
 	// 设备

@@ -182,10 +182,15 @@ func (o *DialOrchestrator) DialAuto() {
 		if !o.lifecycle.TryBeginDial() {
 			return
 		}
+		// 生命周期释放必须覆盖所有退出路径：历史上这里漏掉了两个 defer，
+		// 一次自动拨号后 lifecycle 永久 busy，后续手动拨号/自动重连/
+		// 诊断试拨全部被静默拒绝，只能重启进程恢复。
+		defer o.lifecycle.End()
 		creds := o.captureForBackground()
 		if creds == nil {
 			return
 		}
+		defer creds.Clear()
 		code, output := o.port.Connect(creds)
 		o.handleDialResult(DialResult{Code: code, Output: output}, false)
 	})
@@ -334,6 +339,41 @@ func (o *DialOrchestrator) handleDialResult(result DialResult, saveAfterSuccess 
 	o.view.OnDialFinished(false, result.Code, detail)
 }
 
+// RAS 错误码（Windows 远程访问服务错误码表）：
+// DescribeFailure 按此顺序先做精确匹配，再做输出文本的子串匹配。
+const (
+	rasCodeBadCredentials   = 691 // 用户名/密码错误，或认证协议不被对端允许
+	rasCodePortDisconnected = 619 // 端口已断开
+	rasCodeNoAnswer         = 678 // 对端无应答
+	rasCodeModemError       = 651 // 调制解调器（或其它连接设备）报告错误
+	rasCodeEntryNotFound    = 623 // 电话簿中找不到该连接条目
+	rasCodeHardwareNotReady = 632 // 指定的硬件不可用
+	rasCodePortInUse        = 633 // 端口已被占用或未配置为拨出
+	rasCodeLineBusy         = 676 // 线路忙
+	rasCodeNoDialTone       = 680 // 无拨号音
+	rasCodeNoPPPControl     = 720 // 未配置 PPP 控制协议
+	rasCodePPPLinkDown      = 734 // PPP 链路控制协议被终止
+	rasCodeAddressRejected  = 735 // 服务器拒绝了请求的地址
+	rasCodeModemNotFound    = 797 // 未找到调制解调器或正忙
+)
+
+// rasKnownCodes DescribeFailure 的码表（顺序即匹配优先级）。
+var rasKnownCodes = []int{
+	rasCodeBadCredentials,
+	rasCodePortDisconnected,
+	rasCodeNoAnswer,
+	rasCodeModemError,
+	rasCodeEntryNotFound,
+	rasCodeHardwareNotReady,
+	rasCodePortInUse,
+	rasCodeLineBusy,
+	rasCodeNoDialTone,
+	rasCodeNoPPPControl,
+	rasCodePPPLinkDown,
+	rasCodeAddressRejected,
+	rasCodeModemNotFound,
+}
+
 // DescribeFailure 把 RAS 错误码映射为中文处理建议。
 func DescribeFailure(result *DialResult) string {
 	if result == nil {
@@ -344,7 +384,7 @@ func DescribeFailure(result *DialResult) string {
 	if code == 0 {
 		return i18n.T("ras.0")
 	}
-	for _, c := range []int{691, 619, 678, 651, 623, 632, 633, 676, 680, 720, 734, 735, 797} {
+	for _, c := range rasKnownCodes {
 		sc := strconv.Itoa(c)
 		if code == c || strings.Contains(out, sc) {
 			return i18n.T("ras." + sc)
