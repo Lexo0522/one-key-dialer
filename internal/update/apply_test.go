@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Lexo0522/one-key-dialer/internal/model"
 )
 
 // TestZipApplyScriptRefusesTempInstallDir zip 更新脚本必须拒绝把安装包
@@ -47,4 +49,32 @@ func TestZipApplyScriptRefusesTempInstallDir(t *testing.T) {
 	if !strings.Contains(string(okData), "xcopy") {
 		t.Errorf("normal install script missing xcopy:\n%s", okData)
 	}
+}
+
+// TestFindPayloadRoot 覆盖发布 zip 的两种布局：exe 平铺在根（旧版
+// Compress-Archive 单文件打包）与根下唯一文件夹（现行固定名 PPPoEDialer
+// 文件夹）。更新端两种都必须能定位负载根，且不依赖文件夹名。
+func TestFindPayloadRoot(t *testing.T) {
+	t.Run("flat exe at root", func(t *testing.T) {
+		staged := t.TempDir()
+		if err := os.WriteFile(filepath.Join(staged, model.AppName), []byte("x"), 0o644); err != nil {
+			t.Fatalf("write exe: %v", err)
+		}
+		if got := findPayloadRoot(staged); got != staged {
+			t.Fatalf("flat layout: payload root = %q, want %q", got, staged)
+		}
+	})
+	t.Run("single wrapping folder", func(t *testing.T) {
+		staged := t.TempDir()
+		inner := filepath.Join(staged, "PPPoEDialer")
+		if err := os.MkdirAll(inner, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(inner, model.AppName), []byte("x"), 0o644); err != nil {
+			t.Fatalf("write exe: %v", err)
+		}
+		if got := findPayloadRoot(staged); got != inner {
+			t.Fatalf("wrapped layout: payload root = %q, want %q", got, inner)
+		}
+	})
 }

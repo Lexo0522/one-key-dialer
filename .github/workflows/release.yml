@@ -148,7 +148,15 @@ jobs:
           $zip = "release/PPPoEDialer-$rev-windows.zip"
           $msi = "release/PPPoEDialer-$rev-windows.msi"
 
-          Compress-Archive -Path build/bin/PPPoEDialer.exe -DestinationPath $zip -Force
+          # zip 内包一层固定名文件夹 PPPoEDialer（不带版本号）：解压后是
+          # 一个完整的程序文件夹，且多版本解压到同一位置时覆盖同一文件夹，
+          # 不会留下 PPPoEDialer-1.2.3 / -1.2.4 之类的残留。应用内更新端
+          # 的 findPayloadRoot 把「zip 根下唯一的文件夹」当作负载根，不
+          # 依赖文件夹名，固定名对更新流程无影响。
+          $payload = "release/PPPoEDialer"
+          New-Item -ItemType Directory -Force -Path $payload | Out-Null
+          Copy-Item build/bin/PPPoEDialer.exe $payload -Force
+          Compress-Archive -Path $payload -DestinationPath $zip -Force
 
           $wixSrc = "build/windows/installer/Product.wxs"
           & candle.exe -nologo -out release\ `
@@ -192,6 +200,23 @@ jobs:
           $sums = @(Get-Content release/SHA256SUMS.txt | Where-Object { $_.Trim() })
           if ($sums.Count -lt 2) {
             Write-Error "SHA256SUMS.txt does not cover both assets"
+            exit 1
+          }
+          # zip 结构契约：根下唯一文件夹 PPPoEDialer，内含 exe。手动解压
+          # 的用户与更新端 findPayloadRoot 都依赖这个布局。
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead(
+            (Resolve-Path "release/PPPoEDialer-$rev-windows.zip").Path)
+          try {
+            # 归一化分隔符：Windows PowerShell 5.1 的 Compress-Archive 会写
+            # 反斜杠条目名（pwsh 7 写规范的 /），校验对两种都放行。
+            $entries = @($archive.Entries | ForEach-Object { $_.FullName -replace '\\', '/' })
+          } finally {
+            $archive.Dispose()
+          }
+          if ($entries -notcontains "PPPoEDialer/PPPoEDialer.exe") {
+            Write-Error ("unexpected zip layout (want PPPoEDialer/PPPoEDialer.exe, got):`n  " +
+              ($entries -join "`n  "))
             exit 1
           }
           Write-Host "Release assets verified:"
