@@ -2,6 +2,7 @@ package service
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -125,10 +126,34 @@ func (l *LogService) Flush() {
 	if path == "" {
 		path = "pppoe_log.txt"
 	}
+	l.rotateIfNeeded(path)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return
 	}
 	defer f.Close()
 	_, _ = f.WriteString(content)
+}
+
+// 日志轮转参数：托盘常驻是 99% 的运行形态，日志文件只追加不轮转会
+// 无限膨胀。超限时逐级后移（.1 → .2 → .3），最旧的丢弃。
+const (
+	logMaxBytes   = 5 << 20 // 5MB
+	logMaxBackups = 3
+)
+
+// rotateIfNeeded 日志超限时轮转。best-effort：任何一步失败都不阻塞本次写入；
+// 备份文件经 os.Rename 产生，权限与原文件一致（0o600）。
+func (l *LogService) rotateIfNeeded(path string) {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() < logMaxBytes {
+		return
+	}
+	_ = os.Remove(path + "." + strconv.Itoa(logMaxBackups))
+	for i := logMaxBackups - 1; i >= 1; i-- {
+		oldName := path + "." + strconv.Itoa(i)
+		newName := path + "." + strconv.Itoa(i+1)
+		_ = os.Rename(oldName, newName) // 不存在时忽略
+	}
+	_ = os.Rename(path, path+".1")
 }
