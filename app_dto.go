@@ -125,7 +125,6 @@ type UpdatePayload struct {
 	Path            string `json:"path"`
 }
 
-
 // DeviceOption 可选择的 PPPoE 设备。
 type DeviceOption struct {
 	Port     string `json:"port"`

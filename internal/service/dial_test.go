@@ -65,12 +65,12 @@ func (p *fakeDialPort) Disconnect() (int, error) { return 0, nil }
 // stubDialView 空实现的 DialView：预检恒通过，每次返回全新的凭据。
 type stubDialView struct{}
 
-func (v *stubDialView) Log(Level, string) {}
-func (v *stubDialView) Notify(string, string, string) {}
-func (v *stubDialView) OnDialPhase(string) {}
-func (v *stubDialView) OnConnectionState(bool) {}
+func (v *stubDialView) Log(Level, string)                {}
+func (v *stubDialView) Notify(string, string, string)    {}
+func (v *stubDialView) OnDialPhase(string)               {}
+func (v *stubDialView) OnConnectionState(bool)           {}
 func (v *stubDialView) OnDialFinished(bool, int, string) {}
-func (v *stubDialView) ValidateInput(bool) bool { return true }
+func (v *stubDialView) ValidateInput(bool) bool          { return true }
 func (v *stubDialView) CaptureCredentials() *model.DialCredentials {
 	return model.NewDialCredentials("user", []byte("pass"))
 }
@@ -78,12 +78,12 @@ func (v *stubDialView) CaptureCredentials() *model.DialCredentials {
 // stubDialEnv 空实现的 DialEnvironment：恒离线，不重连。
 type stubDialEnv struct{}
 
-func (e *stubDialEnv) IsOnline() bool { return false }
-func (e *stubDialEnv) ConnectTimeMillis() int64 { return 0 }
-func (e *stubDialEnv) SessionTrafficBytes() int64 { return 0 }
+func (e *stubDialEnv) IsOnline() bool                 { return false }
+func (e *stubDialEnv) ConnectTimeMillis() int64       { return 0 }
+func (e *stubDialEnv) SessionTrafficBytes() int64     { return 0 }
 func (e *stubDialEnv) ProbeConfig() model.ProbeConfig { return model.ProbeConfig{} }
-func (e *stubDialEnv) DisconnectOnNoInternet() bool { return false }
-func (e *stubDialEnv) PersistAfterSuccess() {}
+func (e *stubDialEnv) DisconnectOnNoInternet() bool   { return false }
+func (e *stubDialEnv) PersistAfterSuccess()           {}
 
 // waitForJob 往串行队列尾部追加一个哨兵：哨兵执行时，前面的 DialAuto
 // 任务（含全部 defer）必已完成。
