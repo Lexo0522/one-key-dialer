@@ -130,6 +130,10 @@
             <span class="ip-value wrap">{{ ispText }}</span>
           </div>
           <div class="ip-row">
+            <span class="ip-label">{{ t('home.ip.asn') }}</span>
+            <span class="ip-value wrap">{{ asText }}</span>
+          </div>
+          <div class="ip-row">
             <span class="ip-label">{{ t('home.ip.timezone') }}</span>
             <span class="ip-value">{{ timezoneText }}</span>
           </div>
@@ -1000,10 +1004,10 @@ const ipLocation = computed(() => {
   return parts.join(' · ') || t('home.ip.unset')
 })
 
-const ispText = computed(() => {
-  const parts = [ipInfo.isp, ipInfo.as].filter(Boolean)
-  return parts.join(' · ') || t('home.ip.unset')
-})
+const ispText = computed(() => ipInfo.isp || t('home.ip.unset'))
+
+// AS 编号单独一行：之前与运营商拼在一行又长又重复（如 "… · AS4837 CHINA UNICOM …"）
+const asText = computed(() => ipInfo.as || t('home.ip.unset'))
 
 // IANA 时区名转 UTC 偏移展示（如 Asia/Shanghai → UTC+8），失败时只显示原名
 const timezoneText = computed(() => {
