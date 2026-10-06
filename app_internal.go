@@ -540,47 +540,5 @@ func (e dialEnv) PersistAfterSuccess() {
 	e.a.settings.FlushPending()
 }
 
-// ---------- 更新进度回调 ----------
-
-// updateProgress 把阶段标识附加到每条状态/进度事件上：下载与解压走的是同一条
-// update.Progress 通道，没有阶段号前端就无法分辨，只能一律当下载处理。
-type updateProgress struct {
-	a     *App
-	stage string
-}
-
-func (p updateProgress) OnProgress(downloaded, total int64) {
-	p.a.emit(EvtUpdate, UpdatePayload{Kind: "progress", Stage: p.stage, Downloaded: downloaded, Total: total})
-}
-
-func (p updateProgress) OnStatus(message string) {
-	p.a.logSvc.Info(message)
-	p.a.emit(EvtUpdate, UpdatePayload{Kind: "status", Stage: p.stage, Message: message})
-}
-
-// ---------- 其它 ----------
-
-func (a *App) flushBeforeUpdate() {
-	a.settings.FlushPending()
-	a.logSvc.Flush()
-}
-
 // osExit 供 ExitProgram 使用（单独封装便于测试替换）。
 var osExit = os.Exit
-
-// updateBusyState 供前端查询更新是否进行中。
-func (a *App) UpdateBusy() bool {
-	a.updateMu.Lock()
-	defer a.updateMu.Unlock()
-	return a.updateBusy
-}
-
-// clearUpdateBusy 释放更新占用位，由下载/安装链路的 defer 调用。
-// 集中在这里是为了让每条 return 路径都必然经过：分散在流程中段手工复位
-// 的方式，一旦新增早退分支就会漏掉，把 updateBusy 永久留在 true。
-func (a *App) clearUpdateBusy() {
-	a.updateMu.Lock()
-	a.updateBusy = false
-	a.cancelDl = nil
-	a.updateMu.Unlock()
-}
