@@ -80,11 +80,12 @@ var en = map[string]string{
 	"reconnect.monitorError": "Monitor error: {0}: {1}",
 
 	// Broadband credential
-	"broadband.saved":       "Broadband account saved",
-	"broadband.saveFailed":  "Failed to save the broadband account: {0}",
-	"broadband.loadFailed":  "Failed to load the broadband account (please re-enter): {0}",
-	"broadband.cleared":     "Broadband account and password cleared",
-	"broadband.clearFailed": "Failed to clear the broadband account: {0}",
+	"broadband.saved":           "Broadband account saved",
+	"broadband.saveFailed":      "Failed to save the broadband account: {0}",
+	"broadband.saveFailedTitle": "Failed to save the broadband account",
+	"broadband.loadFailed":      "Failed to load the broadband account (please re-enter): {0}",
+	"broadband.cleared":         "Broadband account and password cleared",
+	"broadband.clearFailed":     "Failed to clear the broadband account: {0}",
 
 	// One-click diagnostics (Broadband tab)
 	"diag.credOk":            "Broadband credentials configured ({0})",
@@ -169,6 +170,8 @@ var en = map[string]string{
 	"portal.noLoginUrl":          "Login URL not configured",
 	"portal.credSaved":           "Portal credential saved",
 	"portal.credSaveFailed":      "Failed to save portal credential: {0}",
+	"portal.credSaveFailedTitle": "Failed to save portal credential",
+	"portal.passwordInUrlWarn":   "Warning: the GET login URL template carries the password in cleartext, which ends up in server logs; use POST with the password in the body template instead",
 	"portal.credLoadFailed":      "Failed to load portal credential (please re-enter): {0}",
 	"portal.testNoPortal":        "No authentication portal detected; this network does not require authentication",
 	"portal.testSubmit":          "Auth submit: HTTP {0}",
@@ -316,6 +319,7 @@ var en = map[string]string{
 	"update.configFailed":     "Failed to read the built-in update configuration; using code defaults: {0}",
 	"update.overrideFailed":   "Failed to read external update configuration {0}, ignored: {1}",
 	"update.lineNoApi":        "Update source {0} lacks the source.{0}.api setting, skipped",
+	"update.apiHostBlocked":   "Update source {0}: source.{0}.api points to a non-whitelisted host, rejected and fell back to the default: {1}",
 	"update.noLines":          "No update source configured; falling back to gitee,github",
 
 	// Device
