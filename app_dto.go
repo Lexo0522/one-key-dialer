@@ -1,5 +1,10 @@
 package main
 
+import (
+	"github.com/Lexo0522/one-key-dialer/internal/model"
+	"github.com/Lexo0522/one-key-dialer/internal/service"
+)
+
 // app_dto.go：Wails 绑定门面的全部数据传输对象（DTO）。
 //
 // 前后端事件 / 方法签名里出现的可序列化结构体集中在此；行为实现保留在
