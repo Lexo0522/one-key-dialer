@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -340,10 +341,22 @@ func (m *Module) downloadAttempt(asset *Asset, part string, src *Source,
 		}
 	}
 
-	// 停滞看门狗：超过 stallTimeout 无字节流入就关流中止
+	// 停滞看门狗：超过 stallTimeout 无字节流入就中止下载。
+	//
+	// 看门狗只发信号，不碰 resp.Body。之前它在两个分支里直接 Close(),
+	// 而主循环同一时刻正在 Read —— http.body 不是并发安全的，那是真实的
+	// 数据竞争。现在由主循环自己在读循环里检查这个 channel 并负责关流。
 	var lastDataNanos int64
 	atomic.StoreInt64(&lastDataNanos, time.Now().UnixNano())
 	var stalled int32
+	abortBody := make(chan struct{})
+	var abortOnce sync.Once
+	requestAbort := func(stall bool) {
+		if stall {
+			atomic.StoreInt32(&stalled, 1)
+		}
+		abortOnce.Do(func() { close(abortBody) })
+	}
 	watchDone := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(WatchdogPollInterval)
@@ -355,22 +368,35 @@ func (m *Module) downloadAttempt(asset *Asset, part string, src *Source,
 			case <-ticker.C:
 			}
 			if cancel != nil && cancel.IsCancelled() {
-				_ = resp.Body.Close()
+				requestAbort(false)
 				return
 			}
 			last := time.Unix(0, atomic.LoadInt64(&lastDataNanos))
 			if time.Since(last) > stallTimeout {
-				atomic.StoreInt32(&stalled, 1)
-				_ = resp.Body.Close()
+				requestAbort(true)
 				return
 			}
 		}
 	}()
-	defer close(watchDone)
+	defer func() {
+		close(watchDone)
+		// resp.Body 只在这里和读循环里各出现一次，且读循环已先退出，安全。
+		_ = resp.Body.Close()
+	}()
 
 	buf := make([]byte, CopyBufferBytes)
 	lastReport := downloaded
 	for {
+		select {
+		case <-abortBody:
+			// 停滞或取消：不返回原始 read error（那会显示成网络中断），
+			// 而是按 stalled 标志决定报停滞超时还是用户取消。
+			if atomic.LoadInt32(&stalled) != 0 {
+				return &StallTimeoutError{Seconds: int(stallTimeout / time.Second)}
+			}
+			return ErrCancelled
+		default:
+		}
 		if cancel != nil && cancel.IsCancelled() {
 			return ErrCancelled
 		}
@@ -392,6 +418,7 @@ func (m *Module) downloadAttempt(asset *Asset, part string, src *Source,
 			break
 		}
 		if rerr != nil {
+			// 看门狗已关流时 read 必然报错，但那不是网络故障，别照抄 rerr。
 			if atomic.LoadInt32(&stalled) != 0 {
 				return &StallTimeoutError{Seconds: int(stallTimeout / time.Second), Cause: rerr}
 			}

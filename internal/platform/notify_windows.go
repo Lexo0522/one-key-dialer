@@ -52,11 +52,8 @@ var (
 	procRegisterClassExW = user32n.NewProc("RegisterClassExW")
 	procCreateWindowExW  = user32n.NewProc("CreateWindowExW")
 	procDestroyWindow    = user32n.NewProc("DestroyWindow")
-	procPostQuit         = user32n.NewProc("PostQuitMessage")
-	procLoadIconMetric   = syscall.NewLazyDLL("comctl32.dll").NewProc("LoadIconMetric")
 
-	notifyOnce sync.Once
-	notifyMu   sync.Mutex
+	notifyMu sync.Mutex
 )
 
 // utf16Of 将字符串转成 UTF-16 码点序列（不含结尾 0）。

@@ -299,7 +299,11 @@ const zh = {
   'common.confirm': '确认',
   'common.ok': '确定',
   'common.cancel': '取消',
-  'common.close': '关闭'
+  'common.close': '关闭',
+
+  // 确认框按钮：原先硬编码在 dialog.js 里，英文界面会中英混排。
+  'dialog.no': '否',
+  'dialog.yes': '是'
 }
 
 const en = {
@@ -596,10 +600,17 @@ const en = {
   'common.confirm': 'Confirm',
   'common.ok': 'OK',
   'common.cancel': 'Cancel',
-  'common.close': 'Close'
+  'common.close': 'Close',
+
+  'dialog.no': 'No',
+  'dialog.yes': 'Yes'
 }
 
 const current = ref('zh')
+
+// 仅供测试用的导出：zh/en 两张表目前只靠人工同步，一旦某边漏翻，运行时只会
+// 静默回落到中文，界面上看不出异常。导出让测试能直接比对两边的 key 集合。
+export const __i18nTables = { zh, en }
 
 export function setLang(lang) {
   current.value = lang === 'en' ? 'en' : 'zh'

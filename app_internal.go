@@ -574,3 +574,13 @@ func (a *App) UpdateBusy() bool {
 	defer a.updateMu.Unlock()
 	return a.updateBusy
 }
+
+// clearUpdateBusy 释放更新占用位，由下载/安装链路的 defer 调用。
+// 集中在这里是为了让每条 return 路径都必然经过：分散在流程中段手工复位
+// 的方式，一旦新增早退分支就会漏掉，把 updateBusy 永久留在 true。
+func (a *App) clearUpdateBusy() {
+	a.updateMu.Lock()
+	a.updateBusy = false
+	a.cancelDl = nil
+	a.updateMu.Unlock()
+}

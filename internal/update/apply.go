@@ -216,7 +216,12 @@ func (m *Module) writeApplyScript(body func(w *scriptWriter)) (string, error) {
 	if err := f.Close(); err != nil {
 		return "", err
 	}
-	platform.RestrictToOwner(scriptPath)
+	// 收紧失败同样不推翻脚本生成：脚本本身已经完整落盘、可以执行，只是
+	// %APPDATA%\PPPoEDialer\updates\ 下这个 bat 会被同用户的其他进程读到。
+	// 如实返回错误，让调用方决定要不要提示，而不是像之前那样无声无息。
+	if err := platform.RestrictToOwner(scriptPath); err != nil {
+		return "", err
+	}
 	return scriptPath, nil
 }
 
@@ -267,10 +272,19 @@ func (m *Module) writeZipApplyScript(installDir, payloadRoot string, pids []int)
 }
 
 func (m *Module) writeMsiApplyScript(msiPath, installDir string, pids []int) (string, error) {
+	// 必须是完全静默的安装。msiexec /i 省略 /q 时，UI 级别走的是
+	// MsiSetInternalUI 文档里的 DEFAULT，落到 GUI 进程是 FULL(5) 而不是
+	// 静默(2)：不传 /qn 的话，升级时会把整套欢迎页/许可协议页弹给用户，
+	// 包括里面新增的两个安装选项复选框，而用户此刻只是在等程序自己更新完。
+	//
+	// SILENTUPDATE=1 同时告诉 MSI 别执行装完即启动那个自定义动作：
+	// 重启由本脚本末尾的 writeRelaunch 负责，两边都启动只会和单实例
+	// 互斥体打架，还会让用户以为更新卡住了。这是调用方与 MSI 之间的
+	// 显式约定——UILevel 在升级路径上拦不住这件事。
 	return m.writeApplyScript(func(w *scriptWriter) {
 		wline(w, "echo Installing MSI update...")
 		writeWaitForAppExit(w, pids)
-		wline(w, `msiexec /i "`+msiPath+`"`)
+		wline(w, `msiexec /i "`+msiPath+`" /qn SILENTUPDATE=1`)
 		wline(w, "if errorlevel 1 if not errorlevel 3010 goto msi_failed")
 		wline(w, `if exist "`+filepath.Join(installDir, model.AppName)+`" (`)
 		writeRelaunch(w, installDir)

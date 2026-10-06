@@ -5,7 +5,6 @@ package storage
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -32,10 +31,6 @@ type StorageException struct {
 
 func (e *StorageException) Error() string { return e.Message }
 func (e *StorageException) Unwrap() error { return e.Cause }
-
-func invalidJSON(format string, args ...any) *StorageException {
-	return &StorageException{Kind: KindInvalidJSON, Message: i18n.Tf("store.parseFailed", fmt.Sprintf(format, args...))}
-}
 
 // document 通用信封。
 type document struct {
@@ -88,7 +83,14 @@ func WriteEnvelope(file string, schemaVersion int, payload any) error {
 	if err := util.WriteAtomic(file, out); err != nil {
 		return err
 	}
-	platform.RestrictToOwner(file)
+	// ACL 收紧失败不推翻这次写：内容已经原子落盘了。但这几个文件存明文
+	// 凭据（宽带账密 / 门户账密 / WiFi PSK），权限没收紧必须如实上报，
+	// 不能像之前那样静默吞掉——用户完全看不出文件正挂在继承权限下。
+	if err := platform.RestrictToOwner(file); err != nil {
+		return &StorageException{Kind: KindIO,
+			Message: i18n.Tf("store.aclFailed", file, err.Error()),
+			Cause:   err}
+	}
 	return nil
 }
 

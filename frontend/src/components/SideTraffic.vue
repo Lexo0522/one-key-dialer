@@ -84,32 +84,57 @@ function countY(v, h) {
   return 1
 }
 
-/** 10 分钟窗口 → 20s 粒度桶（取桶内峰值）；j=31 为正在写入的当前桶。 */
+/** 10 分钟窗口 → 20s 粒度桶（取桶内峰值）；j=31 为正在写入的当前桶。
+ *
+ *  增量聚合：samples 只会在尾部 push、头部 splice（见 store.js 的裁剪），
+ *  所以不必每帧全量扫最多 620 个采样——用一个游标记住上次处理到哪，
+ *  每帧只处理新增部分，把每帧 O(620) 降到 O(新增采样数)。
+ */
+let bucketCursor = -1
+let bucketBase = -1
+const bucketCache = Array.from({ length: POINTS }, () => ({ up: 0, down: 0, seen: false }))
+
 function computeBuckets() {
   const now = Date.now()
   const base = Math.floor(now / SLOT_MS) - (POINTS - 1)
-  const buckets = Array.from({ length: POINTS }, () => ({ up: 0, down: 0, seen: false }))
+
+  // 时间窗滚动（base 变了）或游标失效时重建：这种情况每分钟最多一次，
+  // 全量重算的代价可以忽略。
+  if (base !== bucketBase || bucketCursor >= state.samples.length) {
+    bucketBase = base
+    bucketCursor = -1
+    for (let j = 0; j < POINTS; j++) {
+      bucketCache[j].up = 0
+      bucketCache[j].down = 0
+      bucketCache[j].seen = false
+    }
+  }
+
   const ss = state.samples
-  for (let k = 0; k < ss.length; k++) {
+  const start = bucketCursor >= 0 ? bucketCursor : 0
+  for (let k = start; k < ss.length; k++) {
     const s = ss[k]
+    // 比起点还早的采样是上一轮残留，跳过（不能计入当前桶）。
+    if (Math.floor(s.t / SLOT_MS) - base < 0) continue
     let idx = Math.floor(s.t / SLOT_MS) - base
-    if (idx < 0) continue
     if (idx > POINTS - 1) idx = POINTS - 1
-    const b = buckets[idx]
+    const b = bucketCache[idx]
     b.seen = true
     if (s.up > b.up) b.up = s.up
     if (s.down > b.down) b.down = s.down
   }
+  bucketCursor = ss.length
+
   // 当前桶刚滚动、尚未收到首个采样时沿用上一桶值：
   // 在线时采样间隔短于桶宽，这只发生在滚动后的瞬间，
   // 否则曲线右缘会每隔 20s 出现一次跳水尖峰
-  const cur = buckets[POINTS - 1]
+  const cur = bucketCache[POINTS - 1]
   if (!cur.seen) {
-    const prev = buckets[POINTS - 2]
+    const prev = bucketCache[POINTS - 2]
     cur.up = prev.up
     cur.down = prev.down
   }
-  return { now, buckets }
+  return { now, buckets: bucketCache }
 }
 
 function drawFrame() {

@@ -273,17 +273,22 @@ func (s *PortalAuthService) Start() {
 	go func() {
 		defer s.wg.Done()
 		delay := 2 * time.Second
+		// NewTimer + Reset，理由同 autoreconnect/wifi：避免循环里每轮
+		// new 一个 timer 而旧的等 GC 才回收。
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
 		for {
 			select {
 			case <-cancel:
 				return
-			case <-time.After(delay):
+			case <-timer.C:
 			}
 			cont, next := s.tick(cancel)
 			if !cont {
 				return
 			}
 			delay = next
+			timer.Reset(delay)
 		}
 	}()
 }

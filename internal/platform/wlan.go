@@ -76,6 +76,8 @@ type WlanState struct {
 	Ssid          string `json:"ssid"`
 	SignalQuality int    `json:"signalQuality"`
 	Phase         string `json:"phase"`
+	// Err 非空表示状态查询本身失败(区别于"确实未连接")。
+	Err string `json:"err,omitempty"`
 }
 
 // wlanInterfaceInfo 与 C 的 WLAN_INTERFACE_INFO 布局一致(GUID 16 +
@@ -157,8 +159,13 @@ func WlanScanList() ([]WlanNetwork, error) {
 		return nil, err
 	}
 	defer done()
-	// WlanScan 只是触发异步扫描,等一小段再取列表,拿到的结果明显更新
-	procWlanScan.Call(h, uintptr(unsafe.Pointer(&guid)), 0, 0, 0)
+	// WlanScan 只是触发异步扫描,等一小段再取列表,拿到的结果明显更新。
+	// 返回值必须检查:扫描没触发成功时(无线服务未跑/句柄失效)后面的等待
+	// 拿到的只是上一轮的陈旧缓存,界面会表现成"点了扫描但列表纹丝不动"。
+	r1, _, _ := procWlanScan.Call(h, uintptr(unsafe.Pointer(&guid)), 0, 0, 0)
+	if r1 != 0 {
+		return nil, wlanErr("WlanScan", uint32(r1))
+	}
 	time.Sleep(1200 * time.Millisecond)
 	nets, err := wlanListDetails(h, guid)
 	if err != nil {
@@ -301,7 +308,12 @@ func wlanConnectProfile(h uintptr, guid windows.GUID, ssid string) error {
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(500 * time.Millisecond)
-		st := wlanIfaceState(h, guid)
+		st, serr := wlanIfaceState(h, guid)
+		if serr != nil {
+			// 查询本身失败时立刻收工:句柄/服务异常下继续轮询只会白等到超时,
+			// 而报出去的错误会与真实原因不符。
+			return serr
+		}
 		switch st {
 		case wlanIfaceStateConnected:
 			if cur := wlanCurrentOn(h, guid); cur.Ssid == ssid {
@@ -327,7 +339,7 @@ func wlanOpen() (h uintptr, guid windows.GUID, done func(), err error) {
 	if r1 != 0 {
 		return 0, windows.GUID{}, nil, wlanErr("WlanOpenHandle", uint32(r1))
 	}
-	cleanup := func() { procWlanCloseHandle.Call(h, 0) }
+	cleanup := func() { _, _, _ = procWlanCloseHandle.Call(h, 0) }
 	guid, err = wlanFirstInterface(h)
 	if err != nil {
 		cleanup()
@@ -348,7 +360,7 @@ func wlanFirstInterface(h uintptr) (windows.GUID, error) {
 	if list == nil {
 		return windows.GUID{}, errors.New("wlan: no interface list")
 	}
-	defer procWlanFreeMemory.Call(uintptr(list))
+	defer func() { _, _, _ = procWlanFreeMemory.Call(uintptr(list)) }()
 	// 列表头:DWORD dwNumberOfItems; DWORD dwIndex; 元素紧随其后(偏移 8)
 	hdr := (*[2]uint32)(list)
 	if hdr[0] < 1 {
@@ -369,7 +381,7 @@ func wlanListDetails(h uintptr, guid windows.GUID) ([]wlanNetDetail, error) {
 	if listPtr == nil {
 		return nil, nil
 	}
-	defer procWlanFreeMemory.Call(uintptr(listPtr))
+	defer func() { _, _, _ = procWlanFreeMemory.Call(uintptr(listPtr)) }()
 	hdr := (*[2]uint32)(listPtr)
 	n := int(hdr[0])
 	if n <= 0 {
@@ -422,7 +434,11 @@ func score(n WlanNetwork) int {
 
 // wlanCurrentOn 在已打开的句柄上查询当前连接状态。
 func wlanCurrentOn(h uintptr, guid windows.GUID) WlanState {
-	st := wlanIfaceState(h, guid)
+	st, err := wlanIfaceState(h, guid)
+	if err != nil {
+		// 查询失败与"确实未连接"必须区分:前者是异常,不能当成 idle 展示给用户。
+		return WlanState{Phase: "unknown", Err: err.Error()}
+	}
 	state := WlanState{Phase: wlanPhaseLabel(st)}
 	if st == wlanIfaceStateConnected {
 		state.Connected = true
@@ -442,17 +458,22 @@ func wlanCurrentOn(h uintptr, guid windows.GUID) WlanState {
 }
 
 // wlanIfaceState 查询接口的 WLAN_INTERFACE_STATE。
-func wlanIfaceState(h uintptr, guid windows.GUID) uint32 {
+// 查询失败返回 error 而不是伪装成 disconnected:调用方(pollConnect 的状态轮询)
+// 需要区分"查不到"和"确实没连",否则句柄失效会让连接轮询白等满超时。
+func wlanIfaceState(h uintptr, guid windows.GUID) (uint32, error) {
 	var written uint32
 	var data unsafe.Pointer
 	r1, _, _ := procWlanQueryInterface.Call(h, uintptr(unsafe.Pointer(&guid)),
 		wlanIntfOpcodeInterfaceState, 0, uintptr(unsafe.Pointer(&written)),
 		uintptr(unsafe.Pointer(&data)), 0)
-	if r1 != 0 || data == nil {
-		return wlanIfaceStateDisconnected
+	if r1 != 0 {
+		return 0, wlanErr("WlanQueryInterface", uint32(r1))
 	}
-	defer procWlanFreeMemory.Call(uintptr(data))
-	return *(*uint32)(data)
+	if data == nil {
+		return 0, errors.New("wlan: WlanQueryInterface returned no data")
+	}
+	defer func() { _, _, _ = procWlanFreeMemory.Call(uintptr(data)) }()
+	return *(*uint32)(data), nil
 }
 
 func wlanPhaseLabel(state uint32) string {

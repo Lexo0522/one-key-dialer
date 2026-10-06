@@ -168,9 +168,8 @@ func (b *BackgroundExecutor) Shutdown(wait time.Duration) {
 	case <-finished:
 	case <-time.After(wait):
 	}
-	if b.longCh != nil {
-		// 不关闭 channel：避免向已关闭通道发送 panic，交给进程退出回收
-	}
+	// longCh 有意不关闭：关闭它会让仍在跑的 SubmitLong 往已关闭通道发送而
+	// panic，任务收尾交给进程退出统一回收。
 }
 
 func errFromRecover(r any) error {

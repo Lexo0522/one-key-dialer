@@ -67,7 +67,7 @@ func KillOwnProcess(pid int) bool {
 	if h == 0 {
 		return false
 	}
-	defer windows.CloseHandle(windows.Handle(h))
+	defer func() { _ = windows.CloseHandle(windows.Handle(h)) }()
 
 	self, err := os.Executable()
 	if err != nil {

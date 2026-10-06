@@ -207,8 +207,6 @@ type App struct {
 	sysConnectTimeMs int64
 	sessionDown      int64
 	sessionUp        int64
-	baseDown         int64
-	baseUp           int64
 	downSpeed        int64
 	upSpeed          int64
 	pendingUser      string
@@ -483,7 +481,8 @@ func (a *App) doShutdown(ctx context.Context) {
 	a.logSvc.Flush()
 }
 
-// domReady 前端就绪回调。
+// domReady 前端就绪回调：留空实现是必要的——Wails 的 OnDomReady 需要一个
+// 方法引用，而本项目不需要在 DOM 就绪时做额外初始化（Bootstrap 已按需拉数据）。
 func (a *App) domReady(ctx context.Context) {}
 
 // ============================ 前端入口 ============================
@@ -924,15 +923,14 @@ func (a *App) DownloadUpdate() {
 	a.updateBusy = true
 	cancel := update.NewCancel()
 	a.cancelDl = cancel
-	a.updateMu.Unlock()
+	// updateBusy 的复位统一交给闭包退出时的 defer：下载链路里的每个 return
+	// 都会走到这里，不会再有哪条早退分支把它永久留在 true（那会让前端
+	// 锁死在 busy、后续下载与安装全被拒）。
+	defer a.clearUpdateBusy()
 
 	progress := updateProgress{a: a, stage: UpdateStageDownload}
 	a.exec.SubmitLong(func() {
 		pkg, err := a.updater.DownloadWithFailover(*result, progress, cancel)
-		a.updateMu.Lock()
-		a.updateBusy = false
-		a.cancelDl = nil
-		a.updateMu.Unlock()
 		if err != nil {
 			// 用户主动取消不是失败，不能套用「下载失败」的错误文案与红色语气
 			if errors.Is(err, update.ErrCancelled) {
@@ -974,6 +972,7 @@ func (a *App) autoInstallPending() {
 		return
 	}
 	a.updateBusy = true
+	defer a.clearUpdateBusy()
 	a.updateMu.Unlock()
 
 	progress := updateProgress{a: a, stage: UpdateStagePrepare}
@@ -986,9 +985,6 @@ func (a *App) autoInstallPending() {
 		}
 		waitPIDs := a.uiWaitPIDs()
 		prepared, err := a.updater.Prepare(pkg, progress, waitPIDs)
-		a.updateMu.Lock()
-		a.updateBusy = false
-		a.updateMu.Unlock()
 		if err != nil {
 			a.logSvc.Error(i18n.Tf("update.prepareFailed", err.Error()))
 			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
@@ -1035,6 +1031,7 @@ func (a *App) InstallUpdate() {
 		return
 	}
 	a.updateBusy = true
+	defer a.clearUpdateBusy()
 	a.updateMu.Unlock()
 
 	progress := updateProgress{a: a, stage: UpdateStagePrepare}
@@ -1051,9 +1048,6 @@ func (a *App) InstallUpdate() {
 		// 更新脚本需等全部相关进程退出后再覆盖 exe:代理自身 + 接入中的 UI 进程
 		waitPIDs := a.uiWaitPIDs()
 		prepared, err := a.updater.Prepare(pkg, progress, waitPIDs)
-		a.updateMu.Lock()
-		a.updateBusy = false
-		a.updateMu.Unlock()
 		if err != nil {
 			a.logSvc.Error(i18n.Tf("update.prepareFailed", err.Error()))
 			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,

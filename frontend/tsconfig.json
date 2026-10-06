@@ -1,0 +1,21 @@
+{
+  // 只做「JS 文件的类型检查」，不做 TS 迁移。
+  //
+  // 目标：bridge.js 是前端与后端（wailsjs 自动生成的绑定）之间唯一契约点。
+  // 后端改一个方法签名，纯 JS 下要等运行期才炸；开了 checkJs 之后这里
+  // 立刻报错。其余源码不纳入检查——全量类型化是独立工程，不在这股劲儿
+  // 上头一起做。
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": false,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["src/bridge.js"],
+  "exclude": ["src/bridge.mock.js"]
+}

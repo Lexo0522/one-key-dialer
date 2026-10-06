@@ -33,7 +33,10 @@
           <i class="far fa-folder-open"></i>
           <span>{{ t('log.empty') }}</span>
         </div>
-        <div v-for="(l, i) in filtered" :key="i" class="log-row" :class="'lv-' + l.level">
+        <!-- key 用 time+message 而不是数组下标：日志是头插/尾插混合的，
+             下标 key 在 splice 后全部错位，Vue 会把整列 DOM 复用出错误内容。 -->
+        <div v-for="(l, i) in filtered" :key="l.time + '|' + l.message + '|' + i" class="log-row"
+             :class="'lv-' + l.level">
           <span class="log-time">{{ l.time }}</span>
           <span class="log-badge" :class="'lv-' + l.level">{{ levelLabel(l.level) }}</span>
           <span class="log-msg">{{ l.message }}</span>
@@ -44,7 +47,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { state } from '../store'
 import { t, tf } from '../i18n'
 
@@ -76,20 +79,39 @@ function levelLabel(lv) {
   }
 }
 
-const counts = computed(() => {
-  const c = { all: state.logs.length, info: 0, success: 0, warn: 0, error: 0 }
-  for (const l of state.logs) c[normLevel(l)]++
-  return c
+// counts 与 filtered 合成一次遍历：原来两个 computed 各扫一遍 500 条，
+// 每条新日志到达要走两轮全量。现在聚合结果与过滤结果一起产出。
+// 关键词走防抖值：每敲一个字符都重算 500 条 filter 会明显掉帧。
+const debouncedKeyword = ref('')
+let keywordTimer = null
+watch(keyword, (v) => {
+  if (keywordTimer) clearTimeout(keywordTimer)
+  keywordTimer = setTimeout(() => {
+    debouncedKeyword.value = v.trim().toLowerCase()
+  }, 200)
+})
+onBeforeUnmount(() => {
+  if (keywordTimer) clearTimeout(keywordTimer)
 })
 
-const filtered = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  return state.logs.filter((l) => {
-    if (level.value !== 'all' && normLevel(l) !== level.value) return false
-    if (kw && !String(l.message || '').toLowerCase().includes(kw)) return false
-    return true
-  })
+const logView = computed(() => {
+  const kw = debouncedKeyword.value
+  const lv = level.value
+  const c = { all: 0, info: 0, success: 0, warn: 0, error: 0 }
+  const out = []
+  for (const l of state.logs) {
+    const n = normLevel(l)
+    c.all++
+    c[n]++
+    if (lv !== 'all' && n !== lv) continue
+    if (kw && !String(l.message || '').toLowerCase().includes(kw)) continue
+    out.push(l)
+  }
+  return { counts: c, rows: out }
 })
+
+const counts = computed(() => logView.value.counts)
+const filtered = computed(() => logView.value.rows)
 
 function clear() {
   state.logs = []
@@ -181,6 +203,13 @@ watch(
   min-width: 60px;
   width: auto;
   outline: none;
+}
+
+/* 上面的 outline:none 会盖掉全局焦点环（scoped 选择器特异性更高），
+   键盘用户需要这一条才能看见焦点。 */
+.search input:focus-visible {
+  outline: 2px solid var(--c-info);
+  outline-offset: -2px;
 }
 
 .filter-card {

@@ -79,17 +79,34 @@ jobs:
             exit 1
           }
 
-      - name: Build frontend
+      # 前端测试与类型检查放在构建前：format/i18n/presets 都是纯函数，跑得快，
+      # 挂了就直接失败，不必等 vite 构建完才发现。typecheck 守的是 bridge.js
+      # 与 wailsjs 生成绑定之间的字段契约（后端改 Settings 时这里会先炸）。
+      - name: Test frontend
         working-directory: frontend
         run: |
           npm ci
-          npm run build
+          npm test
+          npm run typecheck
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      # 仓库已达到 0 issue，这里作为硬门禁：新增的未检查 error、未关闭的
+      # body、死代码都会在 CI 直接失败。
+      - name: golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+          golangci-lint run --timeout 5m
 
       - name: go vet
         run: go vet ./...
 
+      # -race 是必须的：托盘、监控、更新下载、停滞看门狗全都起常驻 goroutine，
+      # 共享状态只靠注释约定是不够的，竞态只会偶现在用户机器上。
       - name: go test
-        run: go test ./... -count=1
+        run: go test ./... -count=1 -race
 
       - name: Build app (wails)
         shell: pwsh

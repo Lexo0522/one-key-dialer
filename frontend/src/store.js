@@ -1,7 +1,7 @@
 // 全局响应式状态：Bootstrap 拉首帧，之后靠后端事件增量更新。
 import { reactive, watch } from 'vue'
 import { api, on, EV } from './bridge'
-import { resolveTheme, applyPalette } from './theme'
+import { resolveTheme, applyPalette, watchSystemTheme } from './theme'
 import { setLang, t } from './i18n'
 import { formatSpeed, formatBytes, formatDuration } from './format'
 import { showToast, toastPromise } from './toast'
@@ -569,9 +569,26 @@ export function resetSniffing() {
 
 // --------------------------------------------------------------- 动作 ----
 
+// system 主题下跟随 OS 深浅色切换的监听取消函数；只注册一次。
+let unwatchSystemTheme = null
+
 export function applyTheme() {
   state.theme = resolveTheme(state.themePref)
   applyPalette(state.theme)
+
+  // system 偏好时监听 OS 切换：不注册的话用户改系统深浅色后要重启才生效。
+  // 显式选了 light/dark 时不听，用户的选择优先。
+  if (state.themePref === 'system') {
+    if (!unwatchSystemTheme) {
+      unwatchSystemTheme = watchSystemTheme(() => {
+        state.theme = resolveTheme('system')
+        applyPalette(state.theme)
+      })
+    }
+  } else if (unwatchSystemTheme) {
+    unwatchSystemTheme()
+    unwatchSystemTheme = null
+  }
 }
 
 /** 合并设置并保存（防抖由后端负责）。 */

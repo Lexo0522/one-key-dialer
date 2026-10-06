@@ -51,6 +51,14 @@ var (
 	// 已消耗,消息循环永远等不到 WM_CLOSE。置位后由 onTrayReady 自行 Quit。
 	trayQuitReq atomic.Bool
 
+	// trayStopCh 关闭后唤醒 onTrayReady 起的两个常驻 goroutine(菜单点击
+	// 汇总循环 + 3s 刷新循环),让它们随托盘一同退出。systray 的 quit()
+	// 不关闭任何菜单项的 ClickedCh(它不调 MenuItem.Remove),所以原先靠
+	// for range ClickedCh 的循环永远退不出;这里改由 stopTray 主动关闭。
+	// Once 保证重复下线(ExitProgram 与重复实例自退两条链)只关一次。
+	trayStopCh   chan struct{}
+	trayStopOnce sync.Once
+
 	// refreshTray 的变更检测缓存(trayMu 保护):状态无变化时跳过
 	// SetTooltip/Enable/Disable,把跨线程菜单操作压到真实变化时才发生。
 	lastTooltip string
@@ -113,53 +121,42 @@ func onTrayReady() {
 	systray.AddSeparator()
 	mItemExit = systray.AddMenuItem(i18n.T("tray.exit"), "")
 
+	// 5 个菜单项的点击收到一个 goroutine 里处理，而不是各起一个常驻循环。
+	//
+	// 原来 5 个 `go func(){ for range mItemX.ClickedCh }()` 永不退出：systray
+	// 的 quit() 只投递 WM_CLOSE + 删图标，不调 MenuItem.Remove()，所以
+	// ClickedCh 不会被 close。那 5 个 goroutine 一直阻塞到 os.Exit——进程级
+	// 无害，但每加一个菜单项就多搭一个 goroutine，没有收益。
+	//
+	// 这里用一个 select 循环汇总，托盘下线时由 stopCh 统一唤醒退出。
+	// 语义保持：每个 case 只负责标记意图，动作在 trayDispatch 的 goroutine
+	// 里跑，不阻塞托盘消息循环线程。
+	stopCh := make(chan struct{})
+	trayStopOnce.Do(func() { trayStopCh = stopCh })
+
 	go func() {
-		for range mItemShow.ClickedCh {
-			trayMu.Lock()
-			a := trayApp
-			trayMu.Unlock()
-			if a != nil {
-				a.ShowWindow()
-			}
-		}
-	}()
-	go func() {
-		for range mItemDial.ClickedCh {
-			trayMu.Lock()
-			a := trayApp
-			trayMu.Unlock()
-			if a != nil && !a.isOnline() && !a.lifecycle.IsBusy() {
-				a.Dial()
-			}
-		}
-	}()
-	go func() {
-		for range mItemHangup.ClickedCh {
-			trayMu.Lock()
-			a := trayApp
-			trayMu.Unlock()
-			if a != nil && a.isOnline() && !a.lifecycle.IsBusy() {
-				a.Disconnect()
-			}
-		}
-	}()
-	go func() {
-		for range mItemUpdate.ClickedCh {
-			trayMu.Lock()
-			a := trayApp
-			trayMu.Unlock()
-			if a != nil {
-				a.CheckUpdate(true)
-			}
-		}
-	}()
-	go func() {
-		for range mItemExit.ClickedCh {
-			trayMu.Lock()
-			a := trayApp
-			trayMu.Unlock()
-			if a != nil {
-				a.ExitProgram()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-mItemShow.ClickedCh:
+				trayDispatch(app.ShowWindow)
+			case <-mItemDial.ClickedCh:
+				trayDispatch(func() {
+					if !app.isOnline() && !app.lifecycle.IsBusy() {
+						app.Dial()
+					}
+				})
+			case <-mItemHangup.ClickedCh:
+				trayDispatch(func() {
+					if app.isOnline() && !app.lifecycle.IsBusy() {
+						app.Disconnect()
+					}
+				})
+			case <-mItemUpdate.ClickedCh:
+				trayDispatch(func() { app.CheckUpdate(true) })
+			case <-mItemExit.ClickedCh:
+				trayDispatch(app.ExitProgram)
 			}
 		}
 	}()
@@ -169,19 +166,33 @@ func onTrayReady() {
 	trayMu.Unlock()
 	close(trayReadyCh)
 	app.refreshTray()
+
+	// 托盘刷新同样挂上 stopCh：原来只在 trayApp == nil 时退出，而 trayApp
+	// 从不被置 nil，等于没有退出条件。
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			trayMu.Lock()
-			a := trayApp
-			trayMu.Unlock()
-			if a == nil {
+		for {
+			select {
+			case <-stopCh:
 				return
+			case <-ticker.C:
 			}
-			a.refreshTray()
+			trayMu.Lock()
+			cur := trayApp
+			trayMu.Unlock()
+			if cur != nil {
+				cur.refreshTray()
+			}
 		}
 	}()
+}
+
+// trayDispatch 在 goroutine 里执行托盘动作。
+// 托盘回调跑在消息循环线程上，必须立即返回，实际动作都在这里异步执行；
+// a 在 onTrayReady 里已经解析过非 nil，此时直接用即可。
+func trayDispatch(fn func()) {
+	go fn()
 }
 
 func onTrayExit() {
@@ -211,6 +222,14 @@ func stopTray() {
 		return
 	}
 	trayQuitReq.Store(true)
+	// 唤醒 onTrayReady 里的菜单点击/刷新两个常驻 goroutine。放在最前面：
+	// 后面任一条等待分支超时后函数仍会返回，goroutine 不能因此挂住。
+	// Once 兜住重复调用（ExitProgram 与重复实例自退两条链都会走到这里）。
+	trayStopOnce.Do(func() {
+		if trayStopCh != nil {
+			close(trayStopCh)
+		}
+	})
 
 	// 等托盘装配完成(至多 1.5s);若消息循环在此期间已自行退出
 	// (onTrayReady 见 trayQuitReq 后 Quit),直接放行。

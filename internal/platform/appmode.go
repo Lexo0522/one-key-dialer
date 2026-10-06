@@ -46,9 +46,9 @@ func AcquireSingleInstance(name string, wait time.Duration) (acquired bool, rele
 			return true, func() {}
 		}
 		if !errors.Is(callErr, errorAlreadyExists) {
-			return true, func() { windows.CloseHandle(windows.Handle(handle)) }
+			return true, func() { _ = windows.CloseHandle(windows.Handle(handle)) }
 		}
-		windows.CloseHandle(windows.Handle(handle))
+		_ = windows.CloseHandle(windows.Handle(handle))
 		if wait <= 0 || !time.Now().Before(deadline) {
 			return false, func() {}
 		}
@@ -63,6 +63,7 @@ func ShowErrorBox(title, text string) {
 	if err1 != nil || err2 != nil {
 		return
 	}
-	procMessageBoxW.Call(0,
+	// 返回值是用户点了哪个按钮，本函数不关心，只看调用是否送达。
+	_, _, _ = procMessageBoxW.Call(0,
 		uintptr(unsafe.Pointer(textPtr)), uintptr(unsafe.Pointer(titlePtr)), 0x10 /*MB_ICONERROR*/)
 }

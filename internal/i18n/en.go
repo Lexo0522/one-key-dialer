@@ -128,6 +128,7 @@ var en = map[string]string{
 	"store.badSchema":          "Unsupported schemaVersion {0} (expected {1}): {2}",
 	"store.noData":             "Missing data field: {0}",
 	"store.fieldFailed":        "JSON field parse failed: {0} ({1})",
+	"store.aclFailed":          "Failed to tighten permissions on {0}: {1} (file holds credentials, check its ACL)",
 	"store.unknownFailure":     "Unknown failure",
 
 	"selfcheck.missing":      "Startup self-check: command {0} not found",

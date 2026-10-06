@@ -1552,6 +1552,12 @@ const statCards = computed(() => {
   color: var(--c-text);
 }
 
+/* 同 LogTab：outline:none 会盖掉全局焦点环，键盘用户需要显式补回。 */
+.ff input:focus-visible {
+  outline: 2px solid var(--c-info);
+  outline-offset: -2px;
+}
+
 .ff label {
   position: absolute;
   left: 10px;

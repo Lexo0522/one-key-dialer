@@ -136,6 +136,7 @@ var zh = map[string]string{
 	"store.badSchema":          "不支持的 schemaVersion {0}（期望 {1}）: {2}",
 	"store.noData":             "缺少 data 字段: {0}",
 	"store.fieldFailed":        "JSON 字段解析失败: {0} ({1})",
+	"store.aclFailed":          "收紧文件权限失败 {0}: {1}（文件含凭据，请检查 ACL）",
 	"store.unknownFailure":     "未知失败",
 
 	// 启动自检

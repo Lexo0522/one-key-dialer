@@ -1,0 +1,80 @@
+# golangci-lint v2 配置。
+#
+# 目标是把「被吞掉的 error」「没关的 body」「没 cancel 的 context」这类问题
+# 在 CI 里拦住，而不是留到真机上才暴露。所以启用规则刻意保守：
+# 只开能直接发现缺陷的那几个 linter，不碰格式/风格类项目（那是 gofmt 的活，
+# CI 已有 gofmt -l 检查）。
+#
+# 历史包袱仍在（平台层大量 syscall 返回值被有意忽略），所以 errcheck 先用
+# 排除清单放行 Windows API 调用与错误路径上的 Close，其余一律要求处理。
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck      # 未检查的 error 返回值
+    - govet         # go vet 的超集
+    - staticcheck   # 可疑构造、简化建议
+    - unused        # 未使用的导出/私有符号
+    - bodyclose     # http response body 未关闭
+    # contextcheck 暂不启用：它要求把 ctx 一路传到底，但本项目的底层探测
+    # 是同步 Win32 API（IcmpReachable / resolveIPv4 都不接 ctx），上游硬塞
+    # ctx 只会造出一堆接而不用的参数。等把这些 API 改成 ctx 版再开。
+
+  settings:
+    errcheck:
+      # 平台层里 .Call() 的第三个返回值是 GetLastError，本项目一律忽略；
+      # 这类调用点太多且都已各自判断过 errno，逐个包一层反而淹没真正的漏检。
+      exclude-functions:
+        - "syscall.Proc.Call"
+        - "(*syscall.Proc).Call"
+        - "(*syscall.LazyProc).Call"
+        - "(*windows.LazyProc).Call"
+        - "(*windows.LazyDLL).NewProc"
+      check-type-assertions: false
+      check-blank: false
+
+    staticcheck:
+      # ST1* 是风格与命名，交给 gopls / gofmt；SA4* 里先置零再返回的临时变量
+      # 模式在本仓库合法，暂排除。
+      checks:
+        - "all"
+        - "-ST1000"
+        - "-ST1003"
+        - "-ST1016"
+        - "-ST1020"
+        - "-ST1021"
+        - "-SA4006"
+
+  exclusions:
+    rules:
+      # 测试文件里 errcheck / bodyclose 一律放行：测试关心的是行为不是清理。
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+
+      # 错误路径上的 Close/Remove/SetDeadline：这些调用的失败基本无从处理
+      # （文件已经关了、"删除不存在的文件"本就不是错），逐处包一层 _ = 只会
+      # 把真正需要处理的漏检埋掉。只按错误信息匹配，不限调用形态——
+      # defer f.Close()、_ = f.Close()、helper 里的 f.Close() 都算。
+      - linters:
+          - errcheck
+        text: "Error return value of `[^`]*\\.(Close|Remove|Kill|SetDeadline)` is not checked"
+
+      # SA1019：syscall.Syscall6 弃用告警。替代品 SyscallN 需要 Go 1.22+，
+      # 而 go.mod 已锁 1.26，理论上可迁；但 ShellExecuteW 这条路径只在
+      # 托盘气泡通知时走，改动收益低，暂放行。
+      - linters:
+          - staticcheck
+        text: "SA1019"
+
+      # domReady 是 Wails OnDomReady 的回调挂点：方法本身为空实现，调用来自
+      # main.go 的方法引用而非直接调用，unused 识别不到这层间接关系。
+      - linters:
+          - unused
+        text: "domReady"

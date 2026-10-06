@@ -38,5 +38,14 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true
+  },
+  test: {
+    // 只跑 src 下的 *.test.js。environment 用 node 而非 jsdom：第一批测的
+    // 全是无 DOM 依赖的纯函数（format / i18n / presets），node 环境启动快、
+    // 也不引入额外依赖。哪天要测组件再单独给文件加 // @vitest-environment
+    // 注释，不必全局改成 jsdom。
+    environment: 'node',
+    include: ['src/**/*.test.js'],
+    globals: true
   }
 })

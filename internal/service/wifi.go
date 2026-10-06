@@ -138,18 +138,24 @@ func (s *WifiService) Configure(enabled bool, ssid string) {
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
+			// NewTimer + Reset 而不是每次 time.After：后者的 timer 要等
+			// 下一次触发才被回收，循环里反复新建等于每轮漏一个。Stop() 后
+			// 这里立刻退出，不会留下仍在跑的 WlanConnect。
 			delay := 2 * time.Second
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
 			for {
 				select {
 				case <-cancel:
 					return
-				case <-time.After(delay):
+				case <-timer.C:
 				}
 				cont, next := s.autoTick(cancel)
 				if !cont {
 					return
 				}
 				delay = next
+				timer.Reset(delay)
 			}
 		}()
 		return
@@ -218,6 +224,14 @@ func (s *WifiService) autoTick(cancel chan struct{}) (bool, time.Duration) {
 	}
 	if !visible {
 		return true, autoConnectInterval
+	}
+	// 置位前再确认自动连接没被停掉。WlanCurrent/WlanScanList 各要跑一两秒,
+	// 这期间用户可能已在设置里关掉自动连接(或调了 Stop);此时若照旧进入
+	// WlanConnect,会占着 connecting 挡住用户自己的手动连接,最坏白等 20 秒。
+	select {
+	case <-cancel:
+		return false, 0
+	default:
 	}
 	s.mu.Lock()
 	if s.connecting {

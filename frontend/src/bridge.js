@@ -1,10 +1,59 @@
 // 后端桥接层：Wails 环境下走真实绑定，浏览器 dev 模式下走内存 mock，
 // 便于脱离 Windows 环境做界面校验。
 // 绑定名来自 UI 进程绑定的 UIApp 结构（方法名与代理侧 App 一致）。
+// @ts-check
 import * as AppApi from '../wailsjs/go/main/UIApp.js'
 import { EventsOn } from '../wailsjs/runtime/runtime.js'
+/**
+ * Settings 的字段契约。
+ *
+ * 本该从 wailsjs/go/models.ts 的 main.Settings 导入，但 TS 在 allowJs 下
+ * 解析 .ts 里的 `export namespace` 嵌套成员有缺陷（TS2694），实测三条
+ * moduleResolution 都一样，所以这里手写一份等价的 typedef。
+ *
+ * 代价是多一处要同步；收益是后端改字段名/删字段时，下面的 MOCK_SETTINGS
+ * 仍然会在 tsc 报错——mock 与真实绑定契约的一致性仍然有人看守。
+ * 后端动 Settings 时（internal/model/settings.go）记得同步这里。
+ *
+ * @typedef {Object} Settings
+ * @property {number} intervalSeconds
+ * @property {boolean} autoReconnect
+ * @property {boolean} autoStart
+ * @property {boolean} startMinimized
+ * @property {boolean} disconnectOnNoInternet
+ * @property {boolean} updateCheckEnabled
+ * @property {boolean} autoInstallUpdate
+ * @property {string} uiTheme
+ * @property {string} pppoePort
+ * @property {string} pppoeDevice
+ * @property {boolean} proxyEnabled
+ * @property {boolean} wifiAutoConnect
+ * @property {string} wifiPreferredSsid
+ * @property {boolean} portalAuthEnabled
+ * @property {string} portalPreset
+ * @property {string} portalLoginUrl
+ * @property {string} portalMethod
+ * @property {string} portalBody
+ * @property {string} portalHeaders
+ * @property {string} portalSuccessHint
+ * @property {string} portalPreset
+ * @property {boolean} lowMemRender
+ * @property {boolean} proxyEnabled
+ * @property {string} proxyType
+ * @property {string} proxyHost
+ * @property {string} proxyPort
+ * @property {string} proxyBypass
+ * @property {?Array<*>} speedSites
+ */
 
-export const isWails = typeof window !== 'undefined' && !!window.go && !!window.runtime
+/**
+ * Wails 运行时注入的全局对象。浏览器 dev 下不存在，所以各处都要判空。
+ * 显式走 window 取值再判定，代码形状不变，交给 ts-check 时不再报
+ * "Property 'go' does not exist"——重点是让类型检查覆盖到真正的契约上。
+ */
+const wailsWindow = /** @type {any} */ (window)
+
+export const isWails = typeof window !== 'undefined' && !!wailsWindow.go && !!wailsWindow.runtime
 
 // 事件名（与 Go 侧常量保持一致）
 export const EV = {
@@ -33,29 +82,40 @@ export function on(event, handler) {
 
 // ---------------------------------------------------------------- mock ----
 
+/** @type {Settings} */
+const MOCK_SETTINGS = {
+  intervalSeconds: 30,
+  autoReconnect: false,
+  autoStart: false,
+  startMinimized: false,
+  disconnectOnNoInternet: false,
+  updateCheckEnabled: true,
+  autoInstallUpdate: true,
+  uiTheme: 'system',
+  wifiAutoConnect: false,
+  wifiPreferredSsid: '',
+  portalAuthEnabled: false,
+  portalPreset: 'generic',
+  portalLoginUrl: '',
+  portalMethod: 'POST',
+  portalBody: '',
+  portalHeaders: '',
+  portalSuccessHint: '',
+  speedSites: null,
+  pppoePort: '',
+  pppoeDevice: '',
+  proxyEnabled: false,
+  proxyType: 'system',
+  proxyHost: '',
+  proxyPort: '',
+  proxyBypass: '',
+  lowMemRender: false
+}
+
 const MOCK_STATE = {
   version: '1.2.1',
   displayVersion: 'v1.2.1',
-  settings: {
-    intervalSeconds: 30,
-    autoReconnect: false,
-    autoStart: false,
-    startMinimized: false,
-    disconnectOnNoInternet: false,
-    updateCheckEnabled: true,
-    autoInstallUpdate: true,
-    uiTheme: 'system',
-    wifiAutoConnect: false,
-    wifiPreferredSsid: '',
-    portalAuthEnabled: false,
-    portalPreset: 'generic',
-    portalLoginUrl: '',
-    portalMethod: 'POST',
-    portalBody: '',
-    portalHeaders: '',
-    portalSuccessHint: '',
-    speedSites: null // null = 未配置过 → 前端展示内置默认站点
-  },
+  settings: MOCK_SETTINGS,
   broadband: { username: '20210001', hasPassword: true },
   online: false,
   logs: [

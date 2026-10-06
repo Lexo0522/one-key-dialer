@@ -140,3 +140,41 @@ export function resolveTheme(pref) {
   if (pref === 'light') return 'light'
   return systemPrefersDark() ? 'dark' : 'light'
 }
+
+const darkQuery = '(prefers-color-scheme: dark)'
+
+/**
+ * 监听系统深浅色变化。system 偏好下用户在「设置 → 个性化 → 颜色」里切换
+ * 后应用会跟着变，不必重启。返回取消监听的函数。
+ *
+ * 只注册一次：多组件同时调也复用同一个 MediaQueryList 监听。
+ */
+let watching = null
+let watchCount = 0
+
+export function watchSystemTheme(onChange) {
+  if (typeof window === 'undefined' || !window.matchMedia) return () => {}
+  if (!watching) {
+    watching = window.matchMedia(darkQuery)
+  }
+  const mql = watching
+  const handler = () => onChange(resolveTheme('system'))
+  // Safari < 14 只有 addListener；两者都注册一次以便后续统一移除。
+  if (mql.addEventListener) {
+    mql.addEventListener('change', handler)
+  } else if (mql.addListener) {
+    mql.addListener(handler)
+  }
+  watchCount++
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    watchCount--
+    if (mql.removeEventListener) {
+      mql.removeEventListener('change', handler)
+    } else if (mql.removeListener) {
+      mql.removeListener(handler)
+    }
+  }
+}

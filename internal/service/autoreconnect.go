@@ -114,17 +114,22 @@ func (s *AutoReconnectService) Start(intervalSeconds int, dialImmediately bool) 
 			firstDelay = 0
 		}
 		delay := firstDelay
+		// NewTimer + Reset：time.After 在循环里每轮都新建 timer，短间隔下
+		// （首次 0、重连退避起步 5s）未触发的 timer 要等 GC 前一直保留。
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
 		for {
 			select {
 			case <-cancel:
 				return
-			case <-time.After(delay):
+			case <-timer.C:
 			}
 			ok, next := s.tick(cancel)
 			if !ok {
 				return
 			}
 			delay = next
+			timer.Reset(delay)
 		}
 	}()
 }

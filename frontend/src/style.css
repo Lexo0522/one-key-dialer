@@ -133,6 +133,17 @@ select:focus {
   border-color: var(--c-info);
 }
 
+/* 键盘焦点环：outline 只在 focus-visible 出现（鼠标点击不显示），用
+   outline 而不是 border-color——轻量化模式把 transition/animation 全关了，
+   靠 transition 表达的焦点会直接消失。 */
+input:focus-visible,
+select:focus-visible,
+.btn:focus-visible,
+.icon-btn:focus-visible {
+  outline: 2px solid var(--c-info);
+  outline-offset: 1px;
+}
+
 input[type="number"] {
   width: 68px;
 }
@@ -384,32 +395,6 @@ table.grid tbody tr.selected td {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 10px;
-}
-
-/* 单选列表 */
-.pick-list {
-  max-height: 220px;
-  overflow: auto;
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-sm);
-}
-
-.pick-item {
-  padding: 6px 9px;
-  cursor: pointer;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pick-item:hover {
-  background: var(--c-bg);
-}
-
-.pick-item.sel {
-  background: var(--c-table-sel);
-  color: var(--c-table-sel-fg);
 }
 
 /* ---------------- 轻量化模式：收敛动画与阴影 ---------------- */

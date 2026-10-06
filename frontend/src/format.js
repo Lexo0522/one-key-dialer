@@ -4,9 +4,17 @@ const MB = KB * 1024
 const GB = MB * 1024
 const TB = GB * 1024
 
+/** 归一化输入：非数字/NaN 一律按 0；负值也按 0（速率与流量不会为负，
+ *  采样回绕或上游算出负差额时会显示成 "-5 B/s"，宁可显示 0）。 */
+function norm(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n < 0) return 0
+  return n
+}
+
 /** 速率：字节/秒 → 人类可读（B/s, KB/s, MB/s, GB/s）。 */
 export function formatSpeed(bytesPerSec) {
-  const v = Number(bytesPerSec) || 0
+  const v = norm(bytesPerSec)
   if (v < KB) return `${v} B/s`
   if (v < MB) return `${(v / KB).toFixed(1)} KB/s`
   if (v < GB) return `${(v / MB).toFixed(2)} MB/s`
@@ -16,7 +24,7 @@ export function formatSpeed(bytesPerSec) {
 
 /** 流量总量：字节 → 人类可读。 */
 export function formatBytes(bytes) {
-  const v = Number(bytes) || 0
+  const v = norm(bytes)
   if (v < KB) return `${v} B`
   if (v < MB) return `${(v / KB).toFixed(1)} KB`
   if (v < GB) return `${(v / MB).toFixed(2)} MB`

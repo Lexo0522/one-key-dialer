@@ -72,7 +72,7 @@ const (
 func getIfTableBytes() ([]byte, int, bool) {
 	var size uint32
 	// 第一次调用传空缓冲,取所需大小(返回 ERROR_INSUFFICIENT_BUFFER)
-	procGetIfTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
+	_, _, _ = procGetIfTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
 	if size < uint32(4+mibIfRowSize) || size > 16<<20 {
 		return nil, 0, false
 	}
@@ -136,6 +136,45 @@ type mibIfRow2 struct {
 
 const mibIfRow2Size = unsafe.Sizeof(mibIfRow2{})
 
+// 这些偏移全部是手工校准出来的：注释写 1152，字段就靠 [60]byte 占位凑到那儿。
+// 一旦有人在中间插字段或改占位长度，偏移会整体错位而编译毫无怨言——
+// 表现是物理网卡判定整体失效（Flags 读到了别的字段），或 Speed 读出个
+// 荒诞值。所以把注释里的数字变成运行期断言：错就在启动时 panic。
+const (
+	wantMibIfRow2Size     = 1352
+	offMibFlags           = 1152
+	offMibOperStatus      = 1156
+	offMibSpeed           = 1192
+	offMibPhysicalAddress = 1060
+	offMibAlias           = 28
+	offMibDescription     = 542
+)
+
+func init() {
+	var row mibIfRow2
+	if mibIfRow2Size != wantMibIfRow2Size {
+		panic("iphlpapi: MIB_IF_ROW2 stride changed (expected 1352 bytes)")
+	}
+	checks := []struct {
+		name string
+		got  uintptr
+		want uintptr
+	}{
+		{"Alias", unsafe.Offsetof(row.Alias), offMibAlias},
+		{"Description", unsafe.Offsetof(row.Description), offMibDescription},
+		{"PhysAddrLength", unsafe.Offsetof(row.PhysAddrLength), 1056},
+		{"PhysicalAddress", unsafe.Offsetof(row.PhysicalAddress), offMibPhysicalAddress},
+		{"Flags", unsafe.Offsetof(row.Flags), offMibFlags},
+		{"OperStatus", unsafe.Offsetof(row.OperStatus), offMibOperStatus},
+		{"Speed", unsafe.Offsetof(row.Speed), offMibSpeed},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			panic("iphlpapi: MIB_IF_ROW2 field " + c.name + " offset mismatch")
+		}
+	}
+}
+
 const (
 	flagHardwareInterface = 1 << 0
 	flagConnectorPresent  = 1 << 2
@@ -160,7 +199,7 @@ func walkPhysicalEthernetRows(fn func(row *mibIfRow2)) bool {
 	if r1, _, _ := procGetIfTable2.Call(uintptr(unsafe.Pointer(&tbl))); r1 != 0 || tbl == nil {
 		return false
 	}
-	defer procFreeMibTable.Call(uintptr(tbl))
+	defer func() { _, _, _ = procFreeMibTable.Call(uintptr(tbl)) }()
 
 	// 表头为两个 ULONG：NumEntries / TotalNumEntries，行紧随其后
 	num := int(binary.LittleEndian.Uint32(unsafe.Slice((*byte)(tbl), 8)))
@@ -291,7 +330,7 @@ func IcmpReachable(host string, timeoutMs int) bool {
 	if h == 0 || h == ^uintptr(0) {
 		return false
 	}
-	defer procIcmpCloseHandle.Call(h)
+	defer func() { _, _, _ = procIcmpCloseHandle.Call(h) }()
 
 	const payloadSize = 32 // 与 ping.exe 默认载荷一致
 	req := make([]byte, payloadSize)

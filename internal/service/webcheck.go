@@ -102,7 +102,9 @@ func probeOnce(method, url string) bool {
 	if err != nil {
 		return false
 	}
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 1))
+	// 读掉一点 body 再关：让连接能回到连接池复用，否则每次探测都重新握手。
+	// 读失败无所谓——探测结论只看状态码，连接池充其量不复用，不影响正确性。
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1))
 	resp.Body.Close()
 	return resp.StatusCode < 500
 }
@@ -165,19 +167,27 @@ func FetchIPInfo() IPInfo {
 }
 
 // splitOrg 把 ipinfo 的 "AS4134 Chinanet" 拆成 AS 号与运营商名。
+// splitOrg 把 ipinfo 的 "AS4134 Chinanet" 拆成 AS 号与运营商名。
+//
+// 按连续空白切分而不是单个空格：ipinfo 返回的字段分隔可能是多空格，
+// 只用 " " 切会把前导空白留在运营商名里（界面显示成 " Chinanet"）。
 func splitOrg(org string) (as, isp string) {
-	fields := strings.SplitN(strings.TrimSpace(org), " ", 2)
-	if len(fields) > 0 && strings.HasPrefix(fields[0], "AS") {
+	fields := strings.Fields(strings.TrimSpace(org))
+	if len(fields) == 0 {
+		return "", ""
+	}
+	if strings.HasPrefix(fields[0], "AS") {
 		if _, err := strconv.Atoi(fields[0][2:]); err == nil {
 			as = fields[0]
+			// AS 号后面剩下的才是运营商名；没有则留空。
+			if len(fields) > 1 {
+				isp = strings.Join(fields[1:], " ")
+			}
+			return as, isp
 		}
 	}
-	if len(fields) > 1 {
-		isp = fields[1]
-	} else if as == "" {
-		isp = strings.TrimSpace(org)
-	}
-	return as, isp
+	// 首段不是合法 AS 号时整串都当运营商名（如 "Chinanet"）。
+	return "", strings.Join(fields, " ")
 }
 
 // defaultLocalIP 用 UDP connect 取默认路由上的本机地址（不实际发包）。

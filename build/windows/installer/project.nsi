@@ -56,9 +56,21 @@ ManifestDPIAware true
 !define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
 !define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
+# Finish-page checkbox that launches the app after setup. Checking/unchecking
+# and launching are handled entirely by the Modern UI.
+# The box is checked by default: MUI only has MUI_FINISHPAGE_RUN_NOTCHECKED to
+# opt out, there is no _RUN_CHECKED counterpart, so nothing is defined here.
+# These defines must appear before MUI_PAGE_FINISH, like MUI_ICON above.
+# The label stays in Chinese: the installer ships only the English language
+# file, but the product UI is Chinese, so a translated label reads better next
+# to an otherwise English wizard.
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
+!define MUI_FINISHPAGE_RUN_TEXT "立即启动 $(INFO_PRODUCTNAME)"
+
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
 # !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
 !insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
+!insertmacro MUI_PAGE_COMPONENTS # Lets the user pick the optional desktop shortcut.
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
 
@@ -87,6 +99,9 @@ Function .onInit
    !insertmacro wails.checkArchitecture
 FunctionEnd
 
+# The main section stays unnamed (hidden): the program itself is not optional
+# and must not show up on the components page. That leaves exactly one tickable
+# item there, plus the default "Typical" install type in the drop-down above it.
 Section
     !insertmacro wails.setShellContext
 
@@ -97,12 +112,23 @@ Section
     !insertmacro wails.files
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
 
     !insertmacro wails.writeUninstaller
+SectionEnd
+
+# The desktop shortcut is its own optional section: when unchecked, none of the
+# code below runs and nothing at all is left on the desktop.
+# It is checked by default so the behavior matches the MSI's ADDDESKTOP=1 --
+# a desktop entry is what most people expect from a dialer. Anyone wanting a
+# clean install just unticks it on this one page.
+Section "桌面快捷方式"
+    # Which desktop $DESKTOP resolves to depends on the shell context set by
+    # wails.setShellContext (per-machine here). It has to be read after the main
+    # section has run, and NSIS executes sections in script order, so this works.
+    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 SectionEnd
 
 Section "uninstall"
@@ -112,6 +138,9 @@ Section "uninstall"
 
     RMDir /r $INSTDIR
 
+    # Both lines cover both cases: if the desktop shortcut was installed it is
+    # deleted; if the user left it unticked the file never existed, and Delete
+    # silently does nothing for a missing file, so no state check is needed.
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
 

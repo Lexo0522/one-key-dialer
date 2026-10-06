@@ -47,6 +47,9 @@
       <Directory Id="ProgramMenuFolder">
         <Directory Id="AppProgramMenuFolder" Name="$(var.ProductName)"/>
       </Directory>
+      <!-- Desktop 是 Windows Installer 的预定义目录 Id：安装期解析为当前
+           用户自己的桌面（不是 All Users 桌面），不需要额外 DirectoryRef。 -->
+      <Directory Id="DesktopFolder"/>
     </Directory>
 
     <DirectoryRef Id="INSTALLFOLDER">
@@ -77,10 +80,76 @@
       </Component>
     </DirectoryRef>
 
+    <!-- 桌面快捷方式独立成组件，由欢迎页的 ADDDESKTOP 复选框按需安装：
+         勾选则创建，不勾则连空桌面都不留。卸载时随组件一起清除。
+         这里刻意没有 RemoveFolder：AppProgramMenuFolder 是安装时自建的
+         子目录，卸载该清掉；DesktopFolder 是系统目录，一条 RemoveFolder
+         On="uninstall" 会在卸载时尝试删掉桌面本身。快捷方式自身的清理由
+         MSI 的 Shortcut/RemoveFile 表负责，不需要也不能自己删目录。 -->
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="{3F1A5C82-6B94-4E2D-8C71-2A9D4E6B0C58}">
+        <Shortcut Id="AppDesktopShortcut"
+                  Name="$(var.ProductName)"
+                  Description="PPPoE 校园网拨号工具"
+                  Target="[INSTALLFOLDER]PPPoEDialer.exe"
+                  WorkingDirectory="INSTALLFOLDER"/>
+        <RegistryValue Root="HKCU"
+                       Key="Software\$(var.Manufacturer)\$(var.ProductName)"
+                       Name="desktop_installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes"/>
+        <Condition><![CDATA[ADDDESKTOP=1]]></Condition>
+      </Component>
+    </DirectoryRef>
+
     <Feature Id="ProductFeature" Title="$(var.ProductName)" Level="1">
       <ComponentRef Id="MainExecutable"/>
       <ComponentRef Id="ApplicationShortcut"/>
+      <ComponentRef Id="DesktopShortcut"/>
     </Feature>
+
+    <!-- 欢迎页的两个选项。默认都勾上：对拨号工具而言桌面入口 + 装完即用是
+         多数人的预期。
+
+         这两个默认值只在「有人机交互的安装」下成立。应用内更新（internal/update
+         的 writeMsiApplyScript）会显式传 SILENTUPDATE=1，并在 msiexec 上加 /qn，
+         所以更新走的是完全静默的安装：UI 序列不运行，两个复选框根本不出现，
+         这里的默认值也就无从被用户改掉。 -->
+    <Property Id="ADDDESKTOP" Value="1"/>
+    <Property Id="LAUNCHAPP" Value="1"/>
+
+    <!-- 装完立即启动。自定义动作直接以 FileKey 指向安装后的 exe（MSI 原生的
+         type 18 自定义操作），不引 WixUtilExtension——少一个链接期依赖，
+         也不用给 light 加 -ext。
+         Execute="deferred" 且排在 InstallFinalize 之后：此刻文件已就位、
+         注册表项已提交，exe 一定是完整可执行的。
+         Return="ignore"：启动失败（被安全软件拦、权限异常等）绝不把整个
+         安装判成失败，安装本身已经把活干完了。
+         Impersonate="yes"：以当前用户身份启动（perMachine 安装下服务账号
+         拉起桌面程序会落在错误的会话里）。
+
+         为什么要 SILENTUPDATE 而不是 UILevel：msiexec /i 省略 /q 时 UI 级别
+         是 MsiSetInternalUI 文档里的 DEFAULT，GUI 进程落到 FULL(5) 而非
+         静默(2)，靠 UILevel<>2 拦不住应用内更新。而更新脚本自己会在装完
+         重启应用，这里再拉一次只会和它打架、让用户以为更新卡住了，所以
+         「是不是程序内更新」这件事只能由调用方显式告知：SILENTUPDATE=1。
+
+         SILENTUPDATE 不出现在上面的 Property 表里：Property 表的 Value 列
+         不允许空串，而这里只需要「命令行传了就是 1、没传就是空」这两种
+         状态。未设置的属性在条件语法里求值为空串，NOT SILENTUPDATE=1
+         自然成立；真要写一条空值 Property，candle 只会给个
+         PropertyUseless 警告。 -->
+    <CustomAction Id="LaunchApp"
+                  FileKey="PPPoEDialerExe"
+                  ExeCommand=""
+                  Return="ignore"
+                  Execute="deferred"
+                  Impersonate="yes"/>
+
+    <InstallExecuteSequence>
+      <Custom Action="LaunchApp" After="InstallFinalize"><![CDATA[LAUNCHAPP=1 AND NOT SILENTUPDATE=1 AND NOT Installed]]></Custom>
+    </InstallExecuteSequence>
 
     <Property Id="ARPHELPLINK" Value="https://github.com/Lexo0522/one-key-dialer"/>
     <Property Id="ARPPRODUCTICON" Value="AppIcon"/>
@@ -93,5 +162,41 @@
          runtime property of the same name only carries the extracted file. -->
     <WixVariable Id="WixUILicenseRtf" Value="$(var.LicensePath)"/>
     <UIRef Id="WixUI_Minimal"/>
+
+    <!-- 在 WixUI_Minimal 的 EULA 页上加两个复选框。
+
+         写法说明：这里用 UI/Dialog（不是 DialogRef）重新声明 WelcomeEulaDlg。
+         WiX 的 ParseDialogElement 只做 CreateRow、不查重，Dialog 表与
+         Control 表都以 (Dialog, Control) 为主键合并，所以这样能增量地
+         往 wixlib 提供的官方对话框里加控件/改几何，而无需整页重画。
+         代价是被重新声明的 LicenseText 必须把官方属性写全——官方那行的
+         Text 是本地化字符串 !(wix.WixUILicenseRtf=...)，合并时以本文件
+         为准，故在这里原样复刻。
+
+         几何：官方 LicenseText 占 Y=36..198（Height=162）。改写为
+         Y=36..152（Height=116）给复选框腾位；官方许可复选框在 Y=207
+         保持不动；两个新复选框放 Y=157 与 Y=182，行高 20，正好落在
+         上述两者之间的空档。Width=226 与官方控件一致。 -->
+    <UI>
+      <Dialog Id="WelcomeEulaDlg" Width="370" Height="270" Title="!(loc.WelcomeEulaDlg_Title)">
+        <Control Id="LicenseText" Type="ScrollableText" X="130" Y="36" Width="226" Height="116" Sunken="yes" TabSkip="no">
+          <Text SourceFile="!(wix.WixUILicenseRtf=$(var.licenseRtf))"/>
+        </Control>
+        <Control Id="AddDesktopCheckBox"
+                 Type="CheckBox"
+                 X="130" Y="157"
+                 Width="226" Height="20"
+                 Property="ADDDESKTOP"
+                 CheckBoxValue="1"
+                 Text="创建桌面快捷方式"/>
+        <Control Id="LaunchAppCheckBox"
+                 Type="CheckBox"
+                 X="130" Y="182"
+                 Width="226" Height="20"
+                 Property="LAUNCHAPP"
+                 CheckBoxValue="1"
+                 Text="立即启动应用"/>
+      </Dialog>
+    </UI>
   </Product>
 </Wix>

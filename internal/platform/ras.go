@@ -19,27 +19,92 @@ import (
 //   - SDK 布局（Win11 24H2 之前）：1968 字节，szUserName@888、szPassword@1402
 //   - 24H2 布局（build >= 26100）：2096 字节，dwCallbackId 后插入 146 个不透明字节，
 //     szUserName@1034、szPassword@1548，且去掉了 dwIfIndex/guidId
+//
+// 这里的偏移全部是裸常数，没有结构体可以对照——一个数字写错不会编译失败，
+// 只会把拨号密码写进相邻字段，或让 RasDial 悄悄认证失败。所以下面所有字段
+// 容量都从相邻偏移的差推导（而不是另写一个魔法长度），再配一组 init() 断言
+// 把「容量 × 2 字节」与「到下一个字段的距离」锁死。
 const (
 	structSizeSdk     = 1968
 	structSize24H2    = 2096
 	build24H2         = 26100
-	offSize           = 0
-	offEntryName      = 4   // [257]uint16
-	offPhoneNumber    = 518 // [129]uint16
-	offCallbackNumber = 776 // [49]uint16
-	offSubEntry       = 876 // uint32
-	offCallbackId     = 880 // uint64 (ULONG_PTR)
-	offUserNameSdk    = 888 // [257]uint16
-	offUserName24H2   = 1034
-	offPasswordSdk    = 1402 // [257]uint16
+	offSize           = 0    // DWORD dwSize
+	offEntryName      = 4    // WCHAR szEntryName[257]
+	offPhoneNumber    = 518  // WCHAR szPhoneNumber[129]
+	offCallbackNumber = 776  // WCHAR szCallbackNumber[49]
+	offSubEntry       = 876  // DWORD dwSubEntry
+	offCallbackId     = 880  // ULONG_PTR dwCallbackId
+	offUserNameSdk    = 888  // WCHAR szUserName[257]
+	offUserName24H2   = 1034 // 24H2 把 dwCallbackId 之后加宽了 146 字节
+	offPasswordSdk    = 1402 // WCHAR szPassword[257]
 	offPassword24H2   = 1548
-	offDomainSdk      = 1916 // [16]uint16
+	offDomainSdk      = 1916 // WCHAR szDomain[16]
 	offDomain24H2     = 2062
-	maxEntryName      = 257
-	maxUserName       = 257
-	maxPassword       = 257
-	maxDomain         = 16
+
+	// 字段容量（字符数，含结尾的 \0）。前三个由相邻字段偏移推导，
+	// szDomain 是结构体最后一个字段，所以它的容量不能由"到下一个字段的
+	// 距离"推导——实际推算下来 SDK 尾部还剩 26 个字符位、24H2 剩 17 个，
+	// 而 RASDIALPARAMSW 的 szDomain 声明只有 16，剩下的是结构体尾部填充。
+	// 因此 szDomain 单独用声明的 maxDomain 校验，只要求它落在结构体内。
+	capEntryName  = (offPhoneNumber - offEntryName) / 2      // 516/2 = 256+1
+	capPhoneNum   = (offCallbackNumber - offPhoneNumber) / 2 // 258/2 = 128+1
+	capCallbackNo = (offSubEntry - offCallbackNumber) / 2    // 100/2 = 49+1
+	capUserName   = (offPasswordSdk - offUserNameSdk) / 2
+	capUserNameN  = (offPassword24H2 - offUserName24H2) / 2
+	capPassword   = (offDomainSdk - offPasswordSdk) / 2
+	capPasswordN  = (offDomain24H2 - offPassword24H2) / 2
 )
+
+// 拨号时实际使用的容量上限。putUTF16 会按这个数截断并在末位补 \0，
+// 写越界就会踩到相邻字段。
+const (
+	maxEntryName = 257
+	maxUserName  = 257
+	maxPassword  = 257
+	maxDomain    = 16
+)
+
+func init() {
+	panics := func(cond bool, msg string) {
+		if !cond {
+			panic("ras: " + msg)
+		}
+	}
+	// 两种结构体大小必须是 4 的倍数（DWORD 对齐），否则偏移基线就错了。
+	panics(structSizeSdk%4 == 0 && structSize24H2%4 == 0, "struct size not DWORD-aligned")
+	// 24H2 布局必须比 SDK 布局大，差值应是 dwCallbackId 之后插入的不透明块。
+	panics(structSize24H2 > structSizeSdk, "24H2 layout smaller than SDK layout")
+	panics(offUserName24H2-offUserNameSdk == offPassword24H2-offPasswordSdk,
+		"userName/password displacement into 24H2 differs")
+
+	// 字段容量必须与推导值一致（这些字段都被下一个字段紧贴着，差一位就会
+	// 越过边界写进邻居）。
+	panics(capEntryName == maxEntryName, "capEntryName mismatch")
+	panics(capUserName == maxUserName && capUserNameN == maxUserName, "capUserName mismatch")
+	panics(capPassword == maxPassword && capPasswordN == maxPassword, "capPassword mismatch")
+
+	// 每个字段的字符数 × 2 字节必须正好落到下一个字段的起点上；对每个布局
+	// 单独校验一次，这样任一处偏移写错都会在启动时直接 panic，而不是静默
+	// 把密码写进 szCallbackNumber 之类。
+	panics(offEntryName+capEntryName*2 == offPhoneNumber, "entryName overruns phoneNumber")
+	panics(offPhoneNumber+capPhoneNum*2 == offCallbackNumber, "phoneNumber overruns callbackNumber")
+	panics(offCallbackNumber+capCallbackNo*2 == offSubEntry, "callbackNumber overruns subEntry")
+	panics(offUserNameSdk+capUserName*2 == offPasswordSdk, "sdk userName overruns password")
+	panics(offPasswordSdk+capPassword*2 == offDomainSdk, "sdk password overruns domain")
+	panics(offUserName24H2+capUserNameN*2 == offPassword24H2, "24H2 userName overruns password")
+	panics(offPassword24H2+capPasswordN*2 == offDomain24H2, "24H2 password overruns domain")
+
+	// szDomain 是最后一个字段，只要求声明的容量落在结构体内（尾部还有填充）。
+	panics(maxDomain > 0, "maxDomain must be positive")
+	panics(offDomainSdk+maxDomain*2 <= structSizeSdk, "sdk domain overruns struct end")
+	panics(offDomain24H2+maxDomain*2 <= structSize24H2, "24H2 domain overruns struct end")
+
+	// 头部字段在两个布局里是共用的，必须落在同样的位置。
+	panics(offSize+4 <= offEntryName && offEntryName < offPhoneNumber &&
+		offPhoneNumber < offCallbackNumber && offCallbackNumber < offSubEntry &&
+		offSubEntry < offCallbackId && offCallbackId < offUserNameSdk &&
+		offCallbackId < offUserName24H2, "header fields out of order")
+}
 
 // disconnectTimeout rasdial /disconnect 的超时。
 const disconnectTimeout = 30 * time.Second
