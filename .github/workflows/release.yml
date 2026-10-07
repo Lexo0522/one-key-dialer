@@ -126,18 +126,33 @@ jobs:
       - name: Ensure WiX toolset v3 (candle/light for the MSI)
         shell: pwsh
         run: |
+          # 老逻辑只判断 Get-Command candle.exe，命中的是 runner 镜像 PATH 上
+          # 某个 candle（不保证是 v3.14），一旦它不是 v3，candle 会在第 11 步
+          # 用几毫秒解析完就失败，错误被 PowerShell 的 terminating 行为吃掉，
+          # 只留下 "Process completed with exit code 1"，无法定位。
+          # 这里改成：显式产出可用的 v3.14 bin 目录，并把解析结果与版本打出来。
           $wixBin = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
-          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
-            if (-not (Test-Path (Join-Path $wixBin 'candle.exe'))) {
-              Write-Host "candle.exe not found - installing WiX via chocolatey"
-              choco install wixtoolset -y --no-progress
-            }
-            if (Test-Path (Join-Path $wixBin 'candle.exe')) {
-              Add-Content $env:GITHUB_PATH $wixBin
-            } else {
-              Write-Error "WiX toolset binary directory not found after install"
-              exit 1
-            }
+          $resolved = Get-Command candle.exe -ErrorAction SilentlyContinue
+          if ($resolved) {
+            Write-Host "candle.exe already on PATH: $($resolved.Source)"
+          }
+          if (-not (Test-Path (Join-Path $wixBin 'candle.exe'))) {
+            Write-Host "v3.14 candle.exe missing at $wixBin - installing WiX via chocolatey"
+            choco install wixtoolset --version 3.14.1.20250415 -y --no-progress
+          }
+          if (-not (Test-Path (Join-Path $wixBin 'candle.exe'))) {
+            Write-Error "WiX toolset binary directory not found after install: $wixBin"
+            exit 1
+          }
+          # 把该目录插到 PATH 最前面，保证第 11 步的 candle/light 一定解析到这里，
+          # 而不是镜像 PATH 上可能存在的其他版本（PATH 顺序由前面的镜像项决定）。
+          $env:PATH = "$wixBin;$env:PATH"
+          Write-Host "Using WiX v3 bin: $wixBin"
+          $ver = & "$wixBin\candle.exe" -nologo -? 2>&1 | Select-Object -First 1
+          Write-Host "candle banner: $ver"
+          if (-not (Test-Path (Join-Path $wixBin 'light.exe'))) {
+            Write-Error "light.exe missing in $wixBin"
+            exit 1
           }
 
       - name: Package ZIP + MSI + SHA256SUMS
@@ -159,20 +174,44 @@ jobs:
           Compress-Archive -Path $payload -DestinationPath $zip -Force
 
           $wixSrc = "build/windows/installer/Product.wxs"
-          & candle.exe -nologo -out release\ `
+          # 用上一步显式解析出的 v3.14 路径调用，避免依赖 PATH 解析顺序。
+          # -nologo 静默 banner；candle/light 的非零退出是 terminating 的，
+          # 这里先临时关闭 ErrorActionPreference，把错误文本完整打出来再退出，
+          # 否则日志里只剩 "Process completed with exit code 1"，无法定位。
+          $wixBin = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
+          Write-Host "candle: $wixBin\candle.exe"
+          $oldEap = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          & "$wixBin\candle.exe" -nologo -out release\ `
             -dVersion="$rev" `
             -dSrcDir="build/bin" `
             -dIconPath="build/windows/icon.ico" `
             -dLicensePath="build/windows/installer/license.rtf" `
             $wixSrc
-          if ($LASTEXITCODE -ne 0) { Write-Error "candle.exe failed"; exit 1 }
+          $candleExit = $LASTEXITCODE
+          $ErrorActionPreference = $oldEap
+          if ($candleExit -ne 0) {
+            Write-Error "candle.exe failed with exit code $candleExit"
+            exit 1
+          }
+          if (-not (Test-Path release\Product.wixobj)) {
+            Write-Error "candle.exe exited 0 but release\Product.wixobj is missing"
+            exit 1
+          }
 
           # -cultures:zh-cn is load-bearing: the extension's default en-us
           # WixUI_en-US.wxl carries Codepage=1252, which light applies over
           # Product/@Codepage and which cannot encode the Chinese strings in
           # Product.wxs (LGHT0311). The zh-CN wxl brings codepage 936.
-          & light.exe -nologo -out $msi -ext WixUIExtension -cultures:zh-cn release\Product.wixobj
-          if ($LASTEXITCODE -ne 0) { Write-Error "light.exe failed"; exit 1 }
+          Write-Host "light: $wixBin\light.exe"
+          $ErrorActionPreference = 'Continue'
+          & "$wixBin\light.exe" -nologo -out $msi -ext WixUIExtension -cultures:zh-cn release\Product.wixobj
+          $lightExit = $LASTEXITCODE
+          $ErrorActionPreference = $oldEap
+          if ($lightExit -ne 0) {
+            Write-Error "light.exe failed with exit code $lightExit"
+            exit 1
+          }
 
           # SHA256SUMS.txt: "<hash>  <filename>" — parsed strictly by internal/update.
           $zipName = [System.IO.Path]::GetFileName($zip)
