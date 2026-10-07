@@ -161,24 +161,57 @@
          extension embeds the RTF into the Binary table at link time, the
          runtime property of the same name only carries the extracted file. -->
     <WixVariable Id="WixUILicenseRtf" Value="$(var.LicensePath)"/>
-    <UIRef Id="WixUI_Minimal"/>
 
-    <!-- 在 WixUI_Minimal 的 EULA 页上加两个复选框。
+    <!-- 不用 <UIRef Id="WixUI_Minimal"/>：本页要在 EULA 页上加两个复选框，
+         而 WiX 不允许在产品里再声明一个同名 Dialog 去改扩展里的官方对话框
+         ——light 链接期会判 Dialog 表主键，报
+         LGHT0091 Duplicate symbol 'Dialog:WelcomeEulaDlg'（历史上就是这么
+         炸的）。所以这里不引 WixUI_Minimal，改为引 WixUI_Common（只提供
+         字体/UIText/位图二进制，不含任何对话框），再把首装序列用到的官方
+         对话框逐个显式 DialogRef，最后自己写一页完整的欢迎页。
 
-         写法说明：这里用 UI/Dialog（不是 DialogRef）重新声明 WelcomeEulaDlg。
-         WiX 的 ParseDialogElement 只做 CreateRow、不查重，Dialog 表与
-         Control 表都以 (Dialog, Control) 为主键合并，所以这样能增量地
-         往 wixlib 提供的官方对话框里加控件/改几何，而无需整页重画。
-         代价是被重新声明的 LicenseText 必须把官方属性写全——官方那行的
-         Text 是本地化字符串 !(wix.WixUILicenseRtf=...)，合并时以本文件
-         为准，故在这里原样复刻。
+         需要显式引用的官方对话框，对应两条序列各自用到的：
+           首装  ErrorDlg / FatalError / FilesInUse / MsiRMFilesInUse /
+                 OutOfDiskDlg / OutOfRbDiskDlg / PrepareDlg / ProgressDlg /
+                 UserExit / WaitForCostingDlg / CancelDlg / ExitDialog
+           维护  MaintenanceWelcomeDlg / MaintenanceTypeDlg / VerifyReadyDlg
+         首装页 Install 按钮的 Publish 目标是 OutOfDiskDlg / OutOfRbDiskDlg /
+         WaitForCostingDlg，Cancel 目标是 CancelDlg，Print 目标是
+         WixUIPrintEula（自定义动作，由 WixUI_Common 提供）。 -->
+    <UIRef Id="WixUI_Common"/>
+    <DialogRef Id="CancelDlg"/>
+    <DialogRef Id="ErrorDlg"/>
+    <DialogRef Id="ExitDialog"/>
+    <DialogRef Id="FatalError"/>
+    <DialogRef Id="FilesInUse"/>
+    <DialogRef Id="MaintenanceTypeDlg"/>
+    <DialogRef Id="MaintenanceWelcomeDlg"/>
+    <DialogRef Id="MsiRMFilesInUse"/>
+    <DialogRef Id="OutOfDiskDlg"/>
+    <DialogRef Id="OutOfRbDiskDlg"/>
+    <DialogRef Id="PrepareDlg"/>
+    <DialogRef Id="ProgressDlg"/>
+    <DialogRef Id="UserExit"/>
+    <DialogRef Id="VerifyReadyDlg"/>
+    <DialogRef Id="WaitForCostingDlg"/>
 
-         几何：官方 LicenseText 占 Y=36..198（Height=162）。改写为
-         Y=36..152（Height=116）给复选框腾位；官方许可复选框在 Y=207
-         保持不动；两个新复选框放 Y=157 与 Y=182，行高 20，正好落在
-         上述两者之间的空档。Width=226 与官方控件一致。 -->
+    <!-- 自有的首装欢迎页。Id 与任何 wixlib 对话框都不重名，避免链接期判重。
+         几何与控件行为照抄扩展的 WelcomeEulaDlg（Bitmap/Title/BottomLine/
+         LicenseAcceptedCheckBox/Print/Back/Install/InstallNoShield/Cancel），
+         只做两处改动：
+
+         1. LicenseText 高度 162 → 116（Y=36..152），给两个新复选框腾位；
+         2. 增加 AddDesktopCheckBox / LaunchAppCheckBox 两个复选框，
+            放在 Y=157 / Y=182，行高 20，落在许可复选框（Y=207）上方的空档。
+
+         复选框的 Property 直接驱动安装行为：ADDDESKTOP=1 才装桌面快捷方式
+         组件（见 DesktopShortcut 的 Condition），LAUNCHAPP=1 才触发
+         LaunchApp 自定义动作（见 InstallExecuteSequence）。 -->
     <UI>
-      <Dialog Id="WelcomeEulaDlg" Width="370" Height="270" Title="!(loc.WelcomeEulaDlg_Title)">
+      <Dialog Id="WelcomePage" Width="370" Height="270" Title="!(loc.WelcomeEulaDlg_Title)">
+        <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" TabSkip="no" Text="!(loc.WelcomeEulaDlgBitmap)" />
+        <Control Id="Title" Type="Text" X="130" Y="6" Width="225" Height="30" Transparent="yes" NoPrefix="yes" Text="!(loc.WelcomeEulaDlgTitle)" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="LicenseText" Type="ScrollableText" X="130" Y="36" Width="226" Height="116" Sunken="yes" TabSkip="no">
           <Text SourceFile="!(wix.WixUILicenseRtf=$(var.LicensePath))"/>
         </Control>
@@ -196,7 +229,57 @@
                  Property="LAUNCHAPP"
                  CheckBoxValue="1"
                  Text="立即启动应用"/>
+        <Control Id="LicenseAcceptedCheckBox" Type="CheckBox" X="130" Y="207" Width="226" Height="18" CheckBoxValue="1" Property="LicenseAccepted" Text="!(loc.WelcomeEulaDlgLicenseAcceptedCheckBox)" />
+        <Control Id="Print" Type="PushButton" X="88" Y="243" Width="56" Height="17" Text="!(loc.WixUIPrint)">
+          <Publish Event="DoAction" Value="WixUIPrintEula">1</Publish>
+        </Control>
+        <Control Id="Back" Type="PushButton" X="156" Y="243" Width="56" Height="17" Disabled="yes" Text="!(loc.WixUIBack)" />
+        <Control Id="Install" Type="PushButton" ElevationShield="yes" X="212" Y="243" Width="80" Height="17" Default="yes" Text="!(loc.WelcomeEulaDlgInstall)" Hidden="yes">
+          <Publish Event="SpawnWaitDialog" Value="WaitForCostingDlg">!(wix.WixUICostingPopupOptOut) OR CostingComplete = 1</Publish>
+          <Publish Event="EndDialog" Value="Return"><![CDATA[OutOfDiskSpace <> 1]]></Publish>
+          <Publish Event="SpawnDialog" Value="OutOfRbDiskDlg">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST="P" OR NOT PROMPTROLLBACKCOST)</Publish>
+          <Publish Event="EndDialog" Value="Return">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST="D"</Publish>
+          <Publish Event="EnableRollback" Value="False">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST="D"</Publish>
+          <Publish Event="SpawnDialog" Value="OutOfDiskDlg">(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST="F")</Publish>
+          <Condition Action="disable"><![CDATA[LicenseAccepted <> "1"]]></Condition>
+          <Condition Action="enable">LicenseAccepted = "1"</Condition>
+          <Condition Action="show">ALLUSERS</Condition>
+        </Control>
+        <Control Id="InstallNoShield" Type="PushButton" ElevationShield="no" X="212" Y="243" Width="80" Height="17" Default="yes" Text="!(loc.WelcomeEulaDlgInstall)" Hidden="yes">
+          <Publish Event="SpawnWaitDialog" Value="WaitForCostingDlg">!(wix.WixUICostingPopupOptOut) OR CostingComplete = 1</Publish>
+          <Publish Event="EndDialog" Value="Return"><![CDATA[OutOfDiskSpace <> 1]]></Publish>
+          <Publish Event="SpawnDialog" Value="OutOfRbDiskDlg">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST="P" OR NOT PROMPTROLLBACKCOST)</Publish>
+          <Publish Event="EndDialog" Value="Return">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST="D"</Publish>
+          <Publish Event="EnableRollback" Value="False">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST="D"</Publish>
+          <Publish Event="SpawnDialog" Value="OutOfDiskDlg">(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST="F")</Publish>
+          <Condition Action="disable"><![CDATA[LicenseAccepted <> "1"]]></Condition>
+          <Condition Action="enable">LicenseAccepted = "1"</Condition>
+          <Condition Action="show">NOT ALLUSERS</Condition>
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
       </Dialog>
     </UI>
+
+    <!-- 首装序列：装完后跳进度页。ProgressDlg 与 PrepareDlg 自己会在
+         InstallUISequence 的固定位置无条件 Show（Before="ExecuteAction" /
+         Before="AppSearch"），所以本页只要把用户带到 ExecuteAction 即可：
+         Install/InstallNoShield 的 EndDialog@Return 会结束 UI 序列并进入
+         执行序列，不需要额外的 Publish。这里只保留首装入口本身。 -->
+    <InstallUISequence>
+      <Show Dialog="WelcomePage" Before="ProgressDlg">NOT Installed</Show>
+    </InstallUISequence>
+
+    <!-- 维护安装（已装过）的入口：WixUI_Minimal 原本只处理首装与补丁，不处理
+         maintenance-install；这里补一条与 WixUI_Advanced 相同的序列，
+         修复「重装/卸载没有 UI、直接静默执行」的行为。 -->
+    <InstallUISequence>
+      <Show Dialog="MaintenanceWelcomeDlg" Before="ProgressDlg">Installed</Show>
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
+    </InstallUISequence>
   </Product>
 </Wix>
