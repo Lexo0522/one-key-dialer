@@ -180,7 +180,7 @@
     <UI>
       <Dialog Id="WelcomeEulaDlg" Width="370" Height="270" Title="!(loc.WelcomeEulaDlg_Title)">
         <Control Id="LicenseText" Type="ScrollableText" X="130" Y="36" Width="226" Height="116" Sunken="yes" TabSkip="no">
-          <Text SourceFile="!(wix.WixUILicenseRtf=$(var.licenseRtf))"/>
+          <Text SourceFile="!(wix.WixUILicenseRtf=$(var.LicensePath))"/>
         </Control>
         <Control Id="AddDesktopCheckBox"
                  Type="CheckBox"
