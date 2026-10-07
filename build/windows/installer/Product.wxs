@@ -177,37 +177,41 @@
            维护  MaintenanceWelcomeDlg / MaintenanceTypeDlg / VerifyReadyDlg
          首装页 Install 按钮的 Publish 目标是 OutOfDiskDlg / OutOfRbDiskDlg /
          WaitForCostingDlg，Cancel 目标是 CancelDlg，Print 目标是
-         WixUIPrintEula（自定义动作，由 WixUI_Common 提供）。 -->
-    <UIRef Id="WixUI_Common"/>
-    <DialogRef Id="CancelDlg"/>
-    <DialogRef Id="ErrorDlg"/>
-    <DialogRef Id="ExitDialog"/>
-    <DialogRef Id="FatalError"/>
-    <DialogRef Id="FilesInUse"/>
-    <DialogRef Id="MaintenanceTypeDlg"/>
-    <DialogRef Id="MaintenanceWelcomeDlg"/>
-    <DialogRef Id="MsiRMFilesInUse"/>
-    <DialogRef Id="OutOfDiskDlg"/>
-    <DialogRef Id="OutOfRbDiskDlg"/>
-    <DialogRef Id="PrepareDlg"/>
-    <DialogRef Id="ProgressDlg"/>
-    <DialogRef Id="UserExit"/>
-    <DialogRef Id="VerifyReadyDlg"/>
-    <DialogRef Id="WaitForCostingDlg"/>
+         WixUIPrintEula（自定义动作，由 WixUI_Common 提供）。
 
-    <!-- 自有的首装欢迎页。Id 与任何 wixlib 对话框都不重名，避免链接期判重。
-         几何与控件行为照抄扩展的 WelcomeEulaDlg（Bitmap/Title/BottomLine/
-         LicenseAcceptedCheckBox/Print/Back/Install/InstallNoShield/Cancel），
-         只做两处改动：
-
-         1. LicenseText 高度 162 → 116（Y=36..152），给两个新复选框腾位；
-         2. 增加 AddDesktopCheckBox / LaunchAppCheckBox 两个复选框，
-            放在 Y=157 / Y=182，行高 20，落在许可复选框（Y=207）上方的空档。
-
-         复选框的 Property 直接驱动安装行为：ADDDESKTOP=1 才装桌面快捷方式
-         组件（见 DesktopShortcut 的 Condition），LAUNCHAPP=1 才触发
-         LaunchApp 自定义动作（见 InstallExecuteSequence）。 -->
+         注意 DialogRef 必须放在 <UI> 里：直接挂在 Product 下 candle 会报
+         CNDL0005 unexpected child element 'DialogRef'（Product 的子元素
+         里没有 DialogRef）。 -->
     <UI>
+      <UIRef Id="WixUI_Common"/>
+      <DialogRef Id="CancelDlg"/>
+      <DialogRef Id="ErrorDlg"/>
+      <DialogRef Id="ExitDialog"/>
+      <DialogRef Id="FatalError"/>
+      <DialogRef Id="FilesInUse"/>
+      <DialogRef Id="MaintenanceTypeDlg"/>
+      <DialogRef Id="MaintenanceWelcomeDlg"/>
+      <DialogRef Id="MsiRMFilesInUse"/>
+      <DialogRef Id="OutOfDiskDlg"/>
+      <DialogRef Id="OutOfRbDiskDlg"/>
+      <DialogRef Id="PrepareDlg"/>
+      <DialogRef Id="ProgressDlg"/>
+      <DialogRef Id="UserExit"/>
+      <DialogRef Id="VerifyReadyDlg"/>
+      <DialogRef Id="WaitForCostingDlg"/>
+
+      <!-- 自有的首装欢迎页。Id 与任何 wixlib 对话框都不重名，避免链接期判重。
+           几何与控件行为照抄扩展的 WelcomeEulaDlg（Bitmap/Title/BottomLine/
+           LicenseAcceptedCheckBox/Print/Back/Install/InstallNoShield/Cancel），
+           只做两处改动：
+
+           1. LicenseText 高度 162 → 116（Y=36..152），给两个新复选框腾位；
+           2. 增加 AddDesktopCheckBox / LaunchAppCheckBox 两个复选框，
+              放在 Y=157 / Y=182，行高 20，落在许可复选框（Y=207）上方的空档。
+
+           复选框的 Property 直接驱动安装行为：ADDDESKTOP=1 才装桌面快捷方式
+           组件（见 DesktopShortcut 的 Condition），LAUNCHAPP=1 才触发
+           LaunchApp 自定义动作（见 InstallExecuteSequence）。 -->
       <Dialog Id="WelcomePage" Width="370" Height="270" Title="!(loc.WelcomeEulaDlg_Title)">
         <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" TabSkip="no" Text="!(loc.WelcomeEulaDlgBitmap)" />
         <Control Id="Title" Type="Text" X="130" Y="6" Width="225" Height="30" Transparent="yes" NoPrefix="yes" Text="!(loc.WelcomeEulaDlgTitle)" />
@@ -260,26 +264,28 @@
           <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
         </Control>
       </Dialog>
+
+      <!-- 首装入口。ProgressDlg 与 PrepareDlg 自己会在 InstallUISequence 的
+           固定位置无条件 Show（Before="ExecuteAction" / Before="AppSearch"），
+           所以本页只要把用户带到 ExecuteAction 即可：Install/InstallNoShield
+           的 EndDialog@Return 会结束 UI 序列并进入执行序列，不需要额外的
+           Publish。
+
+           维护安装（已装过）的入口：WixUI_Minimal 原本只处理首装与补丁，不处理
+           maintenance-install；这里补一条与 WixUI_Advanced 相同的序列，
+           修复「重装/卸载没有 UI、直接静默执行」的行为。
+
+           注意 Publish 必须挂在 UI/InstallUISequence 下：直接写成 Product 的
+           子元素时 candle 会报 CNDL0004（Publish 上没有 Dialog/Control/Event/
+           Value 这些属性）。 -->
+      <InstallUISequence>
+        <Show Dialog="WelcomePage" Before="ProgressDlg">NOT Installed</Show>
+        <Show Dialog="MaintenanceWelcomeDlg" Before="ProgressDlg">Installed</Show>
+        <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg">1</Publish>
+        <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+        <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+        <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
+      </InstallUISequence>
     </UI>
-
-    <!-- 首装序列：装完后跳进度页。ProgressDlg 与 PrepareDlg 自己会在
-         InstallUISequence 的固定位置无条件 Show（Before="ExecuteAction" /
-         Before="AppSearch"），所以本页只要把用户带到 ExecuteAction 即可：
-         Install/InstallNoShield 的 EndDialog@Return 会结束 UI 序列并进入
-         执行序列，不需要额外的 Publish。这里只保留首装入口本身。 -->
-    <InstallUISequence>
-      <Show Dialog="WelcomePage" Before="ProgressDlg">NOT Installed</Show>
-    </InstallUISequence>
-
-    <!-- 维护安装（已装过）的入口：WixUI_Minimal 原本只处理首装与补丁，不处理
-         maintenance-install；这里补一条与 WixUI_Advanced 相同的序列，
-         修复「重装/卸载没有 UI、直接静默执行」的行为。 -->
-    <InstallUISequence>
-      <Show Dialog="MaintenanceWelcomeDlg" Before="ProgressDlg">Installed</Show>
-      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg">1</Publish>
-      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
-      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
-      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
-    </InstallUISequence>
   </Product>
 </Wix>
