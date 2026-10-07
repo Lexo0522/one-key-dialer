@@ -265,27 +265,32 @@
         </Control>
       </Dialog>
 
-      <!-- 首装入口。ProgressDlg 与 PrepareDlg 自己会在 InstallUISequence 的
-           固定位置无条件 Show（Before="ExecuteAction" / Before="AppSearch"），
-           所以本页只要把用户带到 ExecuteAction 即可：Install/InstallNoShield
+      <!-- 序列入口。Show 放在 Product/InstallUISequence 里（与 Product 已有的
+           LaunchApp 那条 InstallExecuteSequence 平级，是 WiX 规定的执行序列
+           位置）；Publish 放不进去——它是 UI/的子元素，直接写在这里 candle
+           会报 CNDL0004（Publish 上没有 Dialog/Control/Event/Value）。
+           官方扩展（WixUI_Advanced/Mondo/Monimal）的写法就是
+           <UI><Publish .../></UI> 与 Product/InstallUISequence/<Show> 分开，
+           这里照此办理。
+
+           ProgressDlg 与 PrepareDlg 自己会在 InstallUISequence 的固定位置
+           无条件 Show（Before="ExecuteAction" / Before="AppSearch"），所以
+           欢迎页只要把用户带到 ExecuteAction 即可：Install/InstallNoShield
            的 EndDialog@Return 会结束 UI 序列并进入执行序列，不需要额外的
            Publish。
 
            维护安装（已装过）的入口：WixUI_Minimal 原本只处理首装与补丁，不处理
            maintenance-install；这里补一条与 WixUI_Advanced 相同的序列，
-           修复「重装/卸载没有 UI、直接静默执行」的行为。
-
-           注意 Publish 必须挂在 UI/InstallUISequence 下：直接写成 Product 的
-           子元素时 candle 会报 CNDL0004（Publish 上没有 Dialog/Control/Event/
-           Value 这些属性）。 -->
-      <InstallUISequence>
-        <Show Dialog="WelcomePage" Before="ProgressDlg">NOT Installed</Show>
-        <Show Dialog="MaintenanceWelcomeDlg" Before="ProgressDlg">Installed</Show>
-        <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg">1</Publish>
-        <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
-        <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
-        <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
-      </InstallUISequence>
+           修复「重装/卸载没有 UI、直接静默执行」的行为。 -->
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
     </UI>
+
+    <InstallUISequence>
+      <Show Dialog="WelcomePage" Before="ProgressDlg">NOT Installed</Show>
+      <Show Dialog="MaintenanceWelcomeDlg" Before="ProgressDlg">Installed</Show>
+    </InstallUISequence>
   </Product>
 </Wix>
