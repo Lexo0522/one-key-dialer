@@ -128,43 +128,52 @@ jobs:
         run: |
           # WiX v6 去掉了 candle.exe / light.exe，只有一个 wix.exe build。
           #
-          # 不走 chocolatey 的 wixtoolset：那个包是 v3，装不出 v6。
-          # 也不直接用 msiexec 装官方 msi：它是 per-machine 包，静默模式下
-          # 无法弹 UAC 提权，会以 exit 89（ERROR_INSTALL_USEREXIT）失败。
-          # 用 winget 装官方包，版本钉死，runner 本身是管理员所以提权没问题。
-          # 安装位置是固定的（官方 MSI 的固定路径），不需要递归查找。
+          # 不用 chocolatey 的 wixtoolset：那个包是 v3，装不出 v6。
+          # 不用 winget：源的版本列表会漂移（本机索引里 WiXToolset.WixCLI
+          #   已经从 6.0.2 涨到 7.0.0），钉 --version 某天突然匹配不到就
+          #   构建失败；而且它默认还会把 msstore 源带上，那个源要求交互式
+          #   同意交易条款，非交互 shell 下直接失败。
+          # 所以从 GitHub Releases 下载官方 CLI 安装包，URL 里钉死版本，
+          # 内容完全可复现。
           $ver = '6.0.2'
-          winget install --id WiXToolset.WixCLI --version $ver --exact `
-            --accept-package-agreements --accept-source-agreements --disable-interactivity
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "winget install of WiX CLI $ver failed (exit $LASTEXITCODE)"
+          $url = "https://github.com/wixtoolset/wix/releases/download/v$ver/wix-cli-x64.msi"
+          $msi = Join-Path $env:RUNNER_TEMP "wix-cli-x64-$ver.msi"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $msi
+          if (-not (Test-Path $msi) -or (Get-Item $msi).Length -lt 1MB) {
+            Write-Error "wix CLI installer download failed or is truncated: $msi"
             exit 1
           }
-          # winget 那个 MSI 是 per-machine 安装，装到固定位置并在注册表登记。
-          # 实测（WiXToolset.WixCLI 6.0.2.0）：
-          #   InstallLocation = C:\Program Files\WiX Toolset v6.0\
-          #   wix.exe         = <InstallLocation>\bin\wix.exe
-          $wix = $null
-          $loc = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' `
-                    -ErrorAction SilentlyContinue |
-                  Where-Object { $_.DisplayName -like 'WiX Toolset Command-Line Tools' }).InstallLocation
-          if ($loc) {
-            $candidate = Join-Path $loc 'bin\wix.exe'
-            if (Test-Path $candidate) { $wix = $candidate }
-          }
-          if (-not $wix) {
-            # 兜底：在常见根目录下递归找一次（版本升级后目录名可能变化）。
-            $found = Get-ChildItem ${env:ProgramFiles}, ${env:ProgramFiles(x86)} -Filter 'wix.exe' -Recurse `
-                       -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($found) { $wix = $found.FullName }
-          }
-          if (-not $wix) {
-            Write-Error "wix.exe not found after installing WiX CLI $ver"
+          $log = Join-Path $env:RUNNER_TEMP "wix-cli-install.log"
+          # /qn 静默；/norestart 不重启；REBOOT=ReallySuppress 挡住"需要重启"
+          # 的静默提示。安装目标用 TARGETDIR 指到 RUNNER_TEMP（非 Program
+          # Files），避免污染系统目录，也让 runner 之间的清理变得无关紧要。
+          # runner 账户本身是管理员，静默 msiexec 的提权在本地跑不了（UAC
+          # 拦，exit 89）不代表 CI 跑不了。
+          $installDir = Join-Path $env:RUNNER_TEMP "wix-$ver"
+          $args = @(
+            '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$log`"",
+            "TARGETDIR=`"$installDir`"", 'REBOOT=ReallySuppress'
+          )
+          $p = Start-Process msiexec -ArgumentList $args -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Error "msiexec for wix CLI failed with exit code $($p.ExitCode); log: $log"
+            Get-Content $log -Tail 40
             exit 1
           }
+          # 安装包把 wix.exe 放在自身的 bin 目录，具体子目录随版本而变，
+          # 不写死路径，递归找一次。
+          $found = Get-ChildItem -Path $installDir -Recurse -Filter 'wix.exe' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $found) {
+            Write-Error "wix.exe not found under $installDir after install"
+            exit 1
+          }
+          $wix = $found.FullName
           Write-Host "Using WiX: $wix"
           & $wix --version
           if ($LASTEXITCODE -ne 0) { Write-Error "wix --version failed"; exit 1 }
+          # 后续步骤需要同一路径：写进 GITHUB_ENV。
           "WIX_EXE=$wix" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Package ZIP + MSI + SHA256SUMS
