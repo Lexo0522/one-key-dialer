@@ -134,7 +134,7 @@ jobs:
           #   构建失败；而且它默认还会把 msstore 源带上，那个源要求交互式
           #   同意交易条款，非交互 shell 下直接失败。
           # 所以从 GitHub Releases 下载官方 CLI 安装包，URL 里钉死版本，
-          # 内容完全可复现。
+          # 内容完全可复现；装到默认位置，再从注册表读 InstallLocation。
           $ver = '6.0.2'
           $url = "https://github.com/wixtoolset/wix/releases/download/v$ver/wix-cli-x64.msi"
           $msi = Join-Path $env:RUNNER_TEMP "wix-cli-x64-$ver.msi"
@@ -145,15 +145,13 @@ jobs:
             exit 1
           }
           $log = Join-Path $env:RUNNER_TEMP "wix-cli-install.log"
-          # /qn 静默；/norestart 不重启；REBOOT=ReallySuppress 挡住"需要重启"
-          # 的静默提示。安装目标用 TARGETDIR 指到 RUNNER_TEMP（非 Program
-          # Files），避免污染系统目录，也让 runner 之间的清理变得无关紧要。
-          # runner 账户本身是管理员，静默 msiexec 的提权在本地跑不了（UAC
-          # 拦，exit 89）不代表 CI 跑不了。
-          $installDir = Join-Path $env:RUNNER_TEMP "wix-$ver"
+          # 装到默认位置（不指定目录）：这个 MSI 是 per-machine 包，TARGETDIR
+          # 改不动它的安装目录——真正生效的是 WiX 包的 INSTALLFOLDER/APPLICATIONFOLDER，
+          # 指定 TARGETDIR 只会让产物落在一个空的临时目录里，然后递归找不到
+          # wix.exe（本仓库之前就是这么失败的）。runner 是隔离的，装系统目录无副作用。
           $args = @(
             '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$log`"",
-            "TARGETDIR=`"$installDir`"", 'REBOOT=ReallySuppress'
+            'REBOOT=ReallySuppress'
           )
           $p = Start-Process msiexec -ArgumentList $args -Wait -PassThru
           if ($p.ExitCode -ne 0) {
@@ -161,15 +159,28 @@ jobs:
             Get-Content $log -Tail 40
             exit 1
           }
-          # 安装包把 wix.exe 放在自身的 bin 目录，具体子目录随版本而变，
-          # 不写死路径，递归找一次。
-          $found = Get-ChildItem -Path $installDir -Recurse -Filter 'wix.exe' -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if (-not $found) {
-            Write-Error "wix.exe not found under $installDir after install"
+          # 安装包在注册表登记 InstallLocation；实测（6.0.2）是
+          #   C:\Program Files\WiX Toolset v6.0\
+          # wix.exe 在其 bin\ 下。
+          $wix = $null
+          $loc = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' `
+                    -ErrorAction SilentlyContinue |
+                  Where-Object { $_.DisplayName -like 'WiX Toolset Command-Line Tools' }).InstallLocation
+          if ($loc) {
+            $candidate = Join-Path $loc 'bin\wix.exe'
+            if (Test-Path $candidate) { $wix = $candidate }
+          }
+          if (-not $wix) {
+            # 兜底：在两个 Program Files 根下递归找一次（版本升级可能改目录名）。
+            $found = Get-ChildItem ${env:ProgramFiles}, ${env:ProgramFiles(x86)} -Filter 'wix.exe' -Recurse `
+                       -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $wix = $found.FullName }
+          }
+          if (-not $wix) {
+            Write-Error "wix.exe not found after installing WiX CLI $ver; install log: $log"
+            Get-Content $log -Tail 40
             exit 1
           }
-          $wix = $found.FullName
           Write-Host "Using WiX: $wix"
           & $wix --version
           if ($LASTEXITCODE -ne 0) { Write-Error "wix --version failed"; exit 1 }
