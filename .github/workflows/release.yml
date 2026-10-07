@@ -123,37 +123,49 @@ jobs:
             exit 1
           }
 
-      - name: Ensure WiX toolset v3 (candle/light for the MSI)
+      - name: Ensure WiX toolset v6 (wix.exe build for the MSI)
         shell: pwsh
         run: |
-          # 老逻辑只判断 Get-Command candle.exe，命中的是 runner 镜像 PATH 上
-          # 某个 candle（不保证是 v3.14），一旦它不是 v3，candle 会在第 11 步
-          # 用几毫秒解析完就失败，错误被 PowerShell 的 terminating 行为吃掉，
-          # 只留下 "Process completed with exit code 1"，无法定位。
-          # 这里改成：显式产出可用的 v3.14 bin 目录，并把解析结果与版本打出来。
-          $wixBin = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
-          $resolved = Get-Command candle.exe -ErrorAction SilentlyContinue
-          if ($resolved) {
-            Write-Host "candle.exe already on PATH: $($resolved.Source)"
-          }
-          if (-not (Test-Path (Join-Path $wixBin 'candle.exe'))) {
-            Write-Host "v3.14 candle.exe missing at $wixBin - installing WiX via chocolatey"
-            choco install wixtoolset --version 3.14.1.20250415 -y --no-progress
-          }
-          if (-not (Test-Path (Join-Path $wixBin 'candle.exe'))) {
-            Write-Error "WiX toolset binary directory not found after install: $wixBin"
+          # WiX v6 去掉了 candle.exe / light.exe，只有一个 wix.exe build。
+          #
+          # 不走 chocolatey 的 wixtoolset：那个包是 v3，装不出 v6。
+          # 也不直接用 msiexec 装官方 msi：它是 per-machine 包，静默模式下
+          # 无法弹 UAC 提权，会以 exit 89（ERROR_INSTALL_USEREXIT）失败。
+          # 用 winget 装官方包，版本钉死，runner 本身是管理员所以提权没问题。
+          # 安装位置是固定的（官方 MSI 的固定路径），不需要递归查找。
+          $ver = '6.0.2'
+          winget install --id WiXToolset.WixCLI --version $ver --exact `
+            --accept-package-agreements --accept-source-agreements --disable-interactivity
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "winget install of WiX CLI $ver failed (exit $LASTEXITCODE)"
             exit 1
           }
-          # 把该目录插到 PATH 最前面，保证第 11 步的 candle/light 一定解析到这里，
-          # 而不是镜像 PATH 上可能存在的其他版本（PATH 顺序由前面的镜像项决定）。
-          $env:PATH = "$wixBin;$env:PATH"
-          Write-Host "Using WiX v3 bin: $wixBin"
-          $ver = & "$wixBin\candle.exe" -nologo -? 2>&1 | Select-Object -First 1
-          Write-Host "candle banner: $ver"
-          if (-not (Test-Path (Join-Path $wixBin 'light.exe'))) {
-            Write-Error "light.exe missing in $wixBin"
+          # winget 那个 MSI 是 per-machine 安装，装到固定位置并在注册表登记。
+          # 实测（WiXToolset.WixCLI 6.0.2.0）：
+          #   InstallLocation = C:\Program Files\WiX Toolset v6.0\
+          #   wix.exe         = <InstallLocation>\bin\wix.exe
+          $wix = $null
+          $loc = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' `
+                    -ErrorAction SilentlyContinue |
+                  Where-Object { $_.DisplayName -like 'WiX Toolset Command-Line Tools' }).InstallLocation
+          if ($loc) {
+            $candidate = Join-Path $loc 'bin\wix.exe'
+            if (Test-Path $candidate) { $wix = $candidate }
+          }
+          if (-not $wix) {
+            # 兜底：在常见根目录下递归找一次（版本升级后目录名可能变化）。
+            $found = Get-ChildItem ${env:ProgramFiles}, ${env:ProgramFiles(x86)} -Filter 'wix.exe' -Recurse `
+                       -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $wix = $found.FullName }
+          }
+          if (-not $wix) {
+            Write-Error "wix.exe not found after installing WiX CLI $ver"
             exit 1
           }
+          Write-Host "Using WiX: $wix"
+          & $wix --version
+          if ($LASTEXITCODE -ne 0) { Write-Error "wix --version failed"; exit 1 }
+          "WIX_EXE=$wix" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Package ZIP + MSI + SHA256SUMS
         shell: pwsh
@@ -174,42 +186,41 @@ jobs:
           Compress-Archive -Path $payload -DestinationPath $zip -Force
 
           $wixSrc = "build/windows/installer/Product.wxs"
-          # 用上一步显式解析出的 v3.14 路径调用，避免依赖 PATH 解析顺序。
-          # -nologo 静默 banner；candle/light 的非零退出是 terminating 的，
-          # 这里先临时关闭 ErrorActionPreference，把错误文本完整打出来再退出，
-          # 否则日志里只剩 "Process completed with exit code 1"，无法定位。
-          $wixBin = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
-          Write-Host "candle: $wixBin\candle.exe"
+          # WiX v6：原来 candle.exe（编译 .wxs → .wixobj）+ light.exe
+          # （链接 .wixobj + UI 扩展 → .msi）两步合并成一个 wix build。
+          # -ext WixToolset.UI.wixext 提供 WixUI_Common 与整套标准对话框，
+          # 对应 v3 的 -ext WixUIExtension。
+          # -culture zh-CN 保留：默认 en-us 的 wxl 带 Codepage=1252，会盖掉
+          # Product/@Codepage 且无法编码 Product.wxs 里的中文字符串（v3 时代的
+          # LGHT0311，v6 同样报错）。zh-CN 的 wxl 带 codepage 936。
+          # 非零退出是 terminating 的，先关掉 ErrorActionPreference 把错误文本
+          # 完整打出来再退出，否则日志里只剩 exit code 1，无法定位。
+          $wix = $env:WIX_EXE
+          if (-not $wix -or -not (Test-Path $wix)) {
+            Write-Error "WIX_EXE is not set or missing ('$wix') - the WiX setup step must export it"
+            exit 1
+          }
+          Write-Host "wix: $wix"
           $oldEap = $ErrorActionPreference
           $ErrorActionPreference = 'Continue'
-          & "$wixBin\candle.exe" -nologo -out release\ `
-            -dVersion="$rev" `
-            -dSrcDir="build/bin" `
-            -dIconPath="build/windows/icon.ico" `
-            -dLicensePath="build/windows/installer/license.rtf" `
+          & $wix build `
+            -nologo `
+            -ext WixToolset.UI.wixext `
+            -culture zh-CN `
+            -d Version="$rev" `
+            -d SrcDir="build/bin" `
+            -d IconPath="build/windows/icon.ico" `
+            -d LicensePath="build/windows/installer/license.rtf" `
+            -out $msi `
             $wixSrc
-          $candleExit = $LASTEXITCODE
+          $wixExit = $LASTEXITCODE
           $ErrorActionPreference = $oldEap
-          if ($candleExit -ne 0) {
-            Write-Error "candle.exe failed with exit code $candleExit"
+          if ($wixExit -ne 0) {
+            Write-Error "wix build failed with exit code $wixExit"
             exit 1
           }
-          if (-not (Test-Path release\Product.wixobj)) {
-            Write-Error "candle.exe exited 0 but release\Product.wixobj is missing"
-            exit 1
-          }
-
-          # -cultures:zh-cn is load-bearing: the extension's default en-us
-          # WixUI_en-US.wxl carries Codepage=1252, which light applies over
-          # Product/@Codepage and which cannot encode the Chinese strings in
-          # Product.wxs (LGHT0311). The zh-CN wxl brings codepage 936.
-          Write-Host "light: $wixBin\light.exe"
-          $ErrorActionPreference = 'Continue'
-          & "$wixBin\light.exe" -nologo -out $msi -ext WixUIExtension -cultures:zh-cn release\Product.wixobj
-          $lightExit = $LASTEXITCODE
-          $ErrorActionPreference = $oldEap
-          if ($lightExit -ne 0) {
-            Write-Error "light.exe failed with exit code $lightExit"
+          if (-not (Test-Path $msi)) {
+            Write-Error "wix build exited 0 but the MSI is missing: $msi"
             exit 1
           }
 

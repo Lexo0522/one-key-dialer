@@ -1,82 +1,47 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <!--
-  WiX v3 source for the PPPoEDialer MSI.
+  WiX v4/v6 source for the PPPoEDialer MSI.
 
   The in-app updater falls back to this MSI when the install directory is not
   writable (see internal/update), so it must stay a per-machine install that
   only ever replaces the single EXE.
 
-  Candle variables (passed on the command line):
-    -dVersion=X.Y.Z         MSI ProductVersion; must be numeric only
-    -dSrcDir=<path>         directory containing PPPoEDialer.exe
-    -dIconPath=<file>       icon shown in Programs and Features
-    -dLicensePath=<file>    RTF license text shown by the minimal UI
+  Built by WiX v6 (wix.exe build) — the separate candle/light steps are gone.
+  Preprocessor variables passed on the command line:
+    -d Version=X.Y.Z        MSI ProductVersion; must be numeric only
+    -d SrcDir=<path>        directory containing PPPoEDialer.exe
+    -d IconPath=<file>      icon shown in Programs and Features
+    -d LicensePath=<file>   RTF license text shown by the minimal UI
+
+  Migrated from v3 by "wix convert" plus hand fixes for the v5+ breaking
+  changes; each hand-fixed spot carries an inline comment.
 -->
-<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 
   <?define ProductName = "PPPoEDialer" ?>
   <?define Manufacturer = "Lexo0522" ?>
 
-  <Product Id="*"
-           Name="$(var.ProductName)"
-           Language="2052"
-           Codepage="936"
-           Version="$(var.Version)"
-           Manufacturer="$(var.Manufacturer)"
-           UpgradeCode="{8F6B2A41-5C3D-4E7A-9B12-6D0F4A7C2E31}">
-
-    <Package InstallerVersion="200"
-             Compressed="yes"
-             InstallScope="perMachine"
-             Description="PPPoE 校园网拨号工具"
-             Comments="PPPoE campus network dialer"
-             Manufacturer="$(var.Manufacturer)"
-             Languages="2052"
-             SummaryCodepage="936"/>
+  <Package Name="$(var.ProductName)" Language="2052" Codepage="936" Version="$(var.Version)" Manufacturer="$(var.Manufacturer)" UpgradeCode="{8F6B2A41-5C3D-4E7A-9B12-6D0F4A7C2E31}" InstallerVersion="200"><SummaryInformation Description="PPPoE 校园网拨号工具" Manufacturer="$(var.Manufacturer)" Codepage="936" />
 
     <!-- Always remove a previous version before installing this one. -->
-    <MajorUpgrade Schedule="afterInstallValidate"
-                  DowngradeErrorMessage="已安装了更高版本的 $(var.ProductName)。"/>
+    <MajorUpgrade Schedule="afterInstallValidate" DowngradeErrorMessage="已安装了更高版本的 $(var.ProductName)。" />
 
-    <Media Id="1" Cabinet="app.cab" EmbedCab="yes"/>
+    <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
 
-    <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="ProgramFilesFolder">
-        <Directory Id="INSTALLFOLDER" Name="$(var.ProductName)"/>
-      </Directory>
-      <Directory Id="ProgramMenuFolder">
-        <Directory Id="AppProgramMenuFolder" Name="$(var.ProductName)"/>
-      </Directory>
-      <!-- Desktop 是 Windows Installer 的预定义目录 Id：安装期解析为当前
-           用户自己的桌面（不是 All Users 桌面），不需要额外 DirectoryRef。 -->
-      <Directory Id="DesktopFolder"/>
-    </Directory>
+    
 
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="MainExecutable" Guid="{2D9E1C77-4A58-4F0B-8E63-1C7B5D9A0F42}">
-        <File Id="PPPoEDialerExe"
-              Name="PPPoEDialer.exe"
-              Source="$(var.SrcDir)\PPPoEDialer.exe"
-              KeyPath="yes"/>
+        <File Id="PPPoEDialerExe" Name="PPPoEDialer.exe" Source="$(var.SrcDir)\PPPoEDialer.exe" KeyPath="yes" />
         <!-- The binary was called PPoEDialer.exe before the rename; sweep it. -->
-        <RemoveFile Id="LegacyExe" Name="PPoEDialer.exe" On="both"/>
+        <RemoveFile Id="LegacyExe" Name="PPoEDialer.exe" On="both" />
       </Component>
     </DirectoryRef>
 
     <DirectoryRef Id="AppProgramMenuFolder">
       <Component Id="ApplicationShortcut" Guid="{5A3F8B29-7C64-4D1E-9A08-3E5B6C7D2F14}">
-        <Shortcut Id="AppStartMenuShortcut"
-                  Name="$(var.ProductName)"
-                  Description="PPPoE 校园网拨号工具"
-                  Target="[INSTALLFOLDER]PPPoEDialer.exe"
-                  WorkingDirectory="INSTALLFOLDER"/>
-        <RemoveFolder Id="CleanUpShortcut" Directory="AppProgramMenuFolder" On="uninstall"/>
-        <RegistryValue Root="HKCU"
-                       Key="Software\$(var.Manufacturer)\$(var.ProductName)"
-                       Name="installed"
-                       Type="integer"
-                       Value="1"
-                       KeyPath="yes"/>
+        <Shortcut Id="AppStartMenuShortcut" Name="$(var.ProductName)" Description="PPPoE 校园网拨号工具" Target="[INSTALLFOLDER]PPPoEDialer.exe" WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="CleanUpShortcut" Directory="AppProgramMenuFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\$(var.Manufacturer)\$(var.ProductName)" Name="installed" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
@@ -86,27 +51,18 @@
          子目录，卸载该清掉；DesktopFolder 是系统目录，一条 RemoveFolder
          On="uninstall" 会在卸载时尝试删掉桌面本身。快捷方式自身的清理由
          MSI 的 Shortcut/RemoveFile 表负责，不需要也不能自己删目录。 -->
-    <DirectoryRef Id="DesktopFolder">
-      <Component Id="DesktopShortcut" Guid="{3F1A5C82-6B94-4E2D-8C71-2A9D4E6B0C58}">
-        <Shortcut Id="AppDesktopShortcut"
-                  Name="$(var.ProductName)"
-                  Description="PPPoE 校园网拨号工具"
-                  Target="[INSTALLFOLDER]PPPoEDialer.exe"
-                  WorkingDirectory="INSTALLFOLDER"/>
-        <RegistryValue Root="HKCU"
-                       Key="Software\$(var.Manufacturer)\$(var.ProductName)"
-                       Name="desktop_installed"
-                       Type="integer"
-                       Value="1"
-                       KeyPath="yes"/>
-        <Condition><![CDATA[ADDDESKTOP=1]]></Condition>
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="{3F1A5C82-6B94-4E2D-8C71-2A9D4E6B0C58}" Condition="ADDDESKTOP=1">
+        <Shortcut Id="AppDesktopShortcut" Name="$(var.ProductName)" Description="PPPoE 校园网拨号工具" Target="[INSTALLFOLDER]PPPoEDialer.exe" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\$(var.Manufacturer)\$(var.ProductName)" Name="desktop_installed" Type="integer" Value="1" KeyPath="yes" />
+        
       </Component>
-    </DirectoryRef>
+    </StandardDirectory>
 
     <Feature Id="ProductFeature" Title="$(var.ProductName)" Level="1">
-      <ComponentRef Id="MainExecutable"/>
-      <ComponentRef Id="ApplicationShortcut"/>
-      <ComponentRef Id="DesktopShortcut"/>
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="ApplicationShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
     </Feature>
 
     <!-- 欢迎页的两个选项。默认都勾上：对拨号工具而言桌面入口 + 装完即用是
@@ -116,8 +72,8 @@
          的 writeMsiApplyScript）会显式传 SILENTUPDATE=1，并在 msiexec 上加 /qn，
          所以更新走的是完全静默的安装：UI 序列不运行，两个复选框根本不出现，
          这里的默认值也就无从被用户改掉。 -->
-    <Property Id="ADDDESKTOP" Value="1"/>
-    <Property Id="LAUNCHAPP" Value="1"/>
+    <Property Id="ADDDESKTOP" Value="1" />
+    <Property Id="LAUNCHAPP" Value="1" />
 
     <!-- 装完立即启动。自定义动作直接以 FileKey 指向安装后的 exe（MSI 原生的
          type 18 自定义操作），不引 WixUtilExtension——少一个链接期依赖，
@@ -142,12 +98,7 @@
          状态。未设置的属性在条件语法里求值为空串，NOT SILENTUPDATE=1
          自然成立；真要写一条空值 Property，candle 只会给个
          PropertyUseless 警告。 -->
-    <CustomAction Id="LaunchApp"
-                  FileKey="PPPoEDialerExe"
-                  ExeCommand=""
-                  Return="ignore"
-                  Execute="deferred"
-                  Impersonate="yes"/>
+    <CustomAction Id="LaunchApp" ExeCommand="" Return="ignore" Execute="deferred" Impersonate="yes" FileRef="PPPoEDialerExe" />
 
     <InstallExecuteSequence>
       <!-- 必须排在 InstallFinalize 之前：deferred 自定义动作只能出现在
@@ -157,19 +108,19 @@
            action"（历史上就是这么炸的）。
            此时 CopyFiles/Registry/ Commit 都已完成，exe 已就位，
            再以当前用户身份拉起程序。 -->
-      <Custom Action="LaunchApp" Before="InstallFinalize"><![CDATA[LAUNCHAPP=1 AND NOT SILENTUPDATE=1 AND NOT Installed]]></Custom>
+      <Custom Action="LaunchApp" Before="InstallFinalize" Condition="LAUNCHAPP=1 AND NOT SILENTUPDATE=1 AND NOT Installed" />
     </InstallExecuteSequence>
 
-    <Property Id="ARPHELPLINK" Value="https://github.com/Lexo0522/one-key-dialer"/>
-    <Property Id="ARPPRODUCTICON" Value="AppIcon"/>
-    <Icon Id="AppIcon" SourceFile="$(var.IconPath)"/>
+    <Property Id="ARPHELPLINK" Value="https://github.com/Lexo0522/one-key-dialer" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Icon Id="AppIcon" SourceFile="$(var.IconPath)" />
 
     <!-- Minimal-dialog UI (EULA page + progress + exit), no reboot prompts.
          Dialog text comes from WixUI_zh-CN.wxl via -cultures:zh-cn (see
          release.yml). WixUILicenseRtf is a BUILD-TIME WixVariable: the
          extension embeds the RTF into the Binary table at link time, the
          runtime property of the same name only carries the extracted file. -->
-    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicensePath)"/>
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicensePath)" />
 
     <!-- 不用 <UIRef Id="WixUI_Minimal"/>：本页要在 EULA 页上加两个复选框，
          而 WiX 不允许在产品里再声明一个同名 Dialog 去改扩展里的官方对话框
@@ -204,22 +155,22 @@
       <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
       <Property Id="WixUI_Mode" Value="Minimal" />
 
-      <UIRef Id="WixUI_Common"/>
-      <DialogRef Id="CancelDlg"/>
-      <DialogRef Id="ErrorDlg"/>
-      <DialogRef Id="ExitDialog"/>
-      <DialogRef Id="FatalError"/>
-      <DialogRef Id="FilesInUse"/>
-      <DialogRef Id="MaintenanceTypeDlg"/>
-      <DialogRef Id="MaintenanceWelcomeDlg"/>
-      <DialogRef Id="MsiRMFilesInUse"/>
-      <DialogRef Id="OutOfDiskDlg"/>
-      <DialogRef Id="OutOfRbDiskDlg"/>
-      <DialogRef Id="PrepareDlg"/>
-      <DialogRef Id="ProgressDlg"/>
-      <DialogRef Id="UserExit"/>
-      <DialogRef Id="VerifyReadyDlg"/>
-      <DialogRef Id="WaitForCostingDlg"/>
+      <UIRef Id="WixUI_Common" />
+      <DialogRef Id="CancelDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="ExitDialog" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MaintenanceTypeDlg" />
+      <DialogRef Id="MaintenanceWelcomeDlg" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="OutOfDiskDlg" />
+      <DialogRef Id="OutOfRbDiskDlg" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="UserExit" />
+      <DialogRef Id="VerifyReadyDlg" />
+      <DialogRef Id="WaitForCostingDlg" />
 
       <!-- 自有的首装欢迎页。Id 与任何 wixlib 对话框都不重名，避免链接期判重。
            几何与控件行为照抄扩展的 WelcomeEulaDlg（Bitmap/Title/BottomLine/
@@ -238,51 +189,40 @@
         <Control Id="Title" Type="Text" X="130" Y="6" Width="225" Height="30" Transparent="yes" NoPrefix="yes" Text="!(loc.WelcomeEulaDlgTitle)" />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="LicenseText" Type="ScrollableText" X="130" Y="36" Width="226" Height="116" Sunken="yes" TabSkip="no">
-          <Text SourceFile="!(wix.WixUILicenseRtf=$(var.LicensePath))"/>
+          <Text SourceFile="!(wix.WixUILicenseRtf=$(var.LicensePath))" />
         </Control>
-        <Control Id="AddDesktopCheckBox"
-                 Type="CheckBox"
-                 X="130" Y="157"
-                 Width="226" Height="20"
-                 Property="ADDDESKTOP"
-                 CheckBoxValue="1"
-                 Text="创建桌面快捷方式"/>
-        <Control Id="LaunchAppCheckBox"
-                 Type="CheckBox"
-                 X="130" Y="182"
-                 Width="226" Height="20"
-                 Property="LAUNCHAPP"
-                 CheckBoxValue="1"
-                 Text="立即启动应用"/>
+        <Control Id="AddDesktopCheckBox" Type="CheckBox" X="130" Y="157" Width="226" Height="20" Property="ADDDESKTOP" CheckBoxValue="1" Text="创建桌面快捷方式" />
+        <Control Id="LaunchAppCheckBox" Type="CheckBox" X="130" Y="182" Width="226" Height="20" Property="LAUNCHAPP" CheckBoxValue="1" Text="立即启动应用" />
         <Control Id="LicenseAcceptedCheckBox" Type="CheckBox" X="130" Y="207" Width="226" Height="18" CheckBoxValue="1" Property="LicenseAccepted" Text="!(loc.WelcomeEulaDlgLicenseAcceptedCheckBox)" />
+        <!-- v5+ removed the WixUIPrintEula custom action; use MSI native MsiPrint. -->
         <Control Id="Print" Type="PushButton" X="88" Y="243" Width="56" Height="17" Text="!(loc.WixUIPrint)">
-          <Publish Event="DoAction" Value="WixUIPrintEula">1</Publish>
+          <Publish Event="MsiPrint" Value="0" />
         </Control>
         <Control Id="Back" Type="PushButton" X="156" Y="243" Width="56" Height="17" Disabled="yes" Text="!(loc.WixUIBack)" />
-        <Control Id="Install" Type="PushButton" ElevationShield="yes" X="212" Y="243" Width="80" Height="17" Default="yes" Text="!(loc.WelcomeEulaDlgInstall)" Hidden="yes">
-          <Publish Event="SpawnWaitDialog" Value="WaitForCostingDlg">!(wix.WixUICostingPopupOptOut) OR CostingComplete = 1</Publish>
-          <Publish Event="EndDialog" Value="Return"><![CDATA[OutOfDiskSpace <> 1]]></Publish>
-          <Publish Event="SpawnDialog" Value="OutOfRbDiskDlg">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST="P" OR NOT PROMPTROLLBACKCOST)</Publish>
-          <Publish Event="EndDialog" Value="Return">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST="D"</Publish>
-          <Publish Event="EnableRollback" Value="False">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST="D"</Publish>
-          <Publish Event="SpawnDialog" Value="OutOfDiskDlg">(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST="F")</Publish>
-          <Condition Action="disable"><![CDATA[LicenseAccepted <> "1"]]></Condition>
-          <Condition Action="enable">LicenseAccepted = "1"</Condition>
-          <Condition Action="show">ALLUSERS</Condition>
+        <Control Id="Install" Type="PushButton" ElevationShield="yes" X="212" Y="243" Width="80" Height="17" Default="yes" Text="!(loc.WelcomeEulaDlgInstall)" Hidden="yes" DisableCondition="LicenseAccepted &lt;&gt; &quot;1&quot;" EnableCondition="LicenseAccepted = &quot;1&quot;" ShowCondition="ALLUSERS">
+          <Publish Event="SpawnWaitDialog" Value="WaitForCostingDlg" Condition="!(wix.WixUICostingPopupOptOut) OR CostingComplete = 1" />
+          <Publish Event="EndDialog" Value="Return" Condition="OutOfDiskSpace &lt;&gt; 1" />
+          <Publish Event="SpawnDialog" Value="OutOfRbDiskDlg" Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" />
+          <Publish Event="EndDialog" Value="Return" Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" />
+          <Publish Event="EnableRollback" Value="False" Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" />
+          <Publish Event="SpawnDialog" Value="OutOfDiskDlg" Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" />
+          
+          
+          
         </Control>
-        <Control Id="InstallNoShield" Type="PushButton" ElevationShield="no" X="212" Y="243" Width="80" Height="17" Default="yes" Text="!(loc.WelcomeEulaDlgInstall)" Hidden="yes">
-          <Publish Event="SpawnWaitDialog" Value="WaitForCostingDlg">!(wix.WixUICostingPopupOptOut) OR CostingComplete = 1</Publish>
-          <Publish Event="EndDialog" Value="Return"><![CDATA[OutOfDiskSpace <> 1]]></Publish>
-          <Publish Event="SpawnDialog" Value="OutOfRbDiskDlg">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST="P" OR NOT PROMPTROLLBACKCOST)</Publish>
-          <Publish Event="EndDialog" Value="Return">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST="D"</Publish>
-          <Publish Event="EnableRollback" Value="False">OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST="D"</Publish>
-          <Publish Event="SpawnDialog" Value="OutOfDiskDlg">(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST="F")</Publish>
-          <Condition Action="disable"><![CDATA[LicenseAccepted <> "1"]]></Condition>
-          <Condition Action="enable">LicenseAccepted = "1"</Condition>
-          <Condition Action="show">NOT ALLUSERS</Condition>
+        <Control Id="InstallNoShield" Type="PushButton" ElevationShield="no" X="212" Y="243" Width="80" Height="17" Default="yes" Text="!(loc.WelcomeEulaDlgInstall)" Hidden="yes" DisableCondition="LicenseAccepted &lt;&gt; &quot;1&quot;" EnableCondition="LicenseAccepted = &quot;1&quot;" ShowCondition="NOT ALLUSERS">
+          <Publish Event="SpawnWaitDialog" Value="WaitForCostingDlg" Condition="!(wix.WixUICostingPopupOptOut) OR CostingComplete = 1" />
+          <Publish Event="EndDialog" Value="Return" Condition="OutOfDiskSpace &lt;&gt; 1" />
+          <Publish Event="SpawnDialog" Value="OutOfRbDiskDlg" Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" />
+          <Publish Event="EndDialog" Value="Return" Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" />
+          <Publish Event="EnableRollback" Value="False" Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" />
+          <Publish Event="SpawnDialog" Value="OutOfDiskDlg" Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" />
+          
+          
+          
         </Control>
         <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
-          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
         </Control>
       </Dialog>
 
@@ -303,21 +243,35 @@
            维护安装（已装过）的入口：WixUI_Minimal 原本只处理首装与补丁，不处理
            maintenance-install；这里补一条与 WixUI_Advanced 相同的序列，
            修复「重装/卸载没有 UI、直接静默执行」的行为。 -->
-      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg">1</Publish>
-      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
-      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
-      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
       <!-- 官方对话框里这两个按钮在 wixlib 中没有事件，原本由 WixUI_Minimal /
            WixUI_Advanced 的 Publish 补上。去掉 UIRef 后要自己补，否则 light
            的 ICE17 报 "does not have an event defined in the ControlEvent
            table. It is a 'Do Nothing' button." -->
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2">Installed AND NOT PATCH</Publish>
-      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999">1</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
     </UI>
 
     <InstallUISequence>
-      <Show Dialog="WelcomePage" Before="ProgressDlg">NOT Installed</Show>
-      <Show Dialog="MaintenanceWelcomeDlg" Before="ProgressDlg">Installed</Show>
+      <Show Dialog="WelcomePage" Before="ProgressDlg" Condition="NOT Installed" />
+      <!-- 维护入口不手工排程：v6 UI 扩展已注册含条件的虚拟 Show，
+             自己再写一条 Show 会撞 WIX7009（conflicts with a virtual symbol）。
+             反编译产物已确认 InstallUISequence 里有
+             <Show Dialog="MaintenanceWelcomeDlg" Condition="Installed AND NOT RESUME
+             AND NOT Preselected AND NOT PATCH" Before="ProgressDlg" />。 -->
     </InstallUISequence>
-  </Product>
+  
+      <StandardDirectory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="$(var.ProductName)" />
+      </StandardDirectory>
+      <StandardDirectory Id="ProgramMenuFolder">
+        <Directory Id="AppProgramMenuFolder" Name="$(var.ProductName)" />
+      </StandardDirectory>
+      <!-- Desktop 是 Windows Installer 的预定义目录 Id：安装期解析为当前
+           用户自己的桌面（不是 All Users 桌面），不需要额外 DirectoryRef。 -->
+      <StandardDirectory Id="DesktopFolder" />
+    </Package>
 </Wix>
