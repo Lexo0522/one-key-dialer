@@ -122,8 +122,10 @@
     <!-- 装完立即启动。自定义动作直接以 FileKey 指向安装后的 exe（MSI 原生的
          type 18 自定义操作），不引 WixUtilExtension——少一个链接期依赖，
          也不用给 light 加 -ext。
-         Execute="deferred" 且排在 InstallFinalize 之后：此刻文件已就位、
-         注册表项已提交，exe 一定是完整可执行的。
+         Execute="deferred" 且排在 InstallFinalize 之前：此刻文件已就位、
+         注册表项已提交，exe 一定是完整可执行的。（deferred 动作只能落在
+         InstallInitialize..InstallFinalize 之间，排在 Finalize 之后过不了
+         ICE77。）
          Return="ignore"：启动失败（被安全软件拦、权限异常等）绝不把整个
          安装判成失败，安装本身已经把活干完了。
          Impersonate="yes"：以当前用户身份启动（perMachine 安装下服务账号
@@ -148,7 +150,14 @@
                   Impersonate="yes"/>
 
     <InstallExecuteSequence>
-      <Custom Action="LaunchApp" After="InstallFinalize"><![CDATA[LAUNCHAPP=1 AND NOT SILENTUPDATE=1 AND NOT Installed]]></Custom>
+      <!-- 必须排在 InstallFinalize 之前：deferred 自定义动作只能出现在
+           InstallInitialize..InstallFinalize 之间，排在 Finalize 之后 light
+           的 ICE77 会报 "is a in-script custom action. It must be sequenced
+           in between the InstallInitialize action and the InstallFinalize
+           action"（历史上就是这么炸的）。
+           此时 CopyFiles/Registry/ Commit 都已完成，exe 已就位，
+           再以当前用户身份拉起程序。 -->
+      <Custom Action="LaunchApp" Before="InstallFinalize"><![CDATA[LAUNCHAPP=1 AND NOT SILENTUPDATE=1 AND NOT Installed]]></Custom>
     </InstallExecuteSequence>
 
     <Property Id="ARPHELPLINK" Value="https://github.com/Lexo0522/one-key-dialer"/>
@@ -181,8 +190,20 @@
 
          注意 DialogRef 必须放在 <UI> 里：直接挂在 Product 下 candle 会报
          CNDL0005 unexpected child element 'DialogRef'（Product 的子元素
-         里没有 DialogRef）。 -->
+         里没有 DialogRef）。
+
+         TextStyle / DefaultUIFont 必须自己补：WixUI_Common 只提供 UIText 与
+         Binary，不带字体表；这两个声明原本在 WixUI_Minimal 的 <UI> 里，
+         去掉 UIRef 之后就没了，light 的 ICE31 会逐个控件报
+         "uses text style WixUI_Font_XXX, but the TextStyle table does not
+         exist"（WelcomePage / ProgressDlg / VerifyReadyDlg 等全中）。 -->
     <UI>
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+      <Property Id="WixUI_Mode" Value="Minimal" />
+
       <UIRef Id="WixUI_Common"/>
       <DialogRef Id="CancelDlg"/>
       <DialogRef Id="ErrorDlg"/>
@@ -286,6 +307,12 @@
       <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
       <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
       <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
+      <!-- 官方对话框里这两个按钮在 wixlib 中没有事件，原本由 WixUI_Minimal /
+           WixUI_Advanced 的 Publish 补上。去掉 UIRef 后要自己补，否则 light
+           的 ICE17 报 "does not have an event defined in the ControlEvent
+           table. It is a 'Do Nothing' button." -->
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2">Installed AND NOT PATCH</Publish>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999">1</Publish>
     </UI>
 
     <InstallUISequence>
