@@ -2,13 +2,14 @@ package service
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/Lexo0522/one-key-dialer/internal/model"
-	"github.com/Lexo0522/one-key-dialer/internal/proxy"
 )
 
 // PortalDetect 一次认证门户检测结果。
@@ -119,9 +120,11 @@ func detectPortalOnce(cfg model.ProbeConfig) PortalDetect {
 		// https 请求不会被门户重定向,换明文地址才能探测到拦截
 		target = portalProbeFallbackURL
 	}
-	// 独立 client 包住缓存的 Transport:绝不能改共享 Client 的 CheckRedirect
+	// 独立 client 包住直连 Transport:门户位于本机链路侧,代理出口到不了
+	// 内网门户地址,探测必须直连(与 webcheckClient 的做法一致,Proxy 显式
+	// 置 nil,不走系统环境变量)。绝不能改共享 Client 的 CheckRedirect。
 	client := &http.Client{
-		Transport: proxy.TransportFor(cfg.Proxy),
+		Transport: &http.Transport{Proxy: nil},
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -142,16 +145,16 @@ func detectPortalOnce(cfg model.ProbeConfig) PortalDetect {
 		return PortalDetect{Detail: err.Error(), Error: err.Error(), ProbeURL: target}
 	}
 	defer resp.Body.Close()
-	// 读完少量字节让连接归还连接池；拦截页通常很小
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10))
 
 	detect := PortalDetect{Status: resp.StatusCode, ProbeURL: target}
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		loc := strings.TrimSpace(resp.Header.Get("Location"))
 		if loc == "" {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10))
 			detect.Detail = "redirect without location"
 			return detect
 		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10))
 		portalURL := resolveReference(target, loc)
 		detect.Portal = true
 		detect.PortalURL = portalURL
@@ -159,12 +162,24 @@ func detectPortalOnce(cfg model.ProbeConfig) PortalDetect {
 		return detect
 	}
 	if resp.StatusCode == http.StatusOK && isGenerate204(target) {
-		// generate_204 在线时应返回 204;返回 200 说明响应被门户替换
+		// generate_204 在线时应返回 204;返回 200 说明响应被门户劫持替换
+		// (深澜等门户常见做法:不 302,直接 200 返回登录页)。
+		// 注意:此时绝不能把探测地址当作门户地址——srun 等协议会据此拼接
+		// /cgi-bin/get_challenge,指向错误的公网主机导致认证永远失败。
+		// 改为从劫持页正文里提取真正的门户地址;提取不到则 PortalURL 置空,
+		// 调用方据此提示用户手动配置登录地址,而不是去请求错误的主机。
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<10))
 		detect.Portal = true
-		detect.PortalURL = target
-		detect.Detail = "expected 204 got 200"
+		if portalURL := extractPortalURLFromPage(string(body), target); portalURL != "" {
+			detect.PortalURL = portalURL
+			detect.Detail = "expected 204 got 200, portal url from hijack page"
+		} else {
+			detect.Detail = "expected 204 got 200, portal url not found in hijack page"
+		}
 		return detect
 	}
+	// 读完少量字节让连接归还连接池；拦截页通常很小
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10))
 	detect.Detail = resp.Status
 	return detect
 }
@@ -188,4 +203,56 @@ func resolveReference(base, loc string) string {
 // isGenerate204 判断探测地址是否属于 generate_204 家族（在线时返回 204）。
 func isGenerate204(target string) bool {
 	return strings.Contains(target, "generate_204")
+}
+
+// portalURLRe 提取劫持页正文中的候选门户地址。
+var portalURLRe = regexp.MustCompile(`https?://[^\s"'<>\\)]+`)
+
+// portalURLHints 门户地址的典型特征词，用于从候选地址中挑出最像门户的。
+var portalURLHints = []string{
+	"eportal", "srun", "portal", "login", "auth", "wlan",
+	"index.jsp", "index.html", "logon", "signin",
+}
+
+// extractPortalURLFromPage 从门户劫持页(200 替换 generate_204 的响应正文)
+// 中提取真正的门户地址。exclude 为探测地址本身，候选命中它时跳过。
+// 找不到可信候选时返回 ""，调用方不应回退使用探测地址。
+func extractPortalURLFromPage(body, exclude string) string {
+	excludeHost := ""
+	if u, err := url.Parse(exclude); err == nil {
+		excludeHost = u.Host
+	}
+	best := ""
+	bestScore := 0
+	seen := map[string]bool{}
+	for _, m := range portalURLRe.FindAllString(body, 32) {
+		clean := strings.TrimRight(m, ".,;!")
+		if clean == "" || seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		u, err := url.Parse(clean)
+		if err != nil || u.Host == "" {
+			continue
+		}
+		if excludeHost != "" && u.Host == excludeHost {
+			continue
+		}
+		score := 1
+		lower := strings.ToLower(clean)
+		for _, hint := range portalURLHints {
+			if strings.Contains(lower, hint) {
+				score += 2
+			}
+		}
+		if ip := net.ParseIP(u.Hostname()); ip != nil {
+			// 门户多为内网 IP 直址
+			score++
+		}
+		if score > bestScore {
+			bestScore = score
+			best = clean
+		}
+	}
+	return best
 }

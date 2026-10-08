@@ -186,3 +186,92 @@ func TestDetectPortalOnceRespectsTimeout(t *testing.T) {
 		t.Fatalf("单次探测耗时 %v，未遵守 400ms 量级超时", elapsed)
 	}
 }
+
+// 200 劫持时必须从劫持页正文提取真正的门户地址,而不是把探测地址当门户:
+// 曾经的 bug 直接把 generate_204 探测地址填进 PortalURL,srun 流程据此去
+// 公网主机请求 /cgi-bin/get_challenge,认证永远失败。
+func TestDetectPortalIntercepted200ExtractsPortalURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<html><head><script>window.location="http://10.1.1.55/eportal/index.jsp?wlanuserip=10.0.0.5&ac_id=1";</script></head></html>`))
+	}))
+	defer srv.Close()
+
+	probeURL := srv.URL + "/generate_204"
+	d := DetectPortal(portalProbeCfg(probeURL))
+	if !d.Portal {
+		t.Fatalf("generate_204 返回 200 应判定为门户: %+v", d)
+	}
+	want := "http://10.1.1.55/eportal/index.jsp?wlanuserip=10.0.0.5&ac_id=1"
+	if d.PortalURL != want {
+		t.Fatalf("应从劫持页提取门户地址:\n got %s\nwant %s", d.PortalURL, want)
+	}
+	if d.PortalURL == probeURL {
+		t.Fatalf("PortalURL 绝不能是探测地址本身: %s", d.PortalURL)
+	}
+}
+
+// 劫持页里找不到门户地址时 PortalURL 置空(而不是回退探测地址),
+// 调用方据此提示用户手动配置登录地址。
+func TestDetectPortalIntercepted200NoURLInPage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<html><body>blocked</body></html>`))
+	}))
+	defer srv.Close()
+
+	d := DetectPortal(portalProbeCfg(srv.URL + "/generate_204"))
+	if !d.Portal {
+		t.Fatalf("应判定为门户: %+v", d)
+	}
+	if d.PortalURL != "" {
+		t.Fatalf("提取不到门户地址时 PortalURL 应置空, got %s", d.PortalURL)
+	}
+}
+
+func TestExtractPortalURLFromPage(t *testing.T) {
+	probe := "http://connect.rom.miui.com/generate_204"
+	// 含门户特征词的地址优先
+	got := extractPortalURLFromPage(
+		`<a href="http://tracker.example.com/pixel">x</a><script>location="http://192.168.1.1/eportal/index.jsp?x=1"</script>`, probe)
+	if got != "http://192.168.1.1/eportal/index.jsp?x=1" {
+		t.Fatalf("应优先门户特征地址, got %s", got)
+	}
+	// 探测地址本身必须跳过
+	got = extractPortalURLFromPage(
+		`<p>see http://connect.rom.miui.com/generate_204 for details</p>`, probe)
+	if got != "" {
+		t.Fatalf("应跳过探测地址本身, got %s", got)
+	}
+	// 无候选返回空
+	if got := extractPortalURLFromPage(`<html>hello</html>`, probe); got != "" {
+		t.Fatalf("无候选应返回空, got %s", got)
+	}
+	// 深澜风格:多个地址时选最像门户的
+	got = extractPortalURLFromPage(
+		`var u="http://10.10.10.10/srun_portal";var c="http://cdn.example.com/a.js";`, probe)
+	if got != "http://10.10.10.10/srun_portal" {
+		t.Fatalf("应选中 srun 门户地址, got %s", got)
+	}
+}
+
+// 门户探测必须直连:即使环境变量里配了不可用的代理,也不能影响探测。
+func TestDetectPortalBypassesProxyEnv(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1/")
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1/")
+	t.Setenv("http_proxy", "http://127.0.0.1:1/")
+	t.Setenv("https_proxy", "http://127.0.0.1:1/")
+
+	d := DetectPortal(portalProbeCfg(srv.URL + "/generate_204"))
+	if d.Error != "" {
+		t.Fatalf("直连探测不应受代理环境变量影响: %+v", d)
+	}
+	if d.Portal {
+		t.Fatalf("204 不应判定为门户: %+v", d)
+	}
+}
