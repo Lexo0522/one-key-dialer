@@ -678,6 +678,15 @@ func (a *App) TestPortalAuth() PortalTestResult {
 	var sb strings.Builder
 
 	d1 := service.DetectPortal(cfg)
+	if d1.Error != "" {
+		// 探测请求失败不等同于"无门户"：必须显示"测试无法进行"，
+		// 否则超时会被误报成网络无需认证。
+		sb.WriteString(i18n.T("portal.testProbeFailed"))
+		sb.WriteString("\nHTTP " + d1.Detail)
+		sb.WriteString("\n" + i18n.T("portal.testProbeFailedHint"))
+		sb.WriteString("\n" + cfg.Summary())
+		return PortalTestResult{Ok: false, Detail: sb.String()}
+	}
 	if !d1.Portal {
 		sb.WriteString(i18n.T("portal.testNoPortal"))
 		sb.WriteString("\nHTTP " + d1.Detail)

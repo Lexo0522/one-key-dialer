@@ -14,8 +14,13 @@ const (
 	ProbeModeHTTP = "http"
 	ProbeModeAuto = "auto"
 
-	DefaultProbeHost     = "223.5.5.5"
-	DefaultProbeHTTPURL  = "http://connectivitycheck.gstatic.com/generate_204"
+	DefaultProbeHost    = "223.5.5.5"
+	DefaultProbeHTTPURL = "http://wifi.vivo.com.cn/generate_204"
+	// DefaultProbeHTTPURL 用国内厂商的 generate_204 地址，不用 Google 的
+	// connectivitycheck.gstatic.com：本程序面向国内校园网/宽带环境，
+	// gstatic 在多数校园网里解析或连通都不稳，会把正常拨号判成外网不通。
+	// vivo/小米/OPPO 三家的连通性检测地址同为"在线=204、被拦=非204"语义，
+	// 门户探测与联网判定都依赖这一语义（见 service.DetectPortal）。
 	DefaultProbeAttempts = 3
 	DefaultProbeDelayMs  = 1000
 	DefaultHTTPTimeoutMs = 2500

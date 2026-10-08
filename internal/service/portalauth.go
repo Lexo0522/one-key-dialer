@@ -354,6 +354,13 @@ func (s *PortalAuthService) tick(cancel chan struct{}) (bool, time.Duration) {
 	s.mu.Unlock()
 
 	d := s.detect()
+	if d.Error != "" {
+		// 探测本身失败（超时/DNS/连接被拒）≠ 网络无需认证：不清失败计数、
+		// 不打印"放行"，按退避曲线等下一轮重试，避免误判成门户消失后
+		// 反复发起无意义的认证请求。
+		s.logger.Warning(i18n.Tf("portal.detectFailed", d.Error))
+		return true, s.nextDelay()
+	}
 	if !d.Portal {
 		s.mu.Lock()
 		s.failStreak = 0
