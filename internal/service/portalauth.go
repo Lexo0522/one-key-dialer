@@ -10,7 +10,6 @@ import (
 
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
 	"github.com/Lexo0522/one-key-dialer/internal/model"
-	"github.com/Lexo0522/one-key-dialer/internal/proxy"
 )
 
 // ============================ 认证请求构造 ============================
@@ -133,11 +132,15 @@ func ParsePortalHeaders(text string) [][2]string {
 	return out
 }
 
-// portalHTTPClient 构造门户请求用的 HTTP 客户端(代理出口 + 8 秒超时)。
-func portalHTTPClient(cfg PortalAuthConfig) *http.Client {
-	client := &http.Client{Transport: proxy.TransportFor(cfg.Proxy)}
-	client.Timeout = 8 * time.Second
-	return client
+// portalHTTPClient 构造门户请求用的 HTTP 客户端(直连 + 8 秒超时)。
+// 门户位于本机链路侧:认证请求的目标是内网门户地址,走代理出口必然到不了,
+// 且系统代理模式的 VPN 会把这类请求送往公网。因此门户认证必须直连,
+// 与 webcheckClient 一致(Proxy 显式置 nil,不走系统环境变量)。
+func portalHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{Proxy: nil},
+		Timeout:   8 * time.Second,
+	}
 }
 
 // ExecutePortalAuth 执行一次门户认证请求。
@@ -206,7 +209,7 @@ func ExecutePortalAuth(cfg PortalAuthConfig, portalURL, username, password strin
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 
-	client := portalHTTPClient(cfg)
+	client := portalHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return attachWarn(fail(err.Error()))

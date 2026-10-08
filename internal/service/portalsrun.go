@@ -8,9 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
+	"unicode/utf16"
 
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
 	"github.com/Lexo0522/one-key-dialer/internal/model"
@@ -64,20 +68,34 @@ func srunBase64(data []byte) string {
 	return b.String()
 }
 
-// srunOrdat 取 msg 第 idx 字节,越界返回 0(对应门户页 ordat)。
-func srunOrdat(msg string, idx int) uint32 {
-	if idx < len(msg) {
-		return uint32(msg[idx])
+// srunJSBytes 按门户页 JS 语义把字符串转成字节序列:JS 字符串是 UTF-16,
+// ordat 取 charCodeAt(idx) & 0xff。纯 ASCII 下与直接取字节逐字节一致;
+// 含非 ASCII(如中文密码)时,算出的 info 与门户页逐字节相同,而直接取
+// UTF-8 字节必然算错。
+func srunJSBytes(s string) []byte {
+	u16 := utf16.Encode([]rune(s))
+	out := make([]byte, len(u16))
+	for i, v := range u16 {
+		out[i] = byte(v)
+	}
+	return out
+}
+
+// srunOrdat 取 data 第 idx 字节,越界返回 0(对应门户页 ordat)。
+func srunOrdat(data []byte, idx int) uint32 {
+	if idx < len(data) {
+		return uint32(data[idx])
 	}
 	return 0
 }
 
-// srunSencode 门户页 s():字符串按小端 4 字节一组打包,includeLength 时末尾追加原始长度。
-func srunSencode(msg string, includeLength bool) []uint32 {
-	length := len(msg)
+// srunSencode 字节序列按小端 4 字节一组打包,includeLength 时末尾追加
+// 原始单元数(对应门户页 s() 的 a.length,即 UTF-16 码元数)。
+func srunSencode(data []byte, includeLength bool) []uint32 {
+	length := len(data)
 	words := make([]uint32, (length+3)/4)
 	for i := 0; i < length; i++ {
-		words[i>>2] |= srunOrdat(msg, i) << (uint(i&3) * 8)
+		words[i>>2] |= srunOrdat(data, i) << (uint(i&3) * 8)
 	}
 	if includeLength {
 		words = append(words, uint32(length))
@@ -95,13 +113,14 @@ func srunLencode(words []uint32) []byte {
 }
 
 // srunXEncode 门户页 xEncode 的 Go 移植:TEA 变体,以 key 为轮密钥加密 content。
+// content/key 先按 srunJSBytes 转成门户页 JS 等价字节序列再参与运算。
 // 参考实现中的 0x...|0x... 常量是 JS 的 32 位回绕掩码,Go 的 uint32 溢出天然等价。
 func srunXEncode(content, key string) []byte {
 	if content == "" {
 		return nil
 	}
-	pwd := srunSencode(content, true)
-	pwdk := srunSencode(key, false)
+	pwd := srunSencode(srunJSBytes(content), true)
+	pwdk := srunSencode(srunJSBytes(key), false)
 	for len(pwdk) < 4 {
 		pwdk = append(pwdk, 0)
 	}
@@ -173,15 +192,25 @@ func srunChksum(token, username, hmd5, acid, ip, info string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// srunEcode 兼容数字与字符串两种形态的 ecode(如 0 与 "E2901"):
+// 某些部署返回字符串形态,按 int 解析会让整个响应 JSON 解析失败。
+type srunEcode string
+
+// UnmarshalJSON 数字与字符串都按原文保留为字符串。
+func (e *srunEcode) UnmarshalJSON(data []byte) error {
+	*e = srunEcode(strings.Trim(string(data), `"`))
+	return nil
+}
+
 // srunAPIResp get_challenge / srun_portal 响应的公共字段。
 type srunAPIResp struct {
-	Error     string `json:"error"`
-	Ecode     int    `json:"ecode"`
-	Challenge string `json:"challenge"`
-	ClientIP  string `json:"client_ip"`
-	EchoMsg   string `json:"echo_msg"`
-	ErrorMsg  string `json:"error_msg"`
-	Res       string `json:"res"`
+	Error     string    `json:"error"`
+	Ecode     srunEcode `json:"ecode"`
+	Challenge string    `json:"challenge"`
+	ClientIP  string    `json:"client_ip"`
+	EchoMsg   string    `json:"echo_msg"`
+	ErrorMsg  string    `json:"error_msg"`
+	Res       string    `json:"res"`
 }
 
 // srunErrText 汇总 srun 响应中的错误信息,便于日志与测试回显。
@@ -200,6 +229,45 @@ func srunErrText(r srunAPIResp) string {
 		return "(empty)"
 	}
 	return strings.Join(parts, " ")
+}
+
+// srunAlreadyOnline 判断 srun 响应是否为"已在线"(E2901 等):
+// 用户实际已有网络,继续按失败重试没有意义,应视为目标已达成。
+func srunAlreadyOnline(r srunAPIResp) bool {
+	hay := strings.ToLower(strings.Join([]string{r.Error, string(r.Ecode), r.ErrorMsg, r.EchoMsg}, " "))
+	for _, kw := range []string{"already online", "alreadyonline", "e2901", "已经在线", "已在线"} {
+		if strings.Contains(hay, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// srunCallback 生成门户页风格的 JSONP 回调名与时间戳:真实门户页的
+// get_challenge / srun_portal 请求都带 callback=jQuery... 与 _=时间戳,
+// 补齐以兼容对缺参表现异常的部署/WAF;服务端忽略多余参数时无影响。
+func srunCallback() (name, ts string) {
+	ts = strconv.FormatInt(time.Now().UnixMilli(), 10)
+	return "jQuery1124" + ts, ts
+}
+
+// srunLocalIP 取访问门户主机时本机的出口 IP(UDP dial 只做 connect,不实际
+// 发包):challenge 未返回 client_ip 且门户 URL 里也没有 IP 参数时的兜底,
+// 避免直接报"no client ip"。
+func srunLocalIP(rawBase string) string {
+	u, err := url.Parse(rawBase)
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	conn, err := net.DialTimeout("udp", net.JoinHostPort(u.Hostname(), "80"), 3*time.Second)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	if ua, ok := conn.LocalAddr().(*net.UDPAddr); ok && ua.IP != nil {
+		return ua.IP.String()
+	}
+	return ""
 }
 
 // stripJSONP 剥掉 "cb({...})" 的 JSONP 包装;非包装原样返回。
@@ -244,12 +312,14 @@ func executeSrunAuth(cfg PortalAuthConfig, portalURL, username, password string)
 		return fail("bad login url")
 	}
 	params := derivePortalParams(portalURL)
-	client := portalHTTPClient(cfg)
+	client := portalHTTPClient()
 
-	httpGet := func(desc, rawURL string) (string, error) {
+	// httpGet 返回 (正文, 状态码, 错误);4xx/5xx 也带回状态码,供调用方
+	// 按状态码决策(如 srun_portal 404 时回退 .php 变体)。
+	httpGet := func(desc, rawURL string) (string, int, error) {
 		req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 		req.Header.Set("User-Agent", model.UserAgent())
 		for _, h := range cfg.Headers {
@@ -257,14 +327,14 @@ func executeSrunAuth(cfg PortalAuthConfig, portalURL, username, password string)
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 		defer resp.Body.Close()
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-			return "", fmt.Errorf("HTTP %s", resp.Status)
+			return "", resp.StatusCode, fmt.Errorf("HTTP %s", resp.Status)
 		}
-		return string(raw), nil
+		return string(raw), resp.StatusCode, nil
 	}
 	parse := func(desc, raw string) (srunAPIResp, PortalAuthOutcome) {
 		var r srunAPIResp
@@ -276,12 +346,15 @@ func executeSrunAuth(cfg PortalAuthConfig, portalURL, username, password string)
 
 	// 第一步:get_challenge 取动态 challenge(即 token)。
 	challengeDesc := i18n.T("portal.srunChallenge")
+	cb, ts := srunCallback()
 	q := url.Values{}
+	q.Set("callback", cb)
 	q.Set("username", username)
 	if params.userIP != "" {
 		q.Set("ip", params.userIP)
 	}
-	raw, err := httpGet(challengeDesc, base+"/cgi-bin/get_challenge?"+q.Encode())
+	q.Set("_", ts)
+	raw, _, err := httpGet(challengeDesc, base+"/cgi-bin/get_challenge?"+q.Encode())
 	if err != nil {
 		return fail(challengeDesc + ": " + err.Error())
 	}
@@ -290,6 +363,9 @@ func executeSrunAuth(cfg PortalAuthConfig, portalURL, username, password string)
 		return o
 	}
 	if ch.Error != "ok" || ch.Challenge == "" {
+		if srunAlreadyOnline(ch) {
+			return PortalAuthOutcome{Success: true, Detail: challengeDesc + ": already online"}
+		}
 		return fail(i18n.Tf("portal.srunChallengeFailed", srunErrText(ch)))
 	}
 	token := ch.Challenge
@@ -298,13 +374,19 @@ func executeSrunAuth(cfg PortalAuthConfig, portalURL, username, password string)
 		ip = params.userIP
 	}
 	if ip == "" {
+		// 兜底:取访问门户主机时本机的出口 IP,避免直接报"no client ip"。
+		ip = srunLocalIP(base)
+	}
+	if ip == "" {
 		return fail(i18n.Tf("portal.srunChallengeFailed", "no client ip"))
 	}
 
 	// 第二步:按门户页算法计算 info/hmd5/chksum 后提交 srun_portal。
 	info := "{SRBX1}" + srunBase64(srunXEncode(srunInfoJSON(username, password, ip, params.acid), token))
 	hmd5 := srunHmd5(token, password)
+	cb2, ts2 := srunCallback()
 	vs := url.Values{}
+	vs.Set("callback", cb2)
 	vs.Set("action", "login")
 	vs.Set("username", username)
 	vs.Set("password", "{MD5}"+hmd5)
@@ -317,15 +399,31 @@ func executeSrunAuth(cfg PortalAuthConfig, portalURL, username, password string)
 	vs.Set("os", "Windows 10")
 	vs.Set("name", "Windows")
 	vs.Set("double_stack", "0")
+	vs.Set("_", ts2)
 
 	loginDesc := i18n.T("portal.srunLogin")
-	raw, err = httpGet(loginDesc, base+"/cgi-bin/srun_portal?"+vs.Encode())
+	// 部分部署的登录接口是 srun_portal.php(srunBaseUrl 会把用户粘贴的
+	// .php 后缀归一掉):先试标准路径,404 则回退 .php 变体。
+	var loginStatus int
+	for _, p := range []string{"/cgi-bin/srun_portal", "/cgi-bin/srun_portal.php"} {
+		raw, loginStatus, err = httpGet(loginDesc, base+p+"?"+vs.Encode())
+		if err == nil {
+			break
+		}
+		if loginStatus != http.StatusNotFound {
+			break
+		}
+		raw = ""
+	}
 	if err != nil {
 		return fail(loginDesc + ": " + err.Error())
 	}
 	lr, o := parse(loginDesc, raw)
 	if o.Detail != "" {
 		return o
+	}
+	if lr.Error != "ok" && srunAlreadyOnline(lr) {
+		return PortalAuthOutcome{Success: true, Detail: loginDesc + ": already online (" + srunErrText(lr) + ")"}
 	}
 	outcome := PortalAuthOutcome{Success: lr.Error == "ok"}
 	outcome.Detail = loginDesc + ": " + srunErrText(lr)

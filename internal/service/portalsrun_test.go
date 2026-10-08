@@ -202,3 +202,135 @@ func TestExecutePortalAuthSrunBaseUrlAndErrors(t *testing.T) {
 		t.Fatalf("无登录地址应失败: %+v", out)
 	}
 }
+
+// srunJSBytes 按门户页 JS 语义(UTF-16 charCodeAt & 0xff)转字节:
+// ASCII 与直接取字节一致;非 ASCII 与旧实现不同,且与门户页一致。
+func TestSrunJSBytes(t *testing.T) {
+	if got := string(srunJSBytes("abc123")); got != "abc123" {
+		t.Fatalf("ASCII 应原样: %q", got)
+	}
+	// "密" U+5BC6 → 低字节 0xC6;"码" U+7801 → 低字节 0x01
+	got := srunJSBytes("密码")
+	if len(got) != 2 || got[0] != 0xC6 || got[1] != 0x01 {
+		t.Fatalf("中文应取 UTF-16 低字节: % x", got)
+	}
+	// xEncode 对中文密码的结果必须与门户页 JS 算法一致(见独立 Python 校验):
+	// 与旧实现(UTF-8 字节)算出的 info 不同,才是对的。
+	j := srunInfoJSON("20210002", "密码123abc", "10.0.0.2", "1")
+	info := "{SRBX1}" + srunBase64(srunXEncode(j, "abcdef0123456789"))
+	want := "{SRBX1}UgUWThtPvSk25RKWbTGXNq5HeS1SJZrbrt3ZciY7mjxkXknl8+tbWbUTdItykbEUmskre01dRKZnxWjmH7MtU7EM2AWwr0t/P6VnEbxDBgj1HUj7cdMdyMfNIemMyWwCDKBHOv=="
+	if info != want {
+		t.Fatalf("中文密码 info 与 JS 算法不符:\n got %s\nwant %s", info, want)
+	}
+}
+
+func TestSrunAlreadyOnline(t *testing.T) {
+	yes := []srunAPIResp{
+		{Error: "E2901", ErrorMsg: "(Third party 1)already online."},
+		{Error: "login_error", ErrorMsg: "E2901: already online"},
+		{ErrorMsg: "用户已经在线"},
+	}
+	for _, r := range yes {
+		if !srunAlreadyOnline(r) {
+			t.Fatalf("应判定已在线: %+v", r)
+		}
+	}
+	no := []srunAPIResp{
+		{Error: "ok"},
+		{Error: "password_error", ErrorMsg: "密码错误"},
+		{Error: "E2902"},
+		{},
+	}
+	for _, r := range no {
+		if srunAlreadyOnline(r) {
+			t.Fatalf("不应判定已在线: %+v", r)
+		}
+	}
+}
+
+// 门户返回 already online 时应视为成功(目标已达成),而不是失败重试。
+func TestExecutePortalAuthSrunAlreadyOnline(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/cgi-bin/get_challenge" {
+			_, _ = w.Write([]byte(`{"error":"ok","challenge":"abcdef0123456789","client_ip":"10.0.0.9"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"error":"E2901","ecode":"E2901","error_msg":"(Third party 1)already online."}`))
+	}))
+	defer srv.Close()
+
+	cfg := PortalAuthConfig{LoginUrl: srv.URL, Method: model.PortalMethodSrun}
+	out := ExecutePortalAuth(cfg, "", "u1", "p1")
+	if !out.Success {
+		t.Fatalf("already online 应视为成功: %+v", out)
+	}
+}
+
+// srun_portal 404 时回退 srun_portal.php(部分部署只有 .php 接口)。
+func TestExecutePortalAuthSrunPhpFallback(t *testing.T) {
+	var hits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, r.URL.Path)
+		switch r.URL.Path {
+		case "/cgi-bin/get_challenge":
+			_, _ = w.Write([]byte(`{"error":"ok","challenge":"0123456789abcdef","client_ip":"10.0.0.1"}`))
+		case "/cgi-bin/srun_portal":
+			http.NotFound(w, r)
+		case "/cgi-bin/srun_portal.php":
+			_, _ = w.Write([]byte(`{"error":"ok","ecode":0,"echo_msg":"login ok"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cfg := PortalAuthConfig{LoginUrl: srv.URL, Method: model.PortalMethodSrun}
+	out := ExecutePortalAuth(cfg, "", "u1", "p1")
+	if !out.Success {
+		t.Fatalf("应回退 .php 接口并成功: %+v, hits=%v", out, hits)
+	}
+	foundPortal, foundPhp := false, false
+	for _, h := range hits {
+		if h == "/cgi-bin/srun_portal" {
+			foundPortal = true
+		}
+		if h == "/cgi-bin/srun_portal.php" {
+			foundPhp = true
+		}
+	}
+	if !foundPortal || !foundPhp {
+		t.Fatalf("应先试 srun_portal 再回退 .php, hits=%v", hits)
+	}
+}
+
+// 两步请求都应带 callback/_ 参数,与真实门户页行为一致。
+func TestExecutePortalAuthSrunCallbackParams(t *testing.T) {
+	var challengeQuery, loginQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/cgi-bin/get_challenge":
+			challengeQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"error":"ok","challenge":"0123456789abcdef","client_ip":"10.0.0.1"}`))
+		case "/cgi-bin/srun_portal":
+			loginQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"error":"ok"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cfg := PortalAuthConfig{LoginUrl: srv.URL, Method: model.PortalMethodSrun}
+	if out := ExecutePortalAuth(cfg, "", "u1", "p1"); !out.Success {
+		t.Fatalf("应成功: %+v", out)
+	}
+	for name, q := range map[string]string{"challenge": challengeQuery, "login": loginQuery} {
+		vs, err := url.ParseQuery(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(vs.Get("callback"), "jQuery") || vs.Get("_") == "" {
+			t.Fatalf("%s 请求应带 callback/_ 参数: %s", name, q)
+		}
+	}
+}
