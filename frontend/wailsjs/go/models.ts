@@ -243,6 +243,7 @@ export namespace main {
 	    ssid: string;
 	    signalQuality: number;
 	    phase: string;
+	    busy: boolean;
 	    autoConnect: boolean;
 	    preferredSsid: string;
 	
@@ -257,6 +258,7 @@ export namespace main {
 	        this.ssid = source["ssid"];
 	        this.signalQuality = source["signalQuality"];
 	        this.phase = source["phase"];
+	        this.busy = source["busy"];
 	        this.autoConnect = source["autoConnect"];
 	        this.preferredSsid = source["preferredSsid"];
 	    }

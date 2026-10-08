@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -17,14 +18,17 @@ type WifiService struct {
 	onChange func()
 	pskFor   func(ssid string) string
 
-	mu          sync.Mutex
-	scanCache   []platform.WlanNetwork
-	scanAt      time.Time
-	connecting  bool
-	autoSsid    string
-	cancel      chan struct{}
-	wg          sync.WaitGroup
-	autoRunning bool
+	mu            sync.Mutex
+	scanCache     []platform.WlanNetwork
+	scanAt        time.Time
+	connecting    bool
+	disconnecting bool
+	autoSsid      string
+	cancel        chan struct{}
+	wg            sync.WaitGroup
+	autoRunning   bool
+	// watchGen 过渡态兜底轮询的代次:新动作受理时递增,旧轮询据此让位
+	watchGen int
 }
 
 // NewWifiService 构造 WiFi 服务。
@@ -67,31 +71,35 @@ func (s *WifiService) Scan(force bool) []platform.WlanNetwork {
 }
 
 // Status 当前无线状态。
-func (s *WifiService) Status() platform.WlanState {
-	st, err := platform.WlanCurrent()
-	if err != nil {
-		return platform.WlanState{Phase: "idle"}
-	}
-	return st
+// 注意返回的 Phase 描述的是 OS 接口的**瞬时阶段**，用于展示；它不代表
+// 本应用正在进行连接/断开流程——存在网卡正重连（AP 漫游/信号抖动）而用户
+// 什么都没做的情况。按钮可用性由 IsBusy() 判定，语义完全不同。
+func (s *WifiService) Status() (platform.WlanState, error) {
+	return platform.WlanCurrent()
 }
 
-// IsConnecting 是否有连接流程进行中。
-func (s *WifiService) IsConnecting() bool {
+// IsBusy 本应用是否正在进行连接/断开流程。
+// 这是按钮可用性的唯一依据：只有用户（或自动连接）在本应用内发起的动作
+// 才应该锁定界面。OS 侧自发处于 associating/authenticating（网卡重连、
+// 漫游）时界面必须保持可操作，否则用户点不了任何按钮。
+func (s *WifiService) IsBusy() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.connecting
+	return s.connecting || s.disconnecting
 }
 
 // Connect 连接指定网络(阻塞,最长约 20 秒,调用方负责放后台)。
 // 密码为空且已有配置时沿用既有配置。
 func (s *WifiService) Connect(ssid, password string) error {
 	s.mu.Lock()
-	if s.connecting {
+	if s.connecting || s.disconnecting {
 		s.mu.Unlock()
 		return errWifiBusy
 	}
 	s.connecting = true
 	s.mu.Unlock()
+	// 受理即上报：此刻 OS 接口可能还没进入连接态，靠 busy 置位让前端
+	// 立刻显示「连接中」并锁定按钮，而不是等 OS 状态翻转
 	s.notify()
 
 	s.logger.Info(i18n.Tf("wifi.connecting", ssid))
@@ -105,19 +113,85 @@ func (s *WifiService) Connect(ssid, password string) error {
 	s.connecting = false
 	s.mu.Unlock()
 	s.notify()
+	// OS 离开过渡态可能晚于本函数收尾,兜底轮询防止前端把「连接中」钉死
+	s.watchTransition()
 	return err
 }
 
 // Disconnect 断开当前无线连接。
 func (s *WifiService) Disconnect() error {
+	s.mu.Lock()
+	if s.disconnecting {
+		s.mu.Unlock()
+		return nil
+	}
+	s.disconnecting = true
+	s.mu.Unlock()
+	s.notify()
+
 	err := platform.WlanDisconnect()
 	if err != nil {
 		s.logger.Error(i18n.Tf("wifi.disconnectFailed", err.Error()))
 	} else {
 		s.logger.Info(i18n.T("wifi.disconnected"))
 	}
+	s.mu.Lock()
+	s.disconnecting = false
+	s.mu.Unlock()
 	s.notify()
+	s.watchTransition()
 	return err
+}
+
+// watchTransition 收尾后的短暂状态跟进：OS 接口可能滞后数十秒才离开
+// associating/authenticating/disconnecting（AP 慢速拒绝、驱动迟滞）。
+// 按钮可用性已由 busy 表达，不受其影响；此轮仅让界面显示的 SSID/信号/
+// 阶段追上真实稳态。状态稳定或超时后收工；期间有新动作受理则让位。
+func (s *WifiService) watchTransition() {
+	seed, err := s.Status()
+	last := ""
+	if err == nil {
+		last = fmt.Sprintf("%s|%s|%d|%v", seed.Phase, seed.Ssid, seed.SignalQuality, seed.Connected)
+	}
+	s.mu.Lock()
+	s.watchGen++
+	gen := s.watchGen
+	s.mu.Unlock()
+	go func() {
+		deadline := time.Now().Add(45 * time.Second)
+		for {
+			time.Sleep(500 * time.Millisecond)
+			s.mu.Lock()
+			active := s.connecting || s.disconnecting
+			takenOver := s.watchGen != gen
+			s.mu.Unlock()
+			if takenOver {
+				return
+			}
+			if active {
+				// 主流程仍在跑:它收尾时会自行上报并再次进入跟进
+				continue
+			}
+			st, err := s.Status()
+			if err != nil {
+				if time.Now().After(deadline) {
+					return
+				}
+				continue
+			}
+			key := fmt.Sprintf("%s|%s|%d|%v", st.Phase, st.Ssid, st.SignalQuality, st.Connected)
+			if key != last {
+				last = key
+				s.notify()
+			}
+			if st.Phase != "connecting" && st.Phase != "disconnecting" {
+				return
+			}
+			if time.Now().After(deadline) {
+				return
+			}
+		}
+	}()
 }
 
 // Configure 更新自动连接配置;具备条件时启动循环,否则停止。
@@ -234,29 +308,20 @@ func (s *WifiService) autoTick(cancel chan struct{}) (bool, time.Duration) {
 	default:
 	}
 	s.mu.Lock()
-	if s.connecting {
-		s.mu.Unlock()
+	busy := s.connecting || s.disconnecting
+	s.mu.Unlock()
+	if busy {
 		return true, autoConnectInterval
 	}
-	s.connecting = true
-	s.mu.Unlock()
-	s.notify()
 
 	psk := ""
 	if s.pskFor != nil {
 		psk = s.pskFor(ssid)
 	}
 	s.logger.Info(i18n.Tf("wifi.autoConnectTry", ssid))
-	err = platform.WlanConnect(ssid, psk)
-	if err == nil {
-		s.logger.Success(i18n.Tf("wifi.connected", ssid))
-	} else {
-		s.logger.Error(i18n.Tf("wifi.connectFailed", err.Error()))
-	}
-	s.mu.Lock()
-	s.connecting = false
-	s.mu.Unlock()
-	s.notify()
+	// 复用 Connect:统一的受理上报、结果日志与过渡态兜底;
+	// 竞态下被手动连接抢先时返回 busy,静默跳过等下一轮
+	_ = s.Connect(ssid, psk)
 	return true, autoConnectInterval
 }
 

@@ -39,8 +39,8 @@ var zh = map[string]string{
 	"precheck.dialog.default":   "拨号失败",
 
 	// 系统直连在线（免拨号场景的流量监控）
-	"sys.directOnline":  "检测到网口直连联网（非本应用拨号），已开始记录流量统计",
-	"sys.directOffline": "网口直连已断开",
+	"sys.directOnline":  "\u68c0\u6d4b\u5230\u7cfb\u7edf\u5df2\u8054\u7f51\uff08\u975e\u672c\u5e94\u7528\u62e8\u53f7\uff09\uff0c\u5df2\u5f00\u59cb\u8bb0\u5f55\u6d41\u91cf\u7edf\u8ba1",
+	"sys.directOffline": "\u7cfb\u7edf\u8054\u7f51\u5df2\u65ad\u5f00",
 
 	// 拨号 / 断开
 	"dial.busy":                   "正在处理连接操作...",

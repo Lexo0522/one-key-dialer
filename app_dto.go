@@ -33,8 +33,9 @@ type AppState struct {
 }
 
 // StatusPayload 连接状态事件负载。
-// SysOnline 表示系统已通过网口直连联网（非本应用拨号），流量监控按
-// Online ∨ SysOnline 的"有效在线"口径放行。
+// SysOnline 表示系统已联网（非本应用拨号，任意出口：网口直连 / WiFi / VPN），
+// 流量监控按 Online ∨ SysOnline 的"有效在线"口径放行——用户此时确实在上网，
+// 速率与会话流量必须记录。注意它不是拨号预检的依据（那要求网口直连）。
 type StatusPayload struct {
 	Online    bool   `json:"online"`
 	SysOnline bool   `json:"sysOnline,omitempty"`
@@ -65,13 +66,16 @@ type WifiNetworkDTO struct {
 }
 
 // WifiStatusDTO 前端 WiFi 状态（含可用性与自动连接配置回显）。
-// Phase: idle/connecting/connected/disconnecting。
+// Phase 是 OS 接口的瞬时阶段（idle/connecting/connected/disconnecting），
+// 仅用于展示：网卡自发重连/漫游时也会是 connecting。
+// Busy 才是按钮可用性的依据：仅本应用发起的连接/断开流程为真。
 type WifiStatusDTO struct {
 	Available     bool   `json:"available"`
 	Connected     bool   `json:"connected"`
 	Ssid          string `json:"ssid"`
 	SignalQuality int    `json:"signalQuality"`
 	Phase         string `json:"phase"`
+	Busy          bool   `json:"busy"`
 	AutoConnect   bool   `json:"autoConnect"`
 	PreferredSsid string `json:"preferredSsid"`
 }

@@ -23,7 +23,7 @@
                 <div class="sub" v-if="status.connected">{{ t('wifi.status.signal') }} {{ status.signalQuality }}%</div>
                 <div class="sub" v-else>{{ phaseLabel }}</div>
               </div>
-              <button v-if="status.connected || status.phase === 'connecting'"
+              <button v-if="status.connected || busy"
                       class="btn" :disabled="busy" @click="onDisconnect">
                 {{ t('wifi.disconnect') }}
               </button>
@@ -51,7 +51,7 @@
                 <span class="net-ssid">{{ n.ssid }}</span>
                 <span v-if="n.connected" class="badge on">{{ t('wifi.status.connected') }}</span>
                 <span class="badge" v-else>{{ n.auth === 'Open' ? t('wifi.authOpen') : n.auth }}</span>
-                <button class="btn sm" :disabled="busy || (n.connected && !passwords[n.ssid])" @click.stop="onConnect(n)">
+                <button class="btn sm" :disabled="busy" @click.stop="onConnect(n)">
                   <i v-if="isConnectingTo(n.ssid)" class="fas fa-circle-notch fa-spin"></i>
                   {{ t('wifi.connect') }}
                 </button>
@@ -170,7 +170,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   state, patchSettings, refreshWifiStatus, scanWifi, connectWifi, disconnectWifi,
   loadPortalCredential, savePortalCredential, testPortalAuth, showToast
@@ -185,8 +185,10 @@ const status = computed(() => state.wifi.status || {})
 const networks = computed(() => state.wifi.networks)
 const scanBusy = ref(false)
 
-/** 连接流程进行中（全局单连接，phase 由后端推送）。 */
-const busy = computed(() => ['connecting', 'disconnecting'].includes(status.value.phase))
+/** 连接/断开流程进行中（由后端 busy 字段表达：仅本应用发起的动作才锁定界面）。
+ *  不用 OS 的 phase 判定：网卡自发重连/漫游时 phase 也会是 connecting，
+ *  照它禁用会把整页按钮卡死。 */
+const busy = computed(() => !!(status.value && status.value.busy))
 
 const phaseLabel = computed(() => {
   const map = {
@@ -242,23 +244,37 @@ async function onConnect(n) {
     return
   }
   connectingTo.value = n.ssid
-  await connectWifi(n.ssid, pw)
+  const ok = await connectWifi(n.ssid, pw)
+  if (!ok) connectingTo.value = ''
 }
 
 async function onDisconnect() {
   await disconnectWifi()
 }
 
-// 连接失败兜底：phase 从 connecting 回到 idle 且未连接时提示
+// 连接失败兜底：busy 从 true 回落到 false 且仍未连接时提示。
+// 只针对手动发起的连接（connectingTo 非空），自动连接的后台尝试失败不弹条。
 watch(
-  () => status.value.phase,
-  (now, before) => {
-    if (before === 'connecting' && now === 'idle') {
+  [() => status.value.busy, () => status.value.connected],
+  ([b, c], was) => {
+    if (was[0] && !b && !c && connectingTo.value) {
       showToast(t('wifi.connectFail'), 'error')
     }
-    if (now !== 'connecting') connectingTo.value = ''
+    if (!b) connectingTo.value = ''
   }
 )
+
+// 兜底看门狗：busy 正常由后端在动作收尾时复位；事件丢失等极端情况下
+// 按钮会被钉死在禁用，定期向后端索要一次真实状态自愈。
+let busyWatchdog = null
+watch(
+  () => status.value.busy,
+  (b) => {
+    clearTimeout(busyWatchdog)
+    if (b) busyWatchdog = setTimeout(() => refreshWifiStatus(), 40000)
+  }
+)
+onUnmounted(() => clearTimeout(busyWatchdog))
 
 // ------------------------------------------------------------ 自动连接 ----
 

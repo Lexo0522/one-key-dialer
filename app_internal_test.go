@@ -59,3 +59,26 @@ func TestIsPrecheckOnlineNote(t *testing.T) {
 		}
 	}
 }
+
+// TestPrecheckWiredGateIsDistinctFromAnyOnline 拨号预检只看「网口直连」，
+// 与流量统计的「系统已联网（任意出口）」是两个口径：WiFi 联网时要记录统计，
+// 但不得因此免检拨号凭据。此测试固定该契约不被重新混为一谈。
+func TestPrecheckWiredGateIsDistinctFromAnyOnline(t *testing.T) {
+	// 统计口径（任意出口）：WiFi 联网 → directOnline 为真
+	// 预检口径（网口直连）：同一场景下 directOnlineWired 为假
+	anyOnline := func() bool { return true }
+	wiredOnly := func() bool { return false }
+
+	if !anyOnline() {
+		t.Fatal("WiFi 联网时应视为系统已联网（否则流量统计被闸死）")
+	}
+	// WiFi 联网 + 无凭据：预检必须报缺账号，而不是"已联网无需拨号"
+	if got := precheckFailure(false, "", nil, wiredOnly); got != i18n.T("precheck.emptyUsername") {
+		t.Fatalf("WiFi 联网且缺凭据时预检 = %q, want %q（不得误判为已直连联网）",
+			got, i18n.T("precheck.emptyUsername"))
+	}
+	// 网口直连 + 无凭据：维持原豁免行为
+	if got := precheckFailure(false, "", nil, anyOnline); got != i18n.T("precheck.systemOnline") {
+		t.Fatalf("网口直连且缺凭据时预检 = %q, want %q", got, i18n.T("precheck.systemOnline"))
+	}
+}

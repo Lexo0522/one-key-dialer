@@ -82,7 +82,7 @@ type App struct {
 	mu               sync.Mutex
 	online           bool
 	connectTimeMs    int64
-	sysOnline        bool // 系统网口直连在线(免拨号,如家庭宽带路由器 DHCP)
+	sysOnline        bool // 系统已联网(非本应用拨号,任意出口)——流量统计的放行依据
 	sysConnectTimeMs int64
 	sessionDown      int64
 	sessionUp        int64
@@ -619,7 +619,13 @@ func (a *App) WifiConnect(ssid, password string) bool {
 	if strings.TrimSpace(ssid) == "" || !a.wifiSvc.Available() {
 		return false
 	}
-	a.exec.SubmitLong(func() {
+	// 忙态同步拒绝：受理却不执行只会让前端拿着「连接中」空等
+	if a.wifiSvc.IsBusy() {
+		return false
+	}
+	// 连接自带 15 秒轮询，走通用并发；不进 SubmitLong 的单工队列，
+	// 否则会排在 60 秒级诊断后面，前端长时间看不到任何进展。
+	a.exec.Submit(func() {
 		if err := a.wifiSvc.Connect(ssid, password); err != nil {
 			return
 		}

@@ -336,7 +336,9 @@ const mockApi = {
       connected: mockWifi.connected,
       ssid: mockWifi.ssid,
       signalQuality: mockWifi.signal,
+      // phase 只是 OS 瞬时阶段，仅用于展示；busy 才是按钮可用性依据
       phase: mockWifi.phase,
+      busy: mockWifi.busy,
       autoConnect: !!mockSettings.wifiAutoConnect,
       preferredSsid: mockSettings.wifiPreferredSsid || ''
     }
@@ -348,26 +350,36 @@ const mockApi = {
     return mockWifi.networks.map((n) => ({ ...n }))
   },
   WifiConnect(ssid, password) {
+    if (mockWifi.busy) return false
     mockLog(`正在连接 WiFi: ${ssid}`)
-    mockWifi.phase = 'connecting'
-    mockBus.emit(EV.wifi, { available: true, connected: false, ssid, signalQuality: 0, phase: 'connecting' })
+    mockWifi.busy = true
+    mockBus.emit(mockWifiPayload('connecting', ssid, 0))
     setTimeout(() => {
       mockWifi.connected = true
       mockWifi.ssid = ssid
       mockWifi.signal = 76
       mockWifi.phase = 'connected'
+      mockWifi.busy = false
       if (password) mockLog(`已保存 WiFi 密码: ${ssid}`, 'success')
       mockLog(`已连接 WiFi: ${ssid}`, 'success')
-      mockBus.emit(EV.wifi, { available: true, connected: true, ssid, signalQuality: 76, phase: 'connected' })
+      mockBus.emit(mockWifiPayload('connected', ssid, 76))
     }, 1500)
     return true
   },
   WifiDisconnect() {
-    mockWifi.connected = false
-    mockWifi.ssid = ''
-    mockWifi.phase = 'idle'
-    mockLog('已断开 WiFi')
-    mockBus.emit(EV.wifi, { available: true, connected: false, ssid: '', signalQuality: 0, phase: 'idle' })
+    if (mockWifi.busy) return false
+    mockWifi.busy = true
+    mockWifi.phase = 'disconnecting'
+    mockLog('正在断开 WiFi')
+    mockBus.emit(mockWifiPayload('disconnecting', mockWifi.ssid, mockWifi.signal))
+    setTimeout(() => {
+      mockWifi.connected = false
+      mockWifi.ssid = ''
+      mockWifi.phase = 'idle'
+      mockWifi.busy = false
+      mockLog('已断开 WiFi')
+      mockBus.emit(mockWifiPayload('idle', '', 0))
+    }, 600)
     return true
   },
   async GetPortalCredential() {
@@ -481,6 +493,8 @@ const mockWifi = {
   ssid: '',
   signal: 0,
   phase: 'idle',
+  // busy：仅本应用发起的流程为真，与后端 wifiStatus().busy 同义
+  busy: false,
   scanBusy: false,
   networks: [
     { ssid: 'Campus-WiFi', signalQuality: 82, secured: false, connected: false, hasProfile: false, auth: 'Open' },
@@ -488,6 +502,21 @@ const mockWifi = {
     { ssid: 'Dorm-2F', signalQuality: 40, secured: true, connected: false, hasProfile: false, auth: 'WPA2-PSK' }
   ]
 }
+
+/** 组一条 app:wifi 事件负载（字段与后端 WifiStatusDTO 一致）。 */
+function mockWifiPayload(phase, ssid, signalQuality) {
+  return {
+    available: true,
+    connected: phase === 'connected',
+    ssid,
+    signalQuality,
+    phase,
+    busy: mockWifi.busy,
+    autoConnect: !!mockSettings.wifiAutoConnect,
+    preferredSsid: mockSettings.wifiPreferredSsid || ''
+  }
+}
+
 const mockPortal = { username: '20210001', password: '123456' }
 
 /** 统一出口：Wails 或 mock。 */

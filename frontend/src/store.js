@@ -39,7 +39,8 @@ export const state = reactive({
   // 宽带拨号凭据视图（明文密码不出后端）
   broadband: { username: '', hasPassword: false },
   online: false,
-  // 系统网口直连在线（免拨号，如家庭宽带路由器 DHCP）：统计按 online ∨ sysOnline 放行
+  // 系统已联网（非本应用拨号，任意出口如网口直连 / WiFi / VPN）：
+  // 统计按 online ∨ sysOnline 放行——WiFi 上网时同样要记录速率与会话流量
   sysOnline: false,
   dialBusy: false,
   dialLabel: '',
@@ -64,10 +65,11 @@ export const state = reactive({
   peakUp: 0,
   peakDown: 0,
 
-  // WiFi：状态由后端 app:wifi 事件推送，网络列表由 WiFi 页按需拉取
+  // WiFi：状态由后端 app:wifi 事件推送，网络列表由 WiFi 页按需拉取。
+  // busy 是按钮可用性依据（仅本应用发起的连接/断开流程），phase 仅用于展示。
   wifi: {
     available: false,
-    status: { available: false, connected: false, ssid: '', signalQuality: 0, phase: 'idle' },
+    status: { available: false, connected: false, ssid: '', signalQuality: 0, phase: 'idle', busy: false },
     networks: [],
     scannedAt: 0
   },

@@ -36,8 +36,8 @@ var en = map[string]string{
 	"precheck.dialog.systemOn":  "You are already online via wired connection",
 	"precheck.dialog.default":   "Dial failed",
 
-	"sys.directOnline":  "Direct wired connection detected (dialed outside the app); traffic stats enabled",
-	"sys.directOffline": "Direct wired connection lost",
+	"sys.directOnline":  "System is online (dialed outside the app); traffic stats enabled",
+	"sys.directOffline": "System connectivity lost",
 
 	"dial.busy":                   "A connection operation is already running...",
 	"dial.disconnecting":          "Disconnecting...",

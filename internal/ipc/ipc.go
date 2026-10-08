@@ -601,13 +601,20 @@ func (c *Client) Close() {
 }
 
 // Probe 探测代理管道是否可用。
+// 必须握手验证：进程异常退出后内核可能残留无人服务的管道实例（幽灵管道），
+// 此时 DialPipe 成功而 read 永不返回。只 dial 不握手会把这种管道判成「代理
+// 健在」，UI 侧不拉起新代理、所有 RPC 静默丢弃——界面表现为按钮点了没反应。
 func Probe() bool {
 	for _, name := range resolvePipeName() {
 		conn, err := dialName(name, 500*time.Millisecond)
-		if err == nil {
+		if err != nil {
+			continue
+		}
+		if clientHandshake(bufio.NewReader(conn), conn, 2*time.Second) == nil {
 			conn.Close()
 			return true
 		}
+		conn.Close()
 	}
 	return false
 }

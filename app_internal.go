@@ -87,10 +87,11 @@ func (a *App) probeConfig() model.ProbeConfig {
 	return model.ProbeConfigFromSettings(a.settings.Current())
 }
 
-// directOnline 系统是否已"免拨号"联网：外网可达，且默认路由出口为物理网口
-// （网线直连，如家庭宽带由路由器拨号后 DHCP 分配）。WiFi/VPN 等其它出口
-// 联网不算——此时用户可能仍想走网口拨号，不能据此免检凭据。
-func (a *App) directOnline() bool {
+// directOnlineWired 系统是否已通过"网口直连"联网：外网可达，且默认路由
+// 出口为物理网口（网线直连，如家庭宽带由路由器拨号后 DHCP 分配）。
+// WiFi/VPN 等其它出口不算——此时用户可能仍想走网口拨号，不能据此免检凭据。
+// 仅拨号预检使用。
+func (a *App) directOnlineWired() bool {
 	cfg := a.probeConfig()
 	if !service.QuickCheck(cfg) {
 		return false
@@ -98,10 +99,18 @@ func (a *App) directOnline() bool {
 	return platform.RoutedViaPhysicalNIC(cfg.Host)
 }
 
+// directOnline 系统是否已联网（任意出口）：外网可达即算。
+// 用于流量统计的有效在线判定——WiFi 联网同样是真实联网，
+// 用户此时在上网，速率与会话流量必须记录。
+// 与 directOnlineWired 的区别仅在"出口是否必须是物理网口"。
+func (a *App) directOnline() bool {
+	return service.QuickCheck(a.probeConfig())
+}
+
 // sysProbeInterval 系统直连在线的低频探测周期。
 const sysProbeInterval = 15 * time.Second
 
-// setSysOnline 更新"系统直连在线"状态（仅在本应用未拨号在线时有意义）：
+// setSysOnline 更新"系统已联网"状态（仅在本应用未拨号在线时有意义）：
 // 变化时记录/清除会话起点、写日志并回推前端。拨号在线时一律视为否。
 func (a *App) setSysOnline(v bool) {
 	if a.isOnline() {
@@ -129,10 +138,10 @@ func (a *App) setSysOnline(v bool) {
 	a.emit(EvtStatus, a.statusPayload())
 }
 
-// startSysProbe 低频探测"系统直连在线"（家庭宽带免拨号场景），状态经
-// EvtStatus 回推前端。探测含 ICMP/HTTP，离线时单次最长约 3.5s，独立
-// 协程运行，与监控的 1s 采样互不阻塞。转离线需连续 2 次探测失败：
-// 单次偶发丢包不应清空正在记录的统计会话。
+// startSysProbe 低频探测"系统是否已联网"（任意出口：网口直连 / WiFi / VPN），
+// 状态经 EvtStatus 回推前端，作为流量统计的有效在线依据。探测含 ICMP/HTTP，
+// 离线时单次最长约 3.5s，独立协程运行，与监控的 1s 采样互不阻塞。转离线需
+// 连续 2 次探测失败：单次偶发丢包不应清空正在记录的统计会话。
 func (a *App) startSysProbe() {
 	go func() {
 		ticker := time.NewTicker(sysProbeInterval)
@@ -253,14 +262,17 @@ func (a *App) applyWifiAutoConnect() {
 // ---------- WiFi / 门户认证辅助 ----------
 
 // wifiStatus 组装前端 WiFi 状态视图。
+// Phase 描述 OS 接口的瞬时阶段（idle/connecting/connected/…），仅用于展示；
+// 按钮可用性由 Busy 表达：只有本应用发起的连接/断开流程才锁定界面。
 func (a *App) wifiStatus() WifiStatusDTO {
 	s := a.settings.Current()
 	dto := WifiStatusDTO{
 		Phase:         "idle",
+		Busy:          a.wifiSvc.IsBusy(),
 		AutoConnect:   s.WifiAutoConnect && s.WifiPreferredSsid != "",
 		PreferredSsid: s.WifiPreferredSsid,
 	}
-	st, err := platform.WlanCurrent()
+	st, err := a.wifiSvc.Status()
 	if err != nil {
 		return dto
 	}
@@ -438,7 +450,9 @@ func (v dialView) ValidateInput(interactive bool) bool {
 		}
 	}
 
-	failure := precheckFailure(v.a.isOnline(), username, password, v.a.directOnline)
+	// 拨号预检仍以「网口直连」为准：WiFi 联网时用户可能就是想走网口拨号，
+	// 不能因为 WiFi 已联网就免检凭据
+	failure := precheckFailure(v.a.isOnline(), username, password, v.a.directOnlineWired)
 	if failure == "" {
 		// 校验通过：把凭据放回待取区，供 CaptureCredentials 使用
 		v.a.setPending(username, string(password))
