@@ -360,10 +360,6 @@ func (a *App) doShutdown(ctx context.Context) {
 	a.logSvc.Flush()
 }
 
-// domReady 前端就绪回调：留空实现是必要的——Wails 的 OnDomReady 需要一个
-// 方法引用，而本项目不需要在 DOM 就绪时做额外初始化（Bootstrap 已按需拉数据）。
-func (a *App) domReady(ctx context.Context) {}
-
 // ============================ 前端入口 ============================
 
 // Bootstrap 返回首帧所需的全部状态。

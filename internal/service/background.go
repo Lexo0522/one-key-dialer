@@ -73,28 +73,6 @@ func (b *BackgroundExecutor) Schedule(delay time.Duration, fn func()) *Task {
 	return t
 }
 
-// ScheduleAtFixedRate 固定频率周期执行（initial 后每 period 一次）。
-func (b *BackgroundExecutor) ScheduleAtFixedRate(initial, period time.Duration, fn func()) *Task {
-	t, ctx := b.nextTask()
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-		defer t.cancel()
-		timer := time.NewTimer(initial)
-		defer timer.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-timer.C:
-				b.runGuarded(fn)
-				timer.Reset(period)
-			}
-		}
-	}()
-	return t
-}
-
 // Submit 提交短任务。
 func (b *BackgroundExecutor) Submit(fn func()) {
 	b.wg.Add(1)

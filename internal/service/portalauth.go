@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/tls"
 	"io"
 	"net/http"
 	"net/url"
@@ -132,13 +133,20 @@ func ParsePortalHeaders(text string) [][2]string {
 	return out
 }
 
-// portalHTTPClient 构造门户请求用的 HTTP 客户端(直连 + 8 秒超时)。
-// 门户位于本机链路侧:认证请求的目标是内网门户地址,走代理出口必然到不了,
-// 且系统代理模式的 VPN 会把这类请求送往公网。因此门户认证必须直连,
-// 与 webcheckClient 一致(Proxy 显式置 nil,不走系统环境变量)。
+// portalSharedTransport 门户探测与认证共用的直连 Transport(连接池复用)。
+// 门户位于本机链路侧:必须直连(Proxy 显式置 nil,不走系统环境变量),
+// 与 webcheckClient 的做法一致;校园门户 HTTPS 多用自签名/过期证书,
+// 跳过校验(与系统弹窗认证行为一致)。注意:共享的是 Transport,Client
+// 仍按需创建——探测需要自定义 CheckRedirect,绝不能共用 Client。
+var portalSharedTransport = &http.Transport{
+	Proxy:           nil,
+	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+}
+
+// portalHTTPClient 构造门户认证请求用的 HTTP 客户端(直连 + 8 秒超时)。
 func portalHTTPClient() *http.Client {
 	return &http.Client{
-		Transport: &http.Transport{Proxy: nil},
+		Transport: portalSharedTransport,
 		Timeout:   8 * time.Second,
 	}
 }

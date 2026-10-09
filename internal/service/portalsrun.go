@@ -271,31 +271,52 @@ func srunLocalIP(rawBase string) string {
 }
 
 // stripJSONP 剥掉 "cb({...})" 的 JSONP 包装;非包装原样返回。
+// 兼容 jQuery 常带的尾部分号 "cb({...});"。
 func stripJSONP(text string) string {
 	text = strings.TrimSpace(text)
+	text = strings.TrimSuffix(text, ";")
 	if open := strings.IndexByte(text, '('); open >= 0 && strings.HasSuffix(text, ")") {
 		return text[open+1 : len(text)-1]
 	}
 	return text
 }
 
-// srunBaseUrl 归一深澜门户根地址:渲染模板后剥离已知 cgi-bin 接口后缀
-// (用户可能粘贴完整接口地址或带尾斜杠)。
+// srunBaseUrl 归一深澜门户根地址:
+//   - 登录地址为空:沿用旧逻辑,由门户地址派生 portalbase(目录形式),不做改动;
+//   - 登录地址显式配置:渲染模板后,
+//     1. 去掉查询串与片段(用户可能粘贴带参的门户页地址);
+//     2. 剥离已知的 cgi-bin 接口后缀(用户可能粘贴完整接口地址);
+//     3. 若路径既非接口后缀也非目录形式(如 /eportal/index.jsp 这类门户页),
+//     退到 scheme+host:深澜的 cgi-bin 接口通常挂在主机根下,把页面路径
+//     拼进接口地址必然 404。
 func srunBaseUrl(loginUrl, username, password, portalURL string) string {
 	base := strings.TrimSpace(loginUrl)
 	if base == "" {
-		base = derivePortalParams(portalURL).portalBase
-	} else {
-		base = RenderPortalTemplate(base, username, password, portalURL)
+		return strings.TrimRight(derivePortalParams(portalURL).portalBase, "/")
 	}
-	base = strings.TrimRight(base, "/")
-	for _, suffix := range []string{
-		"/cgi-bin/srun_portal.php", "/cgi-bin/srun_portal",
-		"/cgi-bin/get_challenge", "/cgi-bin/rad_user_info",
-	} {
-		base = strings.TrimSuffix(base, suffix)
+	base = RenderPortalTemplate(base, username, password, portalURL)
+	if u, err := url.Parse(base); err == nil && u.Host != "" {
+		u.RawQuery = ""
+		u.Fragment = ""
+		p := strings.TrimRight(u.Path, "/")
+		stripped := false
+		for _, suffix := range []string{
+			"/cgi-bin/srun_portal.php", "/cgi-bin/srun_portal",
+			"/cgi-bin/get_challenge", "/cgi-bin/rad_user_info",
+		} {
+			if strings.HasSuffix(p, suffix) {
+				p = strings.TrimSuffix(p, suffix)
+				stripped = true
+				break
+			}
+		}
+		if !stripped && p != "" {
+			p = ""
+		}
+		u.Path = p
+		base = u.String()
 	}
-	return base
+	return strings.TrimRight(base, "/")
 }
 
 // executeSrunAuth 执行深澜两步登录(get_challenge → srun_portal)。
@@ -312,6 +333,17 @@ func executeSrunAuth(cfg PortalAuthConfig, portalURL, username, password string)
 		return fail("bad login url")
 	}
 	params := derivePortalParams(portalURL)
+	// 登录地址查询串里的 ac_id/acid 可覆盖门户地址派生的 ac_id:
+	// 部分校园 ac_id 非 1,而探测到的门户地址又不带该参数时,用户可在
+	// 登录地址后追加 ?ac_id=3 覆盖(如 http://10.1.1.55?ac_id=3)。
+	if u, err := url.Parse(strings.TrimSpace(cfg.LoginUrl)); err == nil {
+		lq := u.Query()
+		if v := lq.Get("ac_id"); v != "" {
+			params.acid = v
+		} else if v := lq.Get("acid"); v != "" {
+			params.acid = v
+		}
+	}
 	client := portalHTTPClient()
 
 	// httpGet 返回 (正文, 状态码, 错误);4xx/5xx 也带回状态码,供调用方
@@ -350,9 +382,9 @@ func executeSrunAuth(cfg PortalAuthConfig, portalURL, username, password string)
 	q := url.Values{}
 	q.Set("callback", cb)
 	q.Set("username", username)
-	if params.userIP != "" {
-		q.Set("ip", params.userIP)
-	}
+	// ip 恒发(为空则发空值):与门户页行为一致,部分实现对"缺参"与"空参"
+	// 处理不同,恒发更稳妥。
+	q.Set("ip", params.userIP)
 	q.Set("_", ts)
 	raw, _, err := httpGet(challengeDesc, base+"/cgi-bin/get_challenge?"+q.Encode())
 	if err != nil {
