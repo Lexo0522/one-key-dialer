@@ -97,13 +97,26 @@ func (a *App) DownloadUpdate() {
 	a.updateBusy = true
 	cancel := update.NewCancel()
 	a.cancelDl = cancel
-	// updateBusy 的复位统一交给闭包退出时的 defer：下载链路里的每个 return
-	// 都会走到这里，不会再有哪条早退分支把它永久留在 true（那会让前端
-	// 锁死在 busy、后续下载与安装全被拒）。
-	defer a.clearUpdateBusy()
-
+	// 锁必须在提交长任务之前放开。占用位已经置上、前置校验也做完了，继续持锁
+	// 只会把后续所有更新入口（自动安装 / InstallUpdate / UpdateBusy /
+	// CancelUpdateDownload）堵死。早先这里忘了 Unlock，函数返回时 deferred 的
+	// clearUpdateBusy 又去 Lock 同一把非重入锁——自死锁，updateMu 从此被永久
+	// 占用：下载任务照跑完，紧随其后的 autoInstallPending 却卡在锁上，用户侧
+	// 看到的就是「下载完成了，安装却卡住不动」。
+	a.updateMu.Unlock()
 	progress := updateProgress{a: a, stage: UpdateStageDownload}
 	a.exec.SubmitLong(func() {
+		// 占用位的释放跟着下载任务本身走：闭包里每个 return 都经过这里，新增
+		// 早退分支也不会漏（早先 defer 挂在函数体上，入队即释放，cancelDl 被提
+		// 前清空、「取消」按钮空转，updateBusy 也不再真正互斥）。
+		// 但「下载完成即自动安装」会把占用位移交给安装任务，那一刻不能再释放，
+		// 否则安装途中占用位是空的，第二次安装可以插进来。
+		handoff := false
+		defer func() {
+			if !handoff {
+				a.clearUpdateBusy()
+			}
+		}()
 		pkg, err := a.updater.DownloadWithFailover(*result, progress, cancel)
 		if err != nil {
 			// 用户主动取消不是失败，不能套用「下载失败」的错误文案与红色语气
@@ -126,56 +139,82 @@ func (a *App) DownloadUpdate() {
 		// 自动安装：下载校验通过后直接接着装，省掉用户再点一次「立即安装」。
 		// 关掉时保留原行为——对话框停在「立即安装 / 仅保留」两步确认。
 		if a.settings.Current().AutoInstallUpdate {
-			a.autoInstallPending()
+			handoff = a.autoInstallPending()
 		}
 	})
 }
 
 // autoInstallPending 把「下载完成」直接接上「安装」，供自动安装链路复用。
-// 与 InstallUpdate 的区别：不重复校验 pendingPkg（刚下载完必有），
-// 也不受 updateBusy 互斥影响——下载态刚释放，此处必然可进入。
-func (a *App) autoInstallPending() {
+//
+// 调用方是下载闭包，那一刻占用位理应还被下载持着，所以这里既不抢占也不再校验
+// updateBusy——早先那样做会在占用位未释放时直接放弃，自动安装整段失效。与
+// InstallUpdate 的区别只是入口：不重复校验 pendingPkg（刚下载完必有）。
+//
+// 返回 true 表示占用位已由安装任务接管，调用方不能再释放。
+func (a *App) autoInstallPending() bool {
 	a.updateMu.Lock()
-	if a.updateBusy {
-		a.updateMu.Unlock()
-		return
-	}
 	pkg := a.pendingPkg
-	if pkg == nil {
-		a.updateMu.Unlock()
-		return
-	}
-	a.updateBusy = true
-	defer a.clearUpdateBusy()
 	a.updateMu.Unlock()
+	if pkg == nil {
+		return false
+	}
+	a.submitInstall(pkg)
+	return true
+}
 
+// submitInstall 提交安装任务。占用位由调用方提前占好（下载态或安装入口各占
+// 一次），任务自身退出时经 clearUpdateBusy 释放——与下载任务同一套规则，新增
+// 早退分支也不会漏。新调用方务必先占位再进来。
+func (a *App) submitInstall(pkg *update.VerifiedPackage) {
 	progress := updateProgress{a: a, stage: UpdateStagePrepare}
 	a.exec.SubmitLong(func() {
-		if platform.IsEphemeralExePath() {
-			a.logSvc.Error(i18n.T("update.ephemeralInstall"))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.T("update.ephemeralInstall")})
-			return
-		}
-		waitPIDs := a.uiWaitPIDs()
-		prepared, err := a.updater.Prepare(pkg, progress, waitPIDs)
-		if err != nil {
-			a.logSvc.Error(i18n.Tf("update.prepareFailed", err.Error()))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.Tf("update.prepareFailed", err.Error())})
-			return
-		}
-		a.logSvc.Info(i18n.Tf("update.applying", prepared.ApplyScript))
-		a.flushBeforeUpdate()
-		if !a.updater.LaunchInstall(prepared) {
-			a.logSvc.Error(i18n.T("update.launchFailed"))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.T("update.launchFailedDlg")})
-			return
-		}
-		a.emit(EvtUpdate, UpdatePayload{Kind: "installing", Stage: UpdateStageInstall})
-		a.ExitProgram()
+		defer a.clearUpdateBusy()
+		a.prepareAndLaunch(pkg, progress)
 	})
+}
+
+// prepareAndLaunch 安装主体：拒绝临时目录本体 → 生成等进程退出的更新脚本 →
+// 落盘 → 启动安装 → 退出程序。自动安装与手动安装共用这一段。
+func (a *App) prepareAndLaunch(pkg *update.VerifiedPackage, progress updateProgress) {
+	// 本体在临时目录/构建产物里时不安装:更新脚本的 DST 来自 InstallDir,
+	// 此时会把新版写进 %TEMP% 并从那里启动,安装位置就此被搬走。宁可拒绝,
+	// 也不制造第二个随时会被磁盘清理掉副本。
+	if platform.IsEphemeralExePath() {
+		a.logSvc.Error(i18n.T("update.ephemeralInstall"))
+		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
+			Message: i18n.T("update.ephemeralInstall")})
+		return
+	}
+	// 更新脚本需等全部相关进程退出后再覆盖 exe:代理自身 + 接入中的 UI 进程
+	waitPIDs := a.uiWaitPIDs()
+	prepared, err := a.updater.Prepare(pkg, progress, waitPIDs)
+	if err != nil {
+		a.logSvc.Error(i18n.Tf("update.prepareFailed", err.Error()))
+		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
+			Message: i18n.Tf("update.prepareFailed", err.Error())})
+		return
+	}
+	a.quitUIProcesses()
+	a.logSvc.Info(i18n.Tf("update.applying", prepared.ApplyScript))
+	a.flushBeforeUpdate()
+	if !a.updater.LaunchInstall(prepared) {
+		a.logSvc.Error(i18n.T("update.launchFailed"))
+		a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
+			Message: i18n.T("update.launchFailedDlg")})
+		return
+	}
+	a.emit(EvtUpdate, UpdatePayload{Kind: "installing", Stage: UpdateStageInstall})
+	a.ExitProgram()
+}
+
+// quitUIProcesses 广播 sys:quit，让接入中的 UI 进程立即开始退出。
+//
+// UI 侧对 sys:quit 一直有处理（见 app_ui.go 的 OnEvent 分支），但代理从来
+// 没发过：UI 只能等代理进程死亡、管道断开后才开始收尾，而那已经晚于更新
+// 脚本动手覆盖 exe 的时刻。早一步广播，UI 的 WebView2 收尾就能与代理的退出
+// 重叠，脚本的等待循环才有机会等到「已经退出」而不是「正在退出」。
+func (a *App) quitUIProcesses() {
+	a.emit(SysEventQuit, nil)
 }
 
 // CancelUpdateDownload 取消正在进行的下载。
@@ -205,40 +244,9 @@ func (a *App) InstallUpdate() {
 		return
 	}
 	a.updateBusy = true
-	defer a.clearUpdateBusy()
+	// 与 DownloadUpdate 同一条规矩：提交前放开锁，占用位交给任务自身持有。
 	a.updateMu.Unlock()
-
-	progress := updateProgress{a: a, stage: UpdateStagePrepare}
-	a.exec.SubmitLong(func() {
-		// 本体在临时目录/构建产物里时不安装:更新脚本的 DST 来自 InstallDir,
-		// 此时会把新版写进 %TEMP% 并从那里启动,安装位置就此被搬走。宁可拒绝,
-		// 也不制造第二个随时会被磁盘清理掉副本。
-		if platform.IsEphemeralExePath() {
-			a.logSvc.Error(i18n.T("update.ephemeralInstall"))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.T("update.ephemeralInstall")})
-			return
-		}
-		// 更新脚本需等全部相关进程退出后再覆盖 exe:代理自身 + 接入中的 UI 进程
-		waitPIDs := a.uiWaitPIDs()
-		prepared, err := a.updater.Prepare(pkg, progress, waitPIDs)
-		if err != nil {
-			a.logSvc.Error(i18n.Tf("update.prepareFailed", err.Error()))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.Tf("update.prepareFailed", err.Error())})
-			return
-		}
-		a.logSvc.Info(i18n.Tf("update.applying", prepared.ApplyScript))
-		a.flushBeforeUpdate()
-		if !a.updater.LaunchInstall(prepared) {
-			a.logSvc.Error(i18n.T("update.launchFailed"))
-			a.emit(EvtUpdate, UpdatePayload{Kind: "error", Stage: UpdateStagePrepare,
-				Message: i18n.T("update.launchFailedDlg")})
-			return
-		}
-		a.emit(EvtUpdate, UpdatePayload{Kind: "installing", Stage: UpdateStageInstall})
-		a.ExitProgram()
-	})
+	a.submitInstall(pkg)
 }
 
 // OpenReleasePage 在默认浏览器中打开发布页。

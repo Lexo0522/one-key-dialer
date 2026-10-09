@@ -1,11 +1,158 @@
 package main
 
 import (
+	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/Lexo0522/one-key-dialer/internal/service"
+	"github.com/Lexo0522/one-key-dialer/internal/storage"
 	"github.com/Lexo0522/one-key-dialer/internal/update"
 )
+
+// newUpdateTestApp 装配一个只够跑更新状态机的 App：真 executor、真 logSvc、
+// 真 settings，updater 用零值 Module（空 Release 会让 DownloadWithFailover 立刻
+// 返回 ErrMissingAsset，不联网）。
+func newUpdateTestApp(t *testing.T) *App {
+	t.Helper()
+	dir := t.TempDir()
+	exec := service.NewBackgroundExecutor()
+	a := &App{
+		exec:    exec,
+		logSvc:  service.NewLogService(filepath.Join(dir, "pppoe_log.txt")),
+		updater: &update.Module{},
+	}
+	a.settings = service.NewSettingsManager(
+		&storage.SettingsStore{File: filepath.Join(dir, "settings.json")}, exec, nil)
+	t.Cleanup(func() { exec.Shutdown(time.Second) })
+	return a
+}
+
+// emptyCheck 一个「有新版但没有可用资产」的检查结果：足以让下载入口通过校验，
+// 又让下载任务立刻失败，不联网。
+func emptyCheck() *update.CheckResult {
+	return &update.CheckResult{UpdateAvailable: true, Release: &update.Release{}}
+}
+
+// callWithTimeout 在独立 goroutine 里调用 fn 并等待。更新入口一旦死锁，测试必须
+// 以「失败」收场，而不是把整个测试套件挂到 go test 超时。
+func callWithTimeout(t *testing.T, what string, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("%s：3 秒未返回（更新入口死锁）", what)
+	}
+}
+
+// waitForCond 轮询等待条件成立。
+func waitForCond(t *testing.T, what string, cond func() bool, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s：%v 内未达成", what, timeout)
+}
+
+// TestDownloadUpdateDoesNotHoldUpdateMu 下载入口必须在返回前放开 updateMu。
+//
+// 背景：DownloadUpdate 曾在入口 Lock 之后、提交长任务之前忘了 Unlock，函数返回时
+// deferred 的 clearUpdateBusy 又要去 Lock 同一把非重入锁——自死锁。下载任务本身
+// 照跑完，但 updateMu 从此被永久占用：紧随其后的 autoInstallPending、之后的
+// InstallUpdate / UpdateBusy / CancelUpdateDownload 全部堵死。用户侧看到的就是
+// 「下载完成了，安装却卡住不动」。
+func TestDownloadUpdateDoesNotHoldUpdateMu(t *testing.T) {
+	a := newUpdateTestApp(t)
+	a.lastCheck = emptyCheck()
+
+	callWithTimeout(t, "DownloadUpdate", a.DownloadUpdate)
+
+	if !a.updateMu.TryLock() {
+		t.Fatal("DownloadUpdate 返回后 updateMu 仍不可获取：后续安装/取消/查询全会被堵死")
+	}
+	a.updateMu.Unlock()
+}
+
+// TestDownloadJobReleasesBusyOnEveryPath 下载任务结束时必须释放占用位，
+// 且清掉取消句柄；释放后下一轮下载要能受理。
+func TestDownloadJobReleasesBusyOnEveryPath(t *testing.T) {
+	a := newUpdateTestApp(t)
+	a.lastCheck = emptyCheck()
+
+	callWithTimeout(t, "DownloadUpdate", a.DownloadUpdate)
+	// 空 Release 让下载立刻失败，闭包走完错误分支后占用位必须已经释放
+	waitForCond(t, "下载任务结束后 updateBusy 应释放", func() bool { return !a.UpdateBusy() }, 3*time.Second)
+
+	a.updateMu.Lock()
+	leftover := a.cancelDl
+	a.updateMu.Unlock()
+	if leftover != nil {
+		t.Error("下载结束后 cancelDl 未清空：取消句柄泄漏，下一轮取消的是上一轮的 ctx")
+	}
+
+	// 占用位真的放了：第二次下载不该被「更新中」挡住
+	callWithTimeout(t, "第二次 DownloadUpdate", a.DownloadUpdate)
+	waitForCond(t, "第二次下载任务应被受理并结束", func() bool { return !a.UpdateBusy() }, 3*time.Second)
+}
+
+// TestCancelHandleAliveUntilDownloadJobRuns 下载任务排队期间取消句柄必须还在，
+// 否则界面上的「取消」是空转。
+func TestCancelHandleAliveUntilDownloadJobRuns(t *testing.T) {
+	a := newUpdateTestApp(t)
+	// 先占住 SubmitLong 的单 worker，让下载任务排队而不立刻跑完
+	release := make(chan struct{})
+	a.exec.SubmitLong(func() { <-release })
+	a.lastCheck = emptyCheck()
+
+	callWithTimeout(t, "DownloadUpdate", a.DownloadUpdate)
+
+	a.updateMu.Lock()
+	c := a.cancelDl
+	busy := a.updateBusy
+	a.updateMu.Unlock()
+	if c == nil {
+		if busy {
+			t.Fatal("下载仍在排队/运行，cancelDl 却已被清空：取消按钮空转")
+		}
+		// SubmitLong 目前是单 worker 队列，下载任务必然还排在占位任务后面。
+		// 万一日后改成并发，任务可能已跑完并自行清理，那时取消按钮本就无意义。
+		t.Skip("下载任务在断言前已结束")
+	}
+	a.CancelUpdateDownload()
+	if !c.IsCancelled() {
+		t.Error("CancelUpdateDownload 没有真正取消下载句柄")
+	}
+	close(release)
+	// 放行后任务跑完，占用位必须释放
+	waitForCond(t, "取消后占用位应释放", func() bool { return !a.UpdateBusy() }, 5*time.Second)
+}
+
+// TestAutoInstallTakesOverBusyFromDownload 自动安装必须在下载态占用位还未释放时
+// 也能接上——它本来就是从下载闭包内部调用的，那一刻占用位理应还被下载持着。
+func TestAutoInstallTakesOverBusyFromDownload(t *testing.T) {
+	a := newUpdateTestApp(t)
+	// 模拟「下载闭包还没退出」
+	a.updateMu.Lock()
+	a.updateBusy = true
+	a.pendingPkg = &update.VerifiedPackage{}
+	a.updateMu.Unlock()
+
+	if !a.autoInstallPending() {
+		t.Fatal("下载态占用位未释放时 autoInstallPending 直接放弃：自动安装链断了")
+	}
+	// 安装任务接管占用位，跑完（临时目录本体 → 拒绝安装）后必须释放
+	waitForCond(t, "安装任务结束后 updateBusy 应释放", func() bool { return !a.UpdateBusy() }, 5*time.Second)
+}
 
 // TestClearUpdateBusy 更新占用位的释放：必须同时清掉 updateBusy 与 cancelDl。
 //

@@ -35,6 +35,17 @@ const (
 	ApplyScriptName          = "apply_update.bat"
 	WritabilityProbeFile     = "ppoe_update_probe.tmp"
 
+	// WaitSleepCmd 等待循环里的「睡一秒」。
+	//
+	// 不能用 timeout：更新脚本由 platform.LaunchDetached 以
+	// CREATE_NO_WINDOW + stdin=NUL 启动，timeout 在这个环境下根本不睡——
+	// 实测要么立刻报「不支持输入重定向」退出，要么一直挂着。原来那版
+	// 30 次循环 0.5 秒就跑完，安装器于是在应用进程还活着的时候就上手
+	// 覆盖 exe：xcopy / msiexec 撞上文件占用，更新静默失败，而程序已经
+	// 退出、再也不会被重启——用户侧看到的就是「安装更新卡住，什么都不发生」。
+	// ping 不读 stdin，是无控制台环境下唯一可靠的秒级休眠。
+	WaitSleepCmd = `ping -n 2 127.0.0.1 >nul`
+
 	// MaxReleaseNotesChars 渠道发布说明送往前端的长度上限。发布页正文是自由
 	// 文本，可能长到把对话框撑爆；截断保上限，正文只作阅读不作解析。
 	MaxReleaseNotesChars = 4000

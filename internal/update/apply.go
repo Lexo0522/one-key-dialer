@@ -313,7 +313,10 @@ func writeWaitForAppExit(w *scriptWriter, pids []int) {
 	for _, pid := range pids {
 		wline(w, fmt.Sprintf("rem Wait up to %ds for the running app to exit (PID %d)", WaitForExitLoopCount, pid))
 		wline(w, fmt.Sprintf("for /L %%%%i in (1,1,%d) do (", WaitForExitLoopCount))
-		wline(w, fmt.Sprintf(`  tasklist /FI "PID eq %d" 2>nul | find /I "%d" >nul 2>nul && timeout /t 1 /nobreak >nul`, pid, pid))
+		// 休眠必须用 WaitSleepCmd：本脚本在隐藏控制台 + NUL stdin 下运行，
+		// timeout 在这里不会睡（详见 WaitSleepCmd 的注释）。进程已退出时
+		// tasklist | find 失败，&& 短路，整轮循环瞬间跑完，不会白等。
+		wline(w, fmt.Sprintf(`  tasklist /FI "PID eq %d" 2>nul | find /I "%d" >nul 2>nul && %s`, pid, pid, WaitSleepCmd))
 		wline(w, ")")
 	}
 }
