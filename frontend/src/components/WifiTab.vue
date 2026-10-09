@@ -177,6 +177,7 @@ import {
 } from '../store'
 import { t } from '../i18n'
 import { PORTAL_PRESETS, getPreset } from '../portalPresets'
+import { wifiPhaseView } from '../wifiStatus'
 
 // ------------------------------------------------------------ WiFi 状态 ----
 
@@ -190,19 +191,13 @@ const scanBusy = ref(false)
  *  照它禁用会把整页按钮卡死。 */
 const busy = computed(() => !!(status.value && status.value.busy))
 
-const phaseLabel = computed(() => {
-  const map = {
-    connecting: t('wifi.status.connecting'),
-    disconnecting: t('wifi.status.disconnecting'),
-    connected: t('wifi.status.connected'),
-    idle: t('wifi.status.idle')
-  }
-  return map[status.value.phase] || t('wifi.status.idle')
-})
-
+// 副标题与图标样式由纯函数判定（busy=本应用流程，phase=OS 瞬时相位），
+// 判定本身在 wifiStatus.test.js 里锁住。
+const phase = computed(() => wifiPhaseView(status.value))
+const phaseLabel = computed(() => t(phase.value.key))
 const phaseClass = computed(() => ({
   on: status.value.connected,
-  dim: !status.value.connected
+  trying: phase.value.trying
 }))
 
 /** 点击行展开密码输入；开放网络直接连。 */
@@ -275,6 +270,22 @@ watch(
   }
 )
 onUnmounted(() => clearTimeout(busyWatchdog))
+
+// 系统相位的低频轮询：OS 自发重连时后端不推事件（notify 只在本应用发起的
+// 连接/断开流程里发），副标题会停在进页面那一刻的快照上，可能一直显示过时
+// 的相位。挂载期间定时向后端索要真实状态；窗口隐藏时不发请求——托盘待机时
+// 不该有这条 IPC 开销。
+const wifiStatusPollMs = 5000
+let wifiStatusTimer = null
+onMounted(() => {
+  wifiStatusTimer = setInterval(() => {
+    // 本应用的连接/断开流程由后端推送兜底（另有 40s 看门狗），轮询只在空闲时
+    // 跑：既省 IPC，也避免在途的旧快照覆盖掉刚推来的新状态。
+    if (document.hidden || status.value.busy) return
+    refreshWifiStatus()
+  }, wifiStatusPollMs)
+})
+onUnmounted(() => clearInterval(wifiStatusTimer))
 
 // ------------------------------------------------------------ 自动连接 ----
 
@@ -472,6 +483,10 @@ onMounted(async () => {
 
 .status-icon.on {
   color: var(--c-success);
+}
+
+.status-icon.trying {
+  color: var(--c-info);
 }
 
 .status-text {
