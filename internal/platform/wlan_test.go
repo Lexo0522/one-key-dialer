@@ -1,8 +1,11 @@
 package platform
 
 import (
+	"encoding/binary"
+	"runtime"
 	"strings"
 	"testing"
+	"unsafe"
 )
 
 func TestBuildWlanProfileXmlOpen(t *testing.T) {
@@ -92,5 +95,89 @@ func TestWlanProfileForOpenIgnoresPassword(t *testing.T) {
 	}
 	if strings.Contains(xml, "sharedKey") || strings.Contains(xml, "ignored") {
 		t.Fatalf("open network must not embed a password: %s", xml)
+	}
+}
+
+// interface_state 查询必须只回 4 字节(单个 WLAN_INTERFACE_STATE)。
+// 回归守卫:wlanIntfOpcodeInterfaceState 曾误填 4,实际打到另一个查询项,
+// 拿回 772 字节统计块,首 4 字节被当成状态,连接轮询永远等不到 connected,
+// 于是连上了也报 "wlan: connect timeout"。无网卡的机器(CI)跳过。
+func TestWlanIfaceStateQuerySize(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows only")
+	}
+	h, guid, done, err := wlanOpen()
+	if err != nil {
+		t.Skipf("no wireless interface: %v", err)
+	}
+	defer done()
+	var written uint32
+	var data unsafe.Pointer
+	r1, _, _ := procWlanQueryInterface.Call(h, uintptr(unsafe.Pointer(&guid)),
+		wlanIntfOpcodeInterfaceState, 0, uintptr(unsafe.Pointer(&written)),
+		uintptr(unsafe.Pointer(&data)), 0)
+	if r1 != 0 || data == nil {
+		t.Skipf("WlanQueryInterface(interface_state) unavailable: r1=%d", r1)
+	}
+	defer func() { _, _, _ = procWlanFreeMemory.Call(uintptr(data)) }()
+	if written != 4 {
+		t.Fatalf("interface_state returned %d bytes, want 4 (opcode drifted?)", written)
+	}
+}
+
+// WLAN_CONNECTION_ATTRIBUTES 布局锁定。这块结构是"当前连到哪个网络"的
+// 权威来源,偏移错了会静默读到别的字段(信号、认证算法都在附近),
+// 表现为连接确认偶发误判。数值来自真机(Win11 26100)抓包核对:
+// BSSID/信号/认证算法与 netsh wlan show interfaces 逐项一致。
+func TestWlanConnectionAttributesLayout(t *testing.T) {
+	row := wlanConnectionAttributes{}
+	if got := unsafe.Sizeof(row); got != 604 {
+		t.Fatalf("WLAN_CONNECTION_ATTRIBUTES size = %d, want 604", got)
+	}
+	for _, c := range []struct {
+		name string
+		off  uintptr
+		want uintptr
+	}{
+		{"isState", unsafe.Offsetof(row.isState), 0},
+		{"profileName", unsafe.Offsetof(row.profileName), 8},
+		{"dot11SsidLength", unsafe.Offsetof(row.dot11SsidLength), 520},
+		{"dot11Ssid", unsafe.Offsetof(row.dot11Ssid), 524},
+		{"dot11Bssid", unsafe.Offsetof(row.dot11Bssid), 560},
+		{"wlanSignalQuality", unsafe.Offsetof(row.wlanSignalQuality), 576},
+		{"dot11AuthAlgorithm", unsafe.Offsetof(row.dot11AuthAlgorithm), 596},
+	} {
+		if c.off != c.want {
+			t.Fatalf("%s offset = %d, want %d", c.name, c.off, c.want)
+		}
+	}
+}
+
+// 用真机抓到的 604 字节原始块喂解析器:必须取出 SSID;长度不符、
+// 含不可打印字符、全零(未连接)的块都必须被拒绝,让调用方回退扫描列表。
+func TestParseWlanCurrentSsid(t *testing.T) {
+	buf := make([]byte, 604)
+	binary.LittleEndian.PutUint32(buf[0:], wlanIfaceStateConnected) // isState
+	copy(buf[8:], []byte{'X', 0, 'C', 0, 'U', 0})                   // profileName 内联 UTF-16
+	binary.LittleEndian.PutUint32(buf[520:], 3)                     // uSSIDLength
+	copy(buf[524:], []byte("XCU"))                                  // ucSSID
+	copy(buf[560:], []byte{0xf8, 0x6e, 0xee, 0xb5, 0x05, 0x11})     // BSSID
+	binary.LittleEndian.PutUint32(buf[576:], 83)                    // signal
+	binary.LittleEndian.PutUint32(buf[596:], dot11AuthOpen)         // auth
+
+	if got := parseWlanCurrentSsid(buf); got != "XCU" {
+		t.Fatalf("parseWlanCurrentSsid = %q, want XCU", got)
+	}
+	if got := parseWlanCurrentSsid(buf[:603]); got != "" {
+		t.Fatalf("truncated blob must not parse, got %q", got)
+	}
+	bad := make([]byte, len(buf))
+	copy(bad, buf)
+	bad[524] = 0x01 // SSID 首字节不可打印
+	if got := parseWlanCurrentSsid(bad); got != "" {
+		t.Fatalf("non-printable ssid must not parse, got %q", got)
+	}
+	if got := parseWlanCurrentSsid(make([]byte, 604)); got != "" {
+		t.Fatalf("zeroed blob (disconnected) must not parse, got %q", got)
 	}
 }

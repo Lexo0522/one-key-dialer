@@ -57,8 +57,18 @@ const (
 	wlanIfaceStateAuthenticating = 7
 )
 
-// wlan_intf_opcode(WLAN_INTF_OPCODE,autoconf 段)。
-const wlanIntfOpcodeInterfaceState = 4
+// wlan_intf_opcode(WLAN_INTF_OPCODE)查询项,取值按 Windows SDK 的枚举序:
+// bss_type=5、interface_state=6、current_connection=7。
+//
+// interface_state 曾经误记成 4。4 是另一个查询项,实测返回 772 字节的
+// 统计块(首 4 字节是计数器,不是状态),于是状态轮询永远等不到
+// connected:WlanConnect 明明成功了,15 秒后仍报 "wlan: connect timeout",
+// 界面相位也跟着一直停在"连接中"。自检方法:opcode 6 必须只回 4 字节,
+// 且取值与 WlanEnumInterfaces 的 InterfaceInfo.State 一致。
+const (
+	wlanIntfOpcodeInterfaceState    = 6
+	wlanIntfOpcodeCurrentConnection = 7
+)
 
 // WlanNetwork 一条扫描结果(前端视图)。
 type WlanNetwork struct {
@@ -118,6 +128,33 @@ type wlanConnectionParameters struct {
 	DesiredBssidList uintptr
 	BssType          uint32 // DOT11_BSS_TYPE,1 = infrastructure
 	Flags            uint32
+}
+
+// wlanConnectionAttributes 与 C 的 WLAN_CONNECTION_ATTRIBUTES 布局一致,
+// 即 wlan_intf_opcode_current_connection 的返回结构。注意
+// strProfileName 实测(Win11 26100)是内联 WCHAR[256],不是文档里的
+// LPWSTR,整块 604 字节。
+//
+// 刻意不在 init() 里断言大小:这块内存由 wlanapi.dll 按当时的布局返回,
+// 大小不符只说明解析不了,回退扫描列表即可,不能让应用起不来。布局由
+// TestWlanConnectionAttributesLayout 锁定。
+type wlanConnectionAttributes struct {
+	isState              uint32      // WLAN_INTERFACE_STATE
+	wlanConnectionMode   uint32      // WLAN_CONNECTION_MODE
+	profileName          [256]uint16 // 内联 LPWSTR 样式的配置名
+	dot11SsidLength      uint32      // DOT11_SSID.uSSIDLength
+	dot11Ssid            [32]byte    // DOT11_SSID.ucSSID
+	dot11BssType         uint32      // DOT11_BSS_TYPE
+	dot11Bssid           [6]byte     // DOT11_MAC_ADDRESS
+	dot11PhyType         uint32      // DOT11_PHY_TYPE
+	uDot11PhyIndex       uint32
+	wlanSignalQuality    uint32 // 0-100
+	ulRxRate             uint32 // bps
+	ulTxRate             uint32 // bps
+	bSecurityEnabled     uint32 // BOOL
+	bOneXEnabled         uint32 // BOOL
+	dot11AuthAlgorithm   uint32 // DOT11_AUTH_ALGORITHM
+	dot11CipherAlgorithm uint32 // DOT11_CIPHER_ALGORITHM
 }
 
 // 两个 API 返回列表的元素跨度(unsafe.Sizeof 是编译期常量)。
@@ -316,7 +353,11 @@ func wlanConnectProfile(h uintptr, guid windows.GUID, ssid string) error {
 		}
 		switch st {
 		case wlanIfaceStateConnected:
-			if cur := wlanCurrentOn(h, guid); cur.Ssid == ssid {
+			// 连上之后还要确认连的就是目标网络,别把网卡自己漫游到别处
+			// 当成成功。两个来源任一认下即可:扫描列表是缓存,可能还没
+			// 刷新到"已连接"那一行;current_connection 是系统记录的实连
+			// 结果。缺任何一侧,都可能把已经连上的网络误报成超时。
+			if wlanCurrentOn(h, guid).Ssid == ssid || wlanCurrentSsid(h, guid) == ssid {
 				return nil
 			}
 		}
@@ -455,6 +496,46 @@ func wlanCurrentOn(h uintptr, guid windows.GUID) WlanState {
 		}
 	}
 	return state
+}
+
+// wlanCurrentSsid 查询当前实际连接的 SSID。
+// 扫描列表是缓存,连接刚建立时可能还没有"已连接"那一行;
+// current_connection 是系统对实连结果的记录,是"连到哪个网络"的
+// 权威来源。查询失败或结构大小对不上时返回空串,调用方回退到
+// 扫描列表,不影响原有判定路径。
+func wlanCurrentSsid(h uintptr, guid windows.GUID) string {
+	var written uint32
+	var data unsafe.Pointer
+	r1, _, _ := procWlanQueryInterface.Call(h, uintptr(unsafe.Pointer(&guid)),
+		wlanIntfOpcodeCurrentConnection, 0, uintptr(unsafe.Pointer(&written)),
+		uintptr(unsafe.Pointer(&data)), 0)
+	// written 由 API 填写,切片前必须设上限:unsafe.Slice 长度越界会直接 panic
+	size := int(written)
+	if r1 != 0 || data == nil || size <= 0 || size > 4096 {
+		return ""
+	}
+	defer func() { _, _, _ = procWlanFreeMemory.Call(uintptr(data)) }()
+	return parseWlanCurrentSsid(unsafe.Slice((*byte)(data), size))
+}
+
+// parseWlanCurrentSsid 从 WLAN_CONNECTION_ATTRIBUTES 原始字节里取
+// DOT11_SSID。长度不符或 SSID 含不可打印字符一律按"解析不了"处理:
+// 那种数据只可能来自布局对不上,读出来的 SSID 不可信,宁可回退。
+func parseWlanCurrentSsid(buf []byte) string {
+	if len(buf) != int(unsafe.Sizeof(wlanConnectionAttributes{})) {
+		return ""
+	}
+	conn := (*wlanConnectionAttributes)(unsafe.Pointer(&buf[0]))
+	n := int(conn.dot11SsidLength)
+	if n <= 0 || n > len(conn.dot11Ssid) {
+		return ""
+	}
+	for _, b := range conn.dot11Ssid[:n] {
+		if b < 0x20 || b > 0x7e {
+			return ""
+		}
+	}
+	return string(conn.dot11Ssid[:n])
 }
 
 // wlanIfaceState 查询接口的 WLAN_INTERFACE_STATE。
