@@ -55,7 +55,7 @@ func TestWifiPskStoreRoundTrip(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "wifi.json")
 	store := NewWifiPskStore(file, stubProtector{})
 
-	ssid, psk, ok, err := store.Load()
+	ssid, _, ok, err := store.Load()
 	if err != nil || ok {
 		t.Fatalf("空文件应 ok=false: ssid=%q ok=%v err=%v", ssid, ok, err)
 	}
@@ -63,7 +63,7 @@ func TestWifiPskStoreRoundTrip(t *testing.T) {
 	if err := store.Save("Campus-5G", []byte("secret-psk")); err != nil {
 		t.Fatal(err)
 	}
-	ssid, psk, ok, err = store.Load()
+	ssid, psk, ok, err := store.Load()
 	if err != nil || !ok {
 		t.Fatalf("Load: ok=%v err=%v", ok, err)
 	}

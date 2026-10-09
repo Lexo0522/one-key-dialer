@@ -120,11 +120,12 @@ func detectPortalOnce(cfg model.ProbeConfig) PortalDetect {
 		// https 请求不会被门户重定向,换明文地址才能探测到拦截
 		target = portalProbeFallbackURL
 	}
-	// 独立 client 包住直连 Transport:门户位于本机链路侧,代理出口到不了
+	// 独立 Client 包住共享的直连 Transport:门户位于本机链路侧,代理出口到不了
 	// 内网门户地址,探测必须直连(与 webcheckClient 的做法一致,Proxy 显式
-	// 置 nil,不走系统环境变量)。绝不能改共享 Client 的 CheckRedirect。
+	// 置 nil,不走系统环境变量)。Client 按需创建:绝不能改共享 Client 的
+	// CheckRedirect;Transport 共享以复用连接池。
 	client := &http.Client{
-		Transport: &http.Transport{Proxy: nil},
+		Transport: portalSharedTransport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

@@ -61,7 +61,7 @@ func KillOwnProcess(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	h, _, err := procOpenProcess.Call(
+	h, _, _ := procOpenProcess.Call(
 		processQueryLimitedInformation|processTerminate,
 		0, uintptr(pid))
 	if h == 0 {

@@ -334,3 +334,59 @@ func TestExecutePortalAuthSrunCallbackParams(t *testing.T) {
 		}
 	}
 }
+
+// srunBaseUrl 归一:粘贴完整接口地址/门户页地址/带参地址都要能归一到主机根。
+func TestSrunBaseUrlNormalization(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"http://10.1.1.55", "http://10.1.1.55"},
+		{"http://10.1.1.55/", "http://10.1.1.55"},
+		{"http://10.1.1.55/cgi-bin/srun_portal", "http://10.1.1.55"},
+		{"http://10.1.1.55/cgi-bin/srun_portal.php/", "http://10.1.1.55"},
+		{"http://10.1.1.55/cgi-bin/get_challenge", "http://10.1.1.55"},
+		// 用户粘贴门户页地址(含查询串):退到主机根,避免把页面路径拼进接口地址
+		{"http://10.1.1.55/eportal/index.jsp?wlanuserip=10.0.0.5", "http://10.1.1.55"},
+		{"https://portal.example.edu.cn:8443/srun/index.html", "https://portal.example.edu.cn:8443"},
+		{"http://10.1.1.55/eportal/", "http://10.1.1.55"}, // 显式目录也退到主机根(cgi-bin 挂主机根是常态)
+	}
+	for _, c := range cases {
+		if got := srunBaseUrl(c.in, "u", "p", ""); got != c.want {
+			t.Errorf("srunBaseUrl(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	// 登录地址为空时由门户地址派生 portalbase
+	if got := srunBaseUrl("", "u", "p", "http://1.2.3.4:8080/eportal/index.jsp?wlanuserip=10.0.0.1&ac_id=3"); got != "http://1.2.3.4:8080/eportal" {
+		t.Errorf("空登录地址应派生 portalbase, got %q", got)
+	}
+}
+
+// stripJSONP 兼容 jQuery 尾部分号。
+func TestStripJSONPSemicolon(t *testing.T) {
+	if got := stripJSONP(`jQuery1124_123({"error":"ok"});`); got != `{"error":"ok"}` {
+		t.Fatalf("尾部分号未剥离: %s", got)
+	}
+}
+
+// 登录地址查询串里的 ac_id 覆盖门户派生的 ac_id。
+func TestExecutePortalAuthSrunAcidOverride(t *testing.T) {
+	var gotAcID string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/cgi-bin/get_challenge" {
+			_, _ = w.Write([]byte(`{"error":"ok","challenge":"0123456789abcdef","client_ip":"10.0.0.1"}`))
+			return
+		}
+		vs, _ := url.ParseQuery(r.URL.RawQuery)
+		gotAcID = vs.Get("ac_id")
+		_, _ = w.Write([]byte(`{"error":"ok"}`))
+	}))
+	defer srv.Close()
+
+	// 门户地址里 ac_id=1,登录地址 ?ac_id=8 应覆盖
+	cfg := PortalAuthConfig{LoginUrl: srv.URL + "?ac_id=8", Method: model.PortalMethodSrun}
+	portal := "http://9.9.9.9/eportal/index.jsp?wlanuserip=10.0.0.9&ac_id=1"
+	if out := ExecutePortalAuth(cfg, portal, "u1", "p1"); !out.Success {
+		t.Fatalf("应成功: %+v", out)
+	}
+	if gotAcID != "8" {
+		t.Fatalf("ac_id 应被登录地址覆盖为 8, got %s", gotAcID)
+	}
+}

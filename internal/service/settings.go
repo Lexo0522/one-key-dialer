@@ -84,13 +84,6 @@ func (m *SettingsManager) FlushPending() {
 	m.mu.Unlock()
 }
 
-// SaveNow 同步保存当前快照。
-func (m *SettingsManager) SaveNow() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.saveLocked()
-}
-
 func (m *SettingsManager) flushLocked() {
 	if m.saving {
 		return

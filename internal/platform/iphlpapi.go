@@ -390,7 +390,7 @@ func OpenInBrowser(url string) bool {
 		p, _ := windows.UTF16PtrFromString(s)
 		return uintptr(unsafe.Pointer(p))
 	}
-	r1, _, _ := syscall.Syscall6(procShellExecuteW.Addr(), 6,
+	r1, _, _ := syscall.SyscallN(procShellExecuteW.Addr(),
 		0, utf16Ptr("open"), utf16Ptr(url), 0, 0, windows.SW_SHOWNORMAL)
 	return r1 > 32
 }
