@@ -98,7 +98,19 @@
          状态。未设置的属性在条件语法里求值为空串，NOT SILENTUPDATE=1
          自然成立；真要写一条空值 Property，candle 只会给个
          PropertyUseless 警告。 -->
-    <CustomAction Id="LaunchApp" ExeCommand="" Return="ignore" Execute="deferred" Impersonate="yes" FileRef="PPPoEDialerExe" />
+    <!-- Return 必须是 asyncNoWait，不能是 ignore。
+
+         ignore 是「同步」语义：msiexec 会等这个动作拉起的进程退出才继续往下走
+         （CustomAction Type 的 Continue 位）。而它拉起的是 PPPoEDialer.exe——
+         一个没有窗口就不退、有关户也只退 UI 进程的常驻程序，于是安装向导永远
+         停在「正在安装 PPPoEDialer，请稍后」：文件早就拷完了，InstallFinalize
+         却卡在等应用退出。用户等不及杀掉安装器，还会在 Windows Installer 服务里
+         留下一个「暂停的事务」，此后每次安装都报错误 1704，只能重启才清得掉。
+
+         实测的那次就是这样：事务 18:34:48 开始，应用 18:34:50 被拉起，
+         事务此后再也没有结束事件。asyncNoWait 让安装器拉起程序就继续走，
+         Type 从 0x452 变成 0x4D2（多出 0x80 这一位）。 -->
+    <CustomAction Id="LaunchApp" ExeCommand="" Return="asyncNoWait" Execute="deferred" Impersonate="yes" FileRef="PPPoEDialerExe" />
 
     <InstallExecuteSequence>
       <!-- 必须排在 InstallFinalize 之前：deferred 自定义动作只能出现在
