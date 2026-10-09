@@ -36,7 +36,8 @@
         <!-- key 用 time+message 而不是数组下标：日志是头插/尾插混合的，
              下标 key 在 splice 后全部错位，Vue 会把整列 DOM 复用出错误内容。 -->
         <div v-for="(l, i) in filtered" :key="l.time + '|' + l.message + '|' + i" class="log-row"
-             :class="'lv-' + l.level">
+             :class="'lv-' + l.level" :title="t('log.copyHint')"
+             @click="copyRow(l)">
           <span class="log-time">{{ l.time }}</span>
           <span class="log-badge" :class="'lv-' + l.level">{{ levelLabel(l.level) }}</span>
           <span class="log-msg">{{ l.message }}</span>
@@ -48,7 +49,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { state } from '../store'
+import { state, showToast } from '../store'
 import { t, tf } from '../i18n'
 
 const level = ref('all')
@@ -76,6 +77,27 @@ function levelLabel(lv) {
     case 'warning': return t('log.level.warn')
     case 'error': return t('log.level.error')
     default: return t('log.level.info')
+  }
+}
+
+// 单击复制整条日志（时间 + 级别 + 消息）。与首页 IP 复制同一套降级路径：
+// WebView2 未授予剪贴板权限时 navigator.clipboard 会 reject，退回 execCommand。
+async function copyRow(l) {
+  const text = `${l.time} [${levelLabel(l.level)}] ${l.message}`
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    showToast(t('log.copied'), 'success')
+  } catch (e) {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    ta.remove()
+    showToast(ok ? t('log.copied') : t('toast.copyFail'), ok ? 'success' : 'error')
   }
 }
 
@@ -290,6 +312,7 @@ watch(
   gap: 8px;
   padding: 2px 12px;
   line-height: 1.7;
+  cursor: pointer;
 }
 
 .log-row:hover {

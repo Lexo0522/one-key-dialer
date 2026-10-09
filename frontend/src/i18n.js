@@ -151,6 +151,8 @@ const zh = {
   'log.autoScroll': '自动滚动',
   'log.clear': '清空',
   'log.empty': '暂无日志',
+  'log.copied': '已复制~',
+  'log.copyHint': '点击复制该条日志',
   'log.count': '共 {0} 条',
 
   // 设置
@@ -456,6 +458,8 @@ const en = {
   'log.autoScroll': 'Auto scroll',
   'log.clear': 'Clear',
   'log.empty': 'No logs',
+  'log.copied': 'Copied~',
+  'log.copyHint': 'Click to copy this entry',
   'log.count': '{0} entries',
 
   'settings.title': 'Settings',
