@@ -353,7 +353,6 @@ func (a *App) performPortalAuth(portalURL string) service.PortalAuthOutcome {
 		Body:        s.PortalBody,
 		Headers:     service.ParsePortalHeaders(s.PortalHeaders),
 		SuccessHint: s.PortalSuccessHint,
-		Proxy:       s.ProxyConfig(),
 	}
 	return service.ExecutePortalAuth(cfg, portalURL, username, password)
 }

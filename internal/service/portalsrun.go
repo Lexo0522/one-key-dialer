@@ -396,7 +396,8 @@ func executeSrunAuth(cfg PortalAuthConfig, portalURL, username, password string)
 	}
 	if ch.Error != "ok" || ch.Challenge == "" {
 		if srunAlreadyOnline(ch) {
-			return PortalAuthOutcome{Success: true, Detail: challengeDesc + ": already online"}
+			// 服务端明确"已在线"：目标已达成，且响应本身即证据。
+			return PortalAuthOutcome{Success: true, Verified: true, Detail: challengeDesc + ": already online"}
 		}
 		return fail(i18n.Tf("portal.srunChallengeFailed", srunErrText(ch)))
 	}
@@ -455,15 +456,20 @@ func executeSrunAuth(cfg PortalAuthConfig, portalURL, username, password string)
 		return o
 	}
 	if lr.Error != "ok" && srunAlreadyOnline(lr) {
-		return PortalAuthOutcome{Success: true, Detail: loginDesc + ": already online (" + srunErrText(lr) + ")"}
+		return PortalAuthOutcome{Success: true, Verified: true,
+			Detail: loginDesc + ": already online (" + srunErrText(lr) + ")"}
 	}
 	outcome := PortalAuthOutcome{Success: lr.Error == "ok"}
+	// 协议级 error=ok 是服务端的明确答复，构成成功证据；用户另配了成功
+	// 提示词时按提示词结论重新标记。
+	outcome.Verified = outcome.Success
 	outcome.Detail = loginDesc + ": " + srunErrText(lr)
 	if snippet := firstLine(raw, 240); snippet != "" {
 		outcome.Detail += " | " + snippet
 	}
 	if outcome.Success && strings.TrimSpace(cfg.SuccessHint) != "" {
 		outcome.Success = strings.Contains(raw, cfg.SuccessHint)
+		outcome.Verified = outcome.Success
 	}
 	return outcome
 }

@@ -20,21 +20,29 @@ import (
 // 安全注意：密码建议放在 POST 的 Body 模板里。GET 登录地址模板中若含
 // {password}，密码会进入 URL 查询串并留在服务端日志里（ExecutePortalAuth
 // 会对此给出警告；部分老旧门户只接受 GET 登录，故仅警告不阻断）。
+//
+// 门户位于本机链路侧，认证请求固定直连：设置里的代理出口只作用于更新检查/
+// 下载与外网探测，到不了内网门户地址，故此结构不携带代理配置。
 type PortalAuthConfig struct {
 	LoginUrl    string      // 登录地址，支持 {portal} 占位符
 	Method      string      // GET / POST
 	Body        string      // 请求体模板
 	Headers     [][2]string // 附加请求头
 	SuccessHint string      // 响应包含该字符串视为成功（可空）
-	Proxy       model.ProxyConfig
 }
 
 // PortalAuthOutcome 一次门户认证请求的执行结果。
 type PortalAuthOutcome struct {
 	Success bool
+	// Verified 响应本身是否已构成成功证据：命中成功提示词、或深澜协议
+	// 返回 error=ok / already online。false 表示只是"提交成功"（未配提示词
+	// 时的 2xx），调用方必须复验门户是否消失才能认定成功——
+	// ExecutePortalAuth 的契约即"由调用方复验"。
+	Verified bool
 	// Status HTTP 响应状态码;0 表示请求本身失败。
 	Status int
 	// Detail 技术明细（状态码/响应片段），供日志与测试回显；不含密码。
+	// ExecutePortalAuth 返回前会抹掉其中的密码原文（门户失败时常回显表单值）。
 	Detail string
 }
 
@@ -155,6 +163,15 @@ func portalHTTPClient() *http.Client {
 // loginUrl/body 先做模板替换;响应判定:2xx/3xx 且（未配置提示词或包含提示词）。
 // Method 为 SRUN 时走深澜专用两步流程(见 portalsrun.go)。
 func ExecutePortalAuth(cfg PortalAuthConfig, portalURL, username, password string) PortalAuthOutcome {
+	out := executePortalAuth(cfg, portalURL, username, password)
+	// 兜底脱敏：Detail 会写进日志文件并回显到 UI，而门户的失败响应经常把
+	// 提交值（含密码）回显在页面正文或 error_msg 里；日志层的 ScrubLogLine
+	// 只认 password=xxx 形态，管不到 HTML/JSON 里的原文，故在这里就地抹掉。
+	out.Detail = maskPortalSecret(out.Detail, password)
+	return out
+}
+
+func executePortalAuth(cfg PortalAuthConfig, portalURL, username, password string) PortalAuthOutcome {
 	fail := func(detail string) PortalAuthOutcome {
 		return PortalAuthOutcome{Success: false, Detail: detail}
 	}
@@ -236,9 +253,12 @@ func ExecutePortalAuth(cfg PortalAuthConfig, portalURL, username, password strin
 	}
 	if hint := strings.TrimSpace(cfg.SuccessHint); hint != "" {
 		outcome.Success = strings.Contains(string(raw), hint)
+		// 提示词命中即响应本身构成证据，调用方无需再复验。
+		outcome.Verified = outcome.Success
 		return attachWarn(outcome)
 	}
 	// 未配置提示词:2xx 即认为已提交,由调用方复验门户是否消失
+	// （Verified 保持 false，自动认证循环据此复验后才记成功）。
 	outcome.Success = true
 	return attachWarn(outcome)
 }
@@ -253,6 +273,15 @@ func firstLine(s string, limit int) string {
 		s = s[:limit]
 	}
 	return s
+}
+
+// maskPortalSecret 抹掉文本里的密码原文。过短的密码不做替换：那会把状态码、
+// 地址里的数字一起搅烂，反而没法排查（短密码的泄露面也小得多）。
+func maskPortalSecret(text, secret string) string {
+	if text == "" || len(secret) < 4 {
+		return text
+	}
+	return strings.ReplaceAll(text, secret, "***")
 }
 
 // ============================ 自动认证循环 ============================
@@ -389,10 +418,29 @@ func (s *PortalAuthService) tick(cancel chan struct{}) (bool, time.Duration) {
 	s.portalLatched = true
 	s.mu.Unlock()
 	if first {
-		s.logger.Warning(i18n.Tf("portal.detected", d.PortalURL))
+		if d.PortalURL != "" {
+			s.logger.Warning(i18n.Tf("portal.detected", d.PortalURL))
+		} else {
+			// 劫持页里提不到门户地址：明说"没拿到地址"，别打一行空地址。
+			s.logger.Warning(i18n.T("portal.detectedNoURL"))
+		}
 	}
 
 	out := s.performAuth(d.PortalURL)
+	if out.Success && !out.Verified {
+		// 未配成功提示词时 2xx 只代表"已提交"：必须复验门户真的消失才能
+		// 记成功。否则门户仍在也会被日志成"认证成功"并重置退避，用户永远
+		// 发现不了模板/凭据是坏的（手动测试一直有复验，自动循环曾没有）。
+		v := s.detect()
+		switch {
+		case v.Error != "":
+			// 复验本身失败：门户是否放行未知。不谎报成功，也不计失败。
+			s.logger.Warning(i18n.Tf("portal.verifyFailed", v.Error))
+			return true, time.Duration(portalBaseIntervalSeconds) * time.Second
+		case v.Portal:
+			out = PortalAuthOutcome{Detail: i18n.T("portal.authStillPortal")}
+		}
+	}
 	if out.Success {
 		s.mu.Lock()
 		s.failStreak = 0

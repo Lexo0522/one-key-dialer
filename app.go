@@ -697,12 +697,27 @@ func (a *App) TestPortalAuth() PortalTestResult {
 	}
 
 	d2 := service.DetectPortal(cfg)
-	if out.Success && !d2.Portal {
-		sb.WriteString("\n" + i18n.T("portal.testOk"))
-		return PortalTestResult{Ok: true, Detail: sb.String()}
+	ok, note := portalTestVerdict(out, d2)
+	sb.WriteString("\n" + note)
+	if d2.Error != "" {
+		sb.WriteString("\nHTTP " + d2.Detail)
 	}
-	sb.WriteString("\n" + i18n.T("portal.testFailed"))
-	return PortalTestResult{Ok: false, Detail: sb.String()}
+	return PortalTestResult{Ok: ok, Detail: sb.String()}
+}
+
+// portalTestVerdict 汇总手动测试的结论：只有"提交成功 + 复验确认门户消失"
+// 才算通过。复验探测本身失败时门户状态未知，只能判未通过——早年正是把
+// 复验超时当成"门户已放行"，让坏配置在测试里显示通过。
+func portalTestVerdict(out service.PortalAuthOutcome, re service.PortalDetect) (bool, string) {
+	switch {
+	case !out.Success:
+		return false, i18n.T("portal.testFailed")
+	case re.Error != "":
+		return false, i18n.T("portal.testVerifyFailed")
+	case re.Portal:
+		return false, i18n.T("portal.testFailed")
+	}
+	return true, i18n.T("portal.testOk")
 }
 
 // ============================ 网站测速 / IP 信息 ============================

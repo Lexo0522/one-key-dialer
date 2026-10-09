@@ -61,7 +61,8 @@ const portalProbeRetryBudgetMs = 5000
 //   - 请求本身失败 → 先用备选明文地址重试，全部失败时 Error 记录最后
 //     一次错误、Portal=false，表示"探测未完成"而非"无门户"。
 //
-// 复用探测配置的代理出口；Transport 由 proxy 包缓存，判定逻辑与常规探测一致。
+// 固定直连：门户在本机链路侧，设置里的代理出口到不了内网门户地址。
+// 探测配置只用它的 HTTPUrl / 超时，代理段被刻意忽略。
 func DetectPortal(cfg model.ProbeConfig) PortalDetect {
 	first := detectPortalOnce(cfg)
 	if first.Error == "" {
