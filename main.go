@@ -99,6 +99,10 @@ func runAgent(args []string) {
 
 	app := NewApp()
 	app.startup(context.Background())
+	// 让重启管理器（安装 / 卸载 / 关机）能关掉这个常驻进程：它没有任何
+	// 会响应 WM_ENDSESSION 的顶层窗口，安装器因此永远拿不到 exe 的文件
+	// 句柄，只能卡在「收集信息」直到超时。详见 StartSessionEndWindow。
+	platform.StartSessionEndWindow(func() { app.ExitProgram() })
 	// 装配完成后常驻;退出经由 ExitProgram(内部 os.Exit)
 	select {}
 }
