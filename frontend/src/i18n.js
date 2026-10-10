@@ -131,6 +131,8 @@ const zh = {
   'home.ip.timezone': '时区',
   'home.ip.unset': '未获取',
   'home.ip.copyHint': '点击复制',
+  'home.ip.viaProxy': '经代理',
+  'home.ip.direct': '直连',
 
   // 灵动岛 Toast（拨号 Promise 回调的兜底文案，正文以后端事件为准）
   'toast.dial.success': '连接成功',
@@ -212,7 +214,7 @@ const zh = {
   'settings.proxy.host': '地址',
   'settings.proxy.port': '端口',
   'settings.proxy.bypass': '绕过（分号或逗号分隔）',
-  'settings.proxy.hint': '启用后，本应用的 HTTP 请求（更新检查、HTTP 外网探测）经此代理转发；不影响系统与其他程序',
+  'settings.proxy.hint': '启用后，本应用的 HTTP 请求（更新检查、HTTP 外网探测、首页测速与 IP 查询）经此代理转发；不影响系统与其他程序',
   'settings.proxy.needHost': '请先填写代理地址',
   'settings.proxy.portInvalid': '端口需为 1-65535 的数字',
   'settings.update.enabled': '启动时检查更新',
@@ -439,6 +441,8 @@ const en = {
   'home.ip.timezone': 'Timezone',
   'home.ip.unset': 'N/A',
   'home.ip.copyHint': 'Click to copy',
+  'home.ip.viaProxy': 'via proxy',
+  'home.ip.direct': 'direct',
 
   // Island toast (fallback copy for the dial promise callback; body comes from backend events)
   'toast.dial.success': 'Connected',
@@ -519,7 +523,7 @@ const en = {
   'settings.proxy.host': 'Host',
   'settings.proxy.port': 'Port',
   'settings.proxy.bypass': 'Bypass',
-  'settings.proxy.hint': "When enabled, this app's HTTP requests (update checks, HTTP connectivity probes) go through this proxy; system and other apps are unaffected",
+  'settings.proxy.hint': "When enabled, this app's HTTP requests (update checks, HTTP connectivity probes, home speed tests & IP lookups) go through this proxy; system and other apps are unaffected",
   'settings.proxy.needHost': 'Proxy host is required',
   'settings.proxy.portInvalid': 'Port must be a number between 1 and 65535',
   'settings.update.enabled': 'Check updates on startup',

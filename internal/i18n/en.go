@@ -141,7 +141,7 @@ var en = map[string]string{
 	"selfcheck.notWritable":  "Startup self-check: {0} is not writable: {1}",
 
 	// Proxy (this app's HTTP egress only)
-	"proxy.enabled":  "Proxy enabled: {0} (this app's HTTP requests only: update checks, connectivity probes)",
+	"proxy.enabled":  "Proxy enabled: {0} (this app's HTTP requests only: update checks, connectivity probes, speed test & IP lookups)",
 	"proxy.disabled": "Proxy disabled (this app's HTTP requests connect directly, or fall back to system environment proxy)",
 
 	// WiFi

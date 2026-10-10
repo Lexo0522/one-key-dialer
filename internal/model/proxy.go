@@ -23,8 +23,8 @@ const (
 )
 
 // ProxyConfig 归一化后的代理配置。
-// 作用范围严格限定为本应用自身的 HTTP 出口（在线更新检查/下载、
-// HTTP 模式外网探测），不修改系统代理设置，不影响其他程序。
+// 作用范围严格限定为本应用自身的 HTTP 出口（在线更新检查/下载、HTTP 模式
+// 外网探测、首页测速与 IP 查询），不修改系统代理设置，不影响其他程序。
 type ProxyConfig struct {
 	Enabled bool
 	Type    string // http | https | socks5

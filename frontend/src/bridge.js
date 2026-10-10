@@ -425,6 +425,7 @@ const mockApi = {
       isp: '中国电信',
       as: 'AS4134',
       timezone: 'Asia/Shanghai',
+      viaProxy: false,
       localIp: '10.16.8.66'
     }
   },

@@ -722,10 +722,12 @@ func portalTestVerdict(out service.PortalAuthOutcome, re service.PortalDetect) (
 
 // ============================ 网站测速 / IP 信息 ============================
 
-// SiteLatencyCheck 批量网站测速（直连、站点间并发，单站 4 秒超时）。
+// SiteLatencyCheck 批量网站测速（站点间并发，单站 4 秒超时）。
 // urls 为前端配置的测试点（settings.speedSites），结果按入参顺序返回。
+// 出口跟随设置内的代理开关：启用即经该代理测速，未启用则直连。
 func (a *App) SiteLatencyCheck(urls []string) []SiteLatencyDTO {
-	res := service.TestSiteLatency(urls)
+	s := a.settings.Current()
+	res := service.TestSiteLatency(urls, s.ProxyConfig())
 	out := make([]SiteLatencyDTO, 0, len(res))
 	for _, r := range res {
 		out = append(out, SiteLatencyDTO{Url: r.Url, LatencyMs: r.LatencyMs})
@@ -733,9 +735,12 @@ func (a *App) SiteLatencyCheck(urls []string) []SiteLatencyDTO {
 	return out
 }
 
-// GetIPInfo 查询公网出口 IP 与运营商归属（直连，主源失败自动回退）。
+// GetIPInfo 查询公网出口 IP 与运营商归属（主源失败自动回退）。
+// 出口同上：代理未启用时直连（显示 PPPoE 拨号线路出口），启用时经代理
+// 查询（显示代理出口），ViaProxy 回显本次数据的实际出口。
 func (a *App) GetIPInfo() IPInfoDTO {
-	info := service.FetchIPInfo()
+	s := a.settings.Current()
+	info := service.FetchIPInfo(s.ProxyConfig())
 	return IPInfoDTO{
 		Ip:         info.Ip,
 		Country:    info.Country,
@@ -745,6 +750,7 @@ func (a *App) GetIPInfo() IPInfoDTO {
 		As:         info.As,
 		Timezone:   info.Timezone,
 		LocalIp:    info.LocalIp,
+		ViaProxy:   info.ViaProxy,
 	}
 }
 

@@ -99,7 +99,9 @@ type SiteLatencyDTO struct {
 	LatencyMs int64  `json:"latencyMs"`
 }
 
-// IPInfoDTO 公网出口 IP 与归属信息（直连查询，不含代理出口）。
+// IPInfoDTO 公网出口 IP 与归属信息。
+// 代理未启用时直连查询（显示拨号线路出口）；启用后经代理出口查询，
+// ViaProxy 回显本次数据的出口形态（供界面标识）。
 type IPInfoDTO struct {
 	Ip         string `json:"ip"`
 	Country    string `json:"country"`
@@ -109,6 +111,7 @@ type IPInfoDTO struct {
 	As         string `json:"as"`
 	Timezone   string `json:"timezone"`
 	LocalIp    string `json:"localIp"`
+	ViaProxy   bool   `json:"viaProxy"`
 }
 
 // UpdatePayload 更新流程事件负载。

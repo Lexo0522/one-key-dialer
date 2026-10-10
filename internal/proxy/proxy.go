@@ -1,8 +1,9 @@
 // Package proxy 提供应用自身 HTTP 出口的代理支持。
 //
 // 作用范围严格限定为本程序的 HTTP 请求（在线更新检查/下载、HTTP 模式
-// 外网探测）：按设置构造 http.Transport（http / https / socks5，SOCKS5
-// 由 Go 标准库原生支持），并支持绕过列表（精确主机、*.example.com 后缀、
+// 外网探测、首页测速与 IP 查询）：按设置构造 http.Transport（http /
+// https / socks5，SOCKS5 由 Go 标准库原生支持），并支持绕过列表（精确
+// 主机、*.example.com 后缀、
 // 通配符、CIDR、<local> 私网/环回）。本包不写入、不读取任何系统代理
 // 设置，未启用代理时回退系统环境变量（HTTP_PROXY/HTTPS_PROXY 等），
 // 与改造前行为保持一致。

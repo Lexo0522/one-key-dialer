@@ -150,7 +150,7 @@ var zh = map[string]string{
 	"selfcheck.notWritable":  "启动自检: {0} 不可写: {1}",
 
 	// 代理（仅本应用 HTTP 出口）
-	"proxy.enabled":  "代理已启用: {0}（仅本应用的 HTTP 请求：更新检查、外网探测）",
+	"proxy.enabled":  "代理已启用: {0}（仅本应用的 HTTP 请求：更新检查、外网探测、测速与 IP 查询）",
 	"proxy.disabled": "代理已关闭（本应用的 HTTP 请求直连，或回退系统环境变量代理）",
 
 	// WiFi

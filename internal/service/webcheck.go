@@ -10,11 +10,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Lexo0522/one-key-dialer/internal/model"
+	"github.com/Lexo0522/one-key-dialer/internal/proxy"
 )
 
 // 网站测速与公网 IP 查询（Clash Verge 首页同款卡片的数据源）。
-// 两者都走直连（不经设置内的代理）：测速要反映本机网络到网站的真实延迟，
-// IP 信息要显示 PPPoE 线路的出口归属而非代理出口。
+// 出口跟随设置内的代理开关：代理启用时两者都经该代理查询（绕过列表同样
+// 生效），测速与 IP 都是代理出口的视角；代理未启用时走直连——不经代理、
+// 也不读系统环境变量代理，测速反映本机到网站的真实延迟，IP 信息显示
+// PPPoE 线路的出口归属而非代理出口。
+//
 // 测速站点列表由前端配置（设置 speedSites，支持自建测试点）并随请求传入。
 
 // MaxSpeedSites 单次测速的站点数上限，防止列表被塞爆拖垮界面。
@@ -38,10 +44,32 @@ var webcheckClient = &http.Client{
 	Timeout: 6 * time.Second,
 }
 
+// webcheckClientFor 按开关返回测速 / IP 查询使用的 HTTP 客户端。
+// 代理启用 → 自建 Transport 走 proxy.Func（绕过列表在请求时生效）；
+// 未启用 → webcheckClient（直连，忽略一切代理，含系统环境变量）。
+// 不借用 proxy.TransportFor 的缓存 Transport：那份与 HTTP 外网探测共用，
+// 改它的超时字段会波及探测，故自建一份、超时与直连保持一致。
+func webcheckClientFor(cfg model.ProxyConfig) *http.Client {
+	if !cfg.Enabled {
+		return webcheckClient
+	}
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:                 proxy.Func(cfg),
+			TLSHandshakeTimeout:   5 * time.Second,
+			ResponseHeaderTimeout: 5 * time.Second,
+			IdleConnTimeout:       30 * time.Second,
+		},
+		Timeout: 6 * time.Second,
+	}
+}
+
 // TestSiteLatency 并发测每个 URL 的延迟（入参来自前端测试点配置）。
+// pc 决定出口（见 webcheckClientFor）。
 // 忽略空串与非 http(s) 地址、去重、截断到 MaxSpeedSites；
 // 结果按入参顺序返回，整体不超过约 4.5 秒（低于 IPC 20 秒管道超时）。
-func TestSiteLatency(urls []string) []SiteLatency {
+func TestSiteLatency(urls []string, pc model.ProxyConfig) []SiteLatency {
+	client := webcheckClientFor(pc)
 	seen := make(map[string]bool, len(urls))
 	targets := make([]string, 0, len(urls))
 	for _, u := range urls {
@@ -64,7 +92,7 @@ func TestSiteLatency(urls []string) []SiteLatency {
 		wg.Add(1)
 		go func(i int, u string) {
 			defer wg.Done()
-			out[i].LatencyMs = measureLatency(u)
+			out[i].LatencyMs = measureLatency(client, u)
 		}(i, u)
 	}
 	wg.Wait()
@@ -77,11 +105,11 @@ func isHTTPOrHTTPS(u string) bool {
 }
 
 // measureLatency HEAD 请求计到响应首字节；被拒（405 等 4xx）退回 GET。
-func measureLatency(url string) int64 {
+func measureLatency(client *http.Client, url string) int64 {
 	start := time.Now()
-	ok := probeOnce(http.MethodHead, url)
+	ok := probeOnce(client, http.MethodHead, url)
 	if !ok {
-		ok = probeOnce(http.MethodGet, url)
+		ok = probeOnce(client, http.MethodGet, url)
 	}
 	if !ok {
 		return -1
@@ -89,7 +117,7 @@ func measureLatency(url string) int64 {
 	return time.Since(start).Milliseconds()
 }
 
-func probeOnce(method, url string) bool {
+func probeOnce(client *http.Client, method, url string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, method, url, nil)
@@ -98,7 +126,7 @@ func probeOnce(method, url string) bool {
 	}
 	// 部分站点对非常见 UA 拒答，用浏览器 UA 避免误判为不可达
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
-	resp, err := webcheckClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}
@@ -120,14 +148,17 @@ type IPInfo struct {
 	Timezone   string `json:"timezone"` // IANA 时区名，如 Asia/Shanghai
 	// LocalIp 本机在默认路由上的内网地址（UDP connect 技巧，不发包）
 	LocalIp string `json:"localIp"`
+	// ViaProxy 本次查询是否走了代理出口（= 设置内代理已启用）。
+	ViaProxy bool `json:"viaProxy"`
 }
 
-// FetchIPInfo 查询公网出口 IP 与运营商归属（直连）。
+// FetchIPInfo 查询公网出口 IP 与运营商归属。
 // 主源 ip-api.com（中文、免费），失败回退 ipinfo.io（英文）；
 // 两个源各 4 秒超时，整体不超过约 8 秒。
-func FetchIPInfo() IPInfo {
-	info := IPInfo{LocalIp: defaultLocalIP()}
-	if raw := fetchJSON("http://ip-api.com/json/?lang=zh-CN&fields=status,country,regionName,city,isp,as,timezone,query"); raw != nil {
+func FetchIPInfo(pc model.ProxyConfig) IPInfo {
+	info := IPInfo{LocalIp: defaultLocalIP(), ViaProxy: pc.Enabled}
+	client := webcheckClientFor(pc)
+	if raw := fetchJSON(client, "http://ip-api.com/json/?lang=zh-CN&fields=status,country,regionName,city,isp,as,timezone,query"); raw != nil {
 		var r struct {
 			Status     string `json:"status"`
 			Country    string `json:"country"`
@@ -146,7 +177,7 @@ func FetchIPInfo() IPInfo {
 		}
 	}
 	// 回退源：ipinfo.io（字段 ip/city/region/country/org/timezone，英文）
-	if raw := fetchJSON("https://ipinfo.io/json"); raw != nil {
+	if raw := fetchJSON(client, "https://ipinfo.io/json"); raw != nil {
 		var r struct {
 			Ip       string `json:"ip"`
 			City     string `json:"city"`
@@ -204,7 +235,7 @@ func defaultLocalIP() string {
 	return addr.IP.String()
 }
 
-func fetchJSON(url string) []byte {
+func fetchJSON(client *http.Client, url string) []byte {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -212,7 +243,7 @@ func fetchJSON(url string) []byte {
 		return nil
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0 Safari/537.36")
-	resp, err := webcheckClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil
 	}

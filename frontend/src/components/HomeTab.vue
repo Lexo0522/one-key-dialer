@@ -110,6 +110,10 @@
       <div class="card duo-card">
         <div class="card-head">
           <div class="card-title"><i class="fas fa-globe-asia"></i>{{ t('home.ip.title') }}</div>
+          <span class="ip-badge" :class="{ proxied: ipInfo.viaProxy }">
+            <i :class="ipInfo.viaProxy ? 'fas fa-shield-alt' : 'fas fa-network-wired'"></i>
+            {{ ipInfo.viaProxy ? t('home.ip.viaProxy') : t('home.ip.direct') }}
+          </span>
           <button class="duo-refresh" :disabled="ipBusy" :title="t('home.ip.refresh')" @click="refreshIpInfo">
             <i class="fas fa-sync-alt" :class="{ spinning: ipBusy }"></i>
           </button>
@@ -782,7 +786,7 @@ const BUILTIN_SITES = [
 
 const latBusy = ref(false)
 const ipBusy = ref(false)
-const ipInfo = reactive({ ip: '', country: '', regionName: '', city: '', isp: '', as: '', timezone: '', localIp: '' })
+const ipInfo = reactive({ ip: '', country: '', regionName: '', city: '', isp: '', as: '', timezone: '', localIp: '', viaProxy: false })
 // 按测试点 URL 记录结果与进行中状态（latencyMs: null 未测 | -1 失败 | >=0 毫秒）
 const latResults = reactive({})
 const testingMap = reactive({})
@@ -1419,6 +1423,25 @@ const statCards = computed(() => {
 
 .duo-refresh:hover:not(:disabled) {
   background: var(--c-hover);
+  color: var(--c-info);
+}
+
+/* IP 信息卡出口标识：后端随查询结果回显 viaProxy */
+.ip-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--c-text-sub);
+  background: var(--c-hover);
+}
+
+.ip-badge.proxied {
   color: var(--c-info);
 }
 

@@ -200,7 +200,7 @@ const autoInstallUpdate = ref(state.settings?.autoInstallUpdate ?? true)
 const lowMemRender = ref(!!state.settings?.lowMemRender)
 
 // 代理：后端设置项，经 patchSettings 持久化到 settings.json 并实时生效
-// （仅作用于本应用自身的 HTTP 请求：更新检查、HTTP 外网探测）
+// （仅作用于本应用自身的 HTTP 请求：更新检查、HTTP 外网探测、首页测速与 IP 查询）
 const proxy = reactive({
   enabled: !!state.settings?.proxyEnabled,
   type: state.settings?.proxyType || 'http',
