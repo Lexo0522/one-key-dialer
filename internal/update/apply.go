@@ -292,6 +292,11 @@ func (m *Module) writeMsiApplyScript(msiPath, installDir string, pids []int) (st
 		wline(w, "exit /b 0")
 		wline(w, ":msi_failed")
 		wline(w, "echo MSI install failed (exit code %errorlevel%). The previous version is unchanged.")
+		// 失败对用户不可见：脚本跑在隐藏控制台里，pause 等不到输入。把退出码
+		// 写成标记文件，应用下次启动读取后以托盘气泡告知（见 app_update.go
+		// 的 reportLastUpdateFailure）。echo 重定向会带一个前导空格，读取端
+		// 已做 TrimSpace。
+		wline(w, `> "`+filepath.Join(m.updatesDir, FailureMarkerName)+`" echo %errorlevel%`)
 		writeRelaunch(w, installDir)
 		wline(w, "echo.")
 		wline(w, "pause")

@@ -120,14 +120,57 @@ func TestEnsureHealthyRepairsPermanentInstall(t *testing.T) {
 	}
 }
 
-// TestEnsureHealthyNoWant 未勾选开机自启时只读不改。
-func TestEnsureHealthyNoWant(t *testing.T) {
+// TestEnsureHealthyCleansStaleRunWhenDisabled 未勾选开机自启时，指向已不存在
+// 程序的死链必须被清掉。
+//
+// 两类来源：卸载 MSI / 删掉便携版目录后 Run 值仍在；以及改装到别处后 Run 值
+// 还指着旧路径。死链每次开机都被 Windows 静默尝试启动，用户侧毫无线索；而
+// wantAutoStart=true 的自愈分支只在设置要求自启动时才改写，设置关闭时死链
+// 会一直留着。注意清理走 deleteRun 而非 writeRun：不改写、只摘除。
+func TestEnsureHealthyCleansStaleRunWhenDisabled(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "PPPoEDialer")
 	s, written := newFakeStartup(t, dir, `"C:\gone.exe" --autostart`, false, nil)
 	if s.EnsureHealthy(false) {
-		t.Error("wantAutoStart=false 时返回 true, want false(不健康且不修复)")
+		t.Error("wantAutoStart=false 时返回 true, want false(死链不算健康)")
+	}
+	if len(*written) != 0 {
+		t.Errorf("清理死链时写入了 Run 值 %v, want 空(应删除而非改写)", *written)
+	}
+	if got := s.readRun(AutoStartValueName); got != "" {
+		t.Errorf("死链未被清理, Run 值仍是 %q", got)
+	}
+}
+
+// TestEnsureHealthyKeepsLiveEntryWhenDisabled 目标仍然存在的条目一律不动，
+// 即使它指向别的路径：宁可留一条暂时没用到的死链，也不能删错用户的东西。
+func TestEnsureHealthyKeepsLiveEntryWhenDisabled(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "PPPoEDialer")
+	other := filepath.Join(t.TempDir(), "PPPoEDialer.exe")
+	if err := os.WriteFile(other, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, written := newFakeStartup(t, dir, platform.BuildExeRunCommand(other), false, nil)
+	if s.EnsureHealthy(false) {
+		t.Error("wantAutoStart=false 时返回 true, want false(指向的不是当前本体)")
 	}
 	if len(*written) != 0 {
 		t.Errorf("未勾选时仍写入 %v, want 空", *written)
+	}
+	if got := s.readRun(AutoStartValueName); got == "" {
+		t.Error("指向存在文件的条目被误删")
+	}
+}
+
+// TestEnsureHealthyIgnoresUnparsableRun 解析不出目标的 Run 值一律不碰：
+// 相对路径的目标存在性无从谈起，删了就是删错。
+func TestEnsureHealthyIgnoresUnparsableRun(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "PPPoEDialer")
+	s, written := newFakeStartup(t, dir, `PPPoEDialer.exe --autostart`, false, nil)
+	s.EnsureHealthy(false)
+	if len(*written) != 0 {
+		t.Errorf("不可解析的 Run 值被写入 %v, want 空", *written)
+	}
+	if got := s.readRun(AutoStartValueName); got == "" {
+		t.Error("不可解析的 Run 值被误删")
 	}
 }

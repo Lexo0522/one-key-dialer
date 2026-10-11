@@ -144,6 +144,13 @@ func (a *App) startup(ctx context.Context) {
 	a.logSvc = service.NewLogService(filepath.Join(a.dataDir, "pppoe_log.txt"))
 	a.logSvc.AttachLineSink(func(line service.LogLine) { a.emit(EvtLog, line) })
 
+	// 一次性数据迁移必须赶在读取任何设置/凭据之前：旧版数据目录规则下，
+	// 提权运行曾把数据写进 Program Files 安装目录，新版规则让该安装固定
+	// 使用 %APPDATA%，不先捞回的话账号与自动重连设置看起来像丢了。
+	for _, name := range platform.MigrateLegacyInstallData() {
+		a.logSvc.Info(i18n.Tf("dataDir.migrated", name))
+	}
+
 	a.exec = service.NewBackgroundExecutor()
 	a.exec.SetErrorReporter(func(err error) {
 		a.logSvc.Error(i18n.T("task.error") + ": " + err.Error())
@@ -233,6 +240,7 @@ func (a *App) startup(ctx context.Context) {
 		service.NewStartupSelfCheck(a.logSvc, a.dataDir).Run()
 		s := a.settings.Current()
 		a.autoStart.EnsureHealthy(s.AutoStart)
+		a.reportLastUpdateFailure()
 		a.emit(EvtSettings, s)
 	})
 

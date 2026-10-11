@@ -34,6 +34,10 @@ const (
 	StagedDirPrefix          = "staged-"
 	ApplyScriptName          = "apply_update.bat"
 	WritabilityProbeFile     = "ppoe_update_probe.tmp"
+	// FailureMarkerName 更新安装失败时由更新脚本写下的标记文件名，内容是
+	// msiexec 的退出码。应用下次启动时读取并提示用户，让「静默失败」
+	// （典型：标准用户过不了 per-machine MSI 的 UAC）有明确归因。
+	FailureMarkerName = "update-failed.txt"
 
 	// WaitSleepCmd 等待循环里的「睡一秒」。
 	//
@@ -539,14 +543,15 @@ func (m *Module) checkOnce(src *Source, current string) CheckResult {
 		return out
 	}
 	out.UpdateAvailable = true
-	writable := platform.IsDirWritable(platform.InstallDir())
+	// 与下载/检查态同一口径：Program Files 安装恒选 MSI，不随进程令牌漂移。
+	updatable := platform.InstallDirSelfUpdatable()
 	msg := i18n.Tf("update.found", rel.TagName, model.Display(), src.DisplayName)
-	preferred := rel.PreferredWindowsAsset(writable)
+	preferred := rel.PreferredWindowsAsset(updatable)
 	manifest := rel.ChecksumManifest()
 	switch {
 	case preferred != nil && manifest != nil:
 		msg += i18n.Tf("update.canDownload", preferred.Name)
-		if !writable {
+		if !updatable {
 			msg += i18n.T("update.msiNote")
 		}
 	case preferred != nil:

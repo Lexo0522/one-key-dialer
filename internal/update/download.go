@@ -73,8 +73,9 @@ func (m *Module) DownloadWithFailover(result CheckResult, progress Progress, can
 	if result.Release == nil {
 		return nil, ErrMissingAsset
 	}
-	writable := platform.IsDirWritable(platform.InstallDir())
-	asset := result.Release.PreferredWindowsAsset(writable)
+	// 与检查态同一口径：Program Files 安装恒选 MSI，不随进程令牌漂移。
+	updatable := platform.InstallDirSelfUpdatable()
+	asset := result.Release.PreferredWindowsAsset(updatable)
 	if asset == nil {
 		return nil, ErrMissingAsset
 	}
@@ -112,7 +113,7 @@ func (m *Module) DownloadWithFailover(result CheckResult, progress Progress, can
 				m.logf("update.versionConflict", result.SourceName, result.LatestTag, src.DisplayName, alt.LatestTag)
 			}
 			release = alt.Release
-			target = alt.Release.PreferredWindowsAsset(writable)
+			target = alt.Release.PreferredWindowsAsset(updatable)
 			if target == nil || release.ChecksumManifest() == nil {
 				m.logf("update.lineNoPackage", src.DisplayName)
 				lastErr = errors.New(i18n.Tf("update.noPackageLine", src.DisplayName))

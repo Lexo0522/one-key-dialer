@@ -112,6 +112,27 @@
          Type 从 0x452 变成 0x4D2（多出 0x80 这一位）。 -->
     <CustomAction Id="LaunchApp" ExeCommand="" Return="asyncNoWait" Execute="deferred" Impersonate="yes" FileRef="PPPoEDialerExe" />
 
+    <!-- 这里刻意没有「卸载时删掉开机自启动项」的自定义动作。
+
+         该 Run 值由程序自己注册（HKCU\Software\Microsoft\Windows\CurrentVersion\Run，
+         值名 PPoEDialer，与 internal/service/startup.go 的 AutoStartValueName 一致），
+         MSI 不创建它，理想情况下卸载时应当带走。试过并放弃，原因记录在此，
+         免得后来者再走一遍：
+
+         1. MSI 没有卸载期删单个注册表值的原生机制。RemoveRegistry 表只在安装期
+            生效，Util 扩展的 RemoveRegistryKey(Ex) 只能删整个键（删 Run 键本身
+            是灾难），所以只剩「自定义动作跑 reg.exe」这一条路。
+         2. 该方案实测不可靠：本地用一次性 per-user 探针 MSI 验证过 type 51+type 50
+            与 type 34 两种自定义动作形态，reg.exe 在自定义动作里能增删普通 HKCU
+            键，却读不到应用写进 Run 键的值（同一用户、同一 SID 下注册表视图不一致），
+            删除必然静默失败。Return="ignore" 还会把失败藏起来。
+         3. 应用侧已有等效且可测试的兜底：StartupService.cleanupStaleRun 在代理
+            启动时清理指向不存在程序的死链，改装到别处（MSI 或便携版）后自愈；
+            只剩「卸载后再也不装」这一种情形会留下死链，而它只是注册表里一条
+             inert 记录，Windows 每次开机静默跳过，不弹错、不影响任何功能。
+
+         结论：保持 MSI 只替换单个 exe 的极简形态，自启动项的收尾交给应用自己。 -->
+
     <InstallExecuteSequence>
       <!-- 必须排在 InstallFinalize 之前：deferred 自定义动作只能出现在
            InstallInitialize..InstallFinalize 之间，排在 Finalize 之后 light

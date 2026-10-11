@@ -101,7 +101,15 @@ func startSessionEndWindow() {
 	}
 
 	go func() {
-		defer func() { _ = recover() }()
+		// 退出路径必须留痕：这个 goroutine 静默退出等于「重启管理器再也关不掉
+		// 本进程」，而现象是卸载/升级卡在「收集信息」，离现场很远。panic 值与
+		// GetMessage 的返回值都打到 stderr，出问题时能立刻分清是线程死了还是
+		// 调度饥饿。
+		defer func() {
+			if r := recover(); r != nil {
+				println("PPPoEDialer: session-end window goroutine panicked:", r)
+			}
+		}()
 		// 建窗口与泵消息必须落在同一个 OS 线程上：Windows 的窗口归属于创建
 		// 它的线程，消息也只进那个线程的队列。若在调用方线程建窗口、另起
 		// goroutine 泵消息，两条线程各忙各的，SendMessage 发出去永远等不到
@@ -133,9 +141,10 @@ func startSessionEndWindow() {
 			Pt      [2]int32
 		}
 		for {
-			r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&msg)), hwnd, 0, 0)
+			r, _, err := procGetMessageW.Call(uintptr(unsafe.Pointer(&msg)), hwnd, 0, 0)
 			// 0 = WM_QUIT，-1 = 出错；两者都不该继续循环。
 			if r == 0 || r == ^uintptr(0) {
+				println("PPPoEDialer: session-end message loop exiting, GetMessageW r =", r, "err =", err)
 				return
 			}
 			procTranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))

@@ -150,3 +150,36 @@ func TestWaitSleepCmdSleepsWithoutConsole(t *testing.T) {
 			WaitSleepCmd, elapsed)
 	}
 }
+
+// TestMsiApplyScriptWritesFailureMarker MSI 安装失败时必须留下标记文件。
+//
+// 脚本跑在隐藏控制台里，pause 等不到输入，用户唯一能察觉的只有「版本号没变」。
+// 标记文件是应用侧把失败变成托盘提示的唯一依据（见 app_update.go 的
+// reportLastUpdateFailure），典型场景是标准用户过不了 per-machine MSI 的 UAC。
+func TestMsiApplyScriptWritesFailureMarker(t *testing.T) {
+	dir := t.TempDir()
+	m := &Module{updatesDir: dir}
+	script, err := m.writeMsiApplyScript(filepath.Join(dir, "pkg.msi"), t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("writeMsiApplyScript: %v", err)
+	}
+	data, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+	body := string(data)
+
+	if !strings.Contains(body, FailureMarkerName) {
+		t.Errorf("failure branch lacks the marker file:\n%s", body)
+	}
+	if !strings.Contains(body, "%errorlevel%") {
+		t.Errorf("failure branch does not record the exit code:\n%s", body)
+	}
+	// 标记必须写在 relaunch 之前：relaunch 之后应用已经在启动竞争中，
+	// 顺序反了会丢标记。成功分支也有一次 relaunch，取最后一次才是失败分支的。
+	marker := strings.Index(body, FailureMarkerName)
+	relaunch := strings.LastIndex(body, `start "" /D`)
+	if marker < 0 || relaunch < 0 || marker > relaunch {
+		t.Errorf("marker write must precede the failure relaunch (marker at %d, relaunch at %d)", marker, relaunch)
+	}
+}

@@ -58,6 +58,38 @@ func ArgsContainAutoStart(args []string) bool {
 	return false
 }
 
+// RunCommandTarget 从 Run 值里解析出它要启动的可执行文件路径。
+//
+// 只认本程序写入的形态（BuildExeRunCommand 产物：`"C:\path\app.exe" --autostart`）：
+// 优先取首尾引号之间的内容，其次取首个空白分隔的 token。解析不出、或不是
+// 绝对路径时返回空串——调用方必须把空串当作「无法判断」，绝不能据此删除
+// 注册表值（相对路径的目标存在性无从谈起）。
+func RunCommandTarget(cmd string) string {
+	c := strings.TrimSpace(cmd)
+	if c == "" {
+		return ""
+	}
+	var target string
+	switch {
+	case strings.HasPrefix(c, `"`):
+		if end := strings.LastIndex(c, `"`); end > 0 {
+			target = c[1:end]
+		}
+	default:
+		// 无引号：取首个空白分隔的 token；整串没有空白时它就是目标
+		if i := strings.IndexAny(c, " \t"); i > 0 {
+			target = c[:i]
+		} else {
+			target = c
+		}
+	}
+	target = strings.TrimSpace(target)
+	if !filepath.IsAbs(target) {
+		return ""
+	}
+	return target
+}
+
 // ReadRunValue 读取 Run 项取值；不存在返回 ""。
 func ReadRunValue(valueName string) string {
 	key, err := registry.OpenKey(registry.CURRENT_USER, RunKeyPath, registry.READ)

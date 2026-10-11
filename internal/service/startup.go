@@ -101,6 +101,10 @@ func (s *StartupService) IsHealthy() bool {
 // 一个错误的目标。宁可在这里承认不健康,也不要把 %TEMP% 写进 Run 值。
 func (s *StartupService) EnsureHealthy(wantAutoStart bool) bool {
 	if !wantAutoStart {
+		// 设置未要求自启动：指向已不存在程序的死链要清掉。不清的后果是每次
+		// 开机 Windows 都静默尝试启动一个不存在的文件；用户卸载 MSI 后改装
+		// 便携版到别处时，下面的 wantAutoStart=true 分支也永远等不到触发机会。
+		s.cleanupStaleRun()
 		return s.IsHealthy()
 	}
 	if s.ephemeralExe() {
@@ -118,6 +122,29 @@ func (s *StartupService) EnsureHealthy(wantAutoStart bool) bool {
 	}
 	s.logger.Error(i18n.T("autostart.repairFailed"))
 	return false
+}
+
+// cleanupStaleRun 清理指向已不存在程序的开机自启动死链。
+//
+// 两类来源：卸载 MSI / 删掉便携版目录后 Run 值仍在；以及改装到别处后 Run 值
+// 还指着旧路径（IsHealthy 判不健康，但只有 wantAutoStart=true 才会改写）。
+//
+// 保守原则：解析不出目标、或目标文件仍然存在时一律不动——宁可留一条暂时
+// 没用到的死链，也不能删错用户的东西。
+func (s *StartupService) cleanupStaleRun() {
+	data := s.readRun(AutoStartValueName)
+	if data == "" || !platform.IsDirectLaunchCommand(data) {
+		return
+	}
+	target := platform.RunCommandTarget(data)
+	if target == "" || fileExists(target) {
+		return
+	}
+	if err := s.deleteRun(AutoStartValueName); err != nil {
+		s.logger.Warning(i18n.Tf("autostart.staleRemoveFailed", err.Error()))
+		return
+	}
+	s.logger.Info(i18n.T("autostart.staleRemoved"))
 }
 
 func fileExists(path string) bool {

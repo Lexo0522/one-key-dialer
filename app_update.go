@@ -2,11 +2,15 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Lexo0522/one-key-dialer/internal/i18n"
 	"github.com/Lexo0522/one-key-dialer/internal/model"
 	"github.com/Lexo0522/one-key-dialer/internal/platform"
+	"github.com/Lexo0522/one-key-dialer/internal/service"
 	"github.com/Lexo0522/one-key-dialer/internal/update"
 )
 
@@ -33,12 +37,14 @@ func (a *App) doCheckUpdate(interactive bool) {
 	result := a.updater.Check(model.Version())
 	a.lastCheck = &result
 
-	writable := platform.IsDirWritable(platform.InstallDir())
-	canInstall := update.HasInstallableAsset(&result, writable)
+	// 更新通道判定必须与进程令牌无关：Program Files 安装（MSI）恒走 MSI，
+	// 提权会话里的「目录可写」不是便携版的证据（见 InstallDirSelfUpdatable）。
+	updatable := platform.InstallDirSelfUpdatable()
+	canInstall := update.HasInstallableAsset(&result, updatable)
 	assetName := ""
 	var assetSize int64
 	if result.Release != nil {
-		if p := result.Release.PreferredWindowsAsset(writable); p != nil {
+		if p := result.Release.PreferredWindowsAsset(updatable); p != nil {
 			assetName = p.Name
 			assetSize = p.SizeBytes
 		}
@@ -205,6 +211,34 @@ func (a *App) prepareAndLaunch(pkg *update.VerifiedPackage, progress updateProgr
 	}
 	a.emit(EvtUpdate, UpdatePayload{Kind: "installing", Stage: UpdateStageInstall})
 	a.ExitProgram()
+}
+
+// reportLastUpdateFailure 把上一次更新安装的失败变成用户可见的提示。
+//
+// 更新脚本在 MSI 安装失败时会把退出码写进 UpdatesDir 下的标记文件（见
+// internal/update 的 writeMsiApplyScript）。应用内更新的失败路径此前只往
+// 隐藏控制台打印，用户唯一能察觉的是「版本号没变」；典型场景是标准用户
+// 过不了 per-machine MSI 的 UAC。这里在代理启动时读走标记，记日志并发
+// 托盘气泡，让失败有明确归因与下一步动作。
+func (a *App) reportLastUpdateFailure() {
+	marker := filepath.Join(platform.UpdatesDir(), update.FailureMarkerName)
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return
+	}
+	// 先删再报：提示流程若出错，也不该在下次启动时重复弹同一条。
+	_ = os.Remove(marker)
+	code := strings.TrimSpace(string(data))
+	if code == "" {
+		code = "?"
+	}
+	msg := i18n.Tf("update.msiFailedHint", code)
+	a.logSvc.Error(msg)
+	// 此刻托盘可能尚未就绪（本任务与 initTray 并行起步），气泡延迟几秒
+	// 发出，避开「托盘没起来、提示被静默丢弃」的窗口。
+	a.exec.Schedule(3*time.Second, func() {
+		a.notify(i18n.T("update.msiFailedTitle"), msg, service.ToneError)
+	})
 }
 
 // quitUIProcesses 广播 sys:quit，让接入中的 UI 进程立即开始退出。

@@ -102,7 +102,14 @@ func isEphemeralExePath(exe string) bool {
 	return isUnderTemp(filepath.Dir(exe))
 }
 
-// DataDir 解析可写数据目录：程序目录（可写）→ 开发态工作目录 → %APPDATA%\PPoEDialer。
+// DataDir 解析可写数据目录：便携安装的程序目录（可写）→ 开发态工作目录
+// → %APPDATA%\PPoEDialer。
+//
+// 便携安装（绿色 exe，目录用户可写）把数据放在程序旁边，这是该类分发方式的
+// 约定；Program Files 安装（MSI）固定走 %APPDATA%，与进程是否提权无关——
+// 旧版以「安装目录可写」为第一优先，而 Program Files 的可写性取决于进程令牌，
+// 用户以管理员身份运行过一次，数据就落进系统目录，随后普通权限的启动读到
+// 空目录，表现为账号与自动重连设置静默丢失（见 portableDataDir）。
 func DataDir() string {
 	dataDirOnce.Do(func() {
 		dataDir = resolveDataDir()
@@ -111,7 +118,7 @@ func DataDir() string {
 }
 
 func resolveDataDir() string {
-	if dir := InstallDir(); dir != "" && !isUnderTemp(dir) && strings.ToLower(filepath.Base(dir)) != "bin" && IsDirWritable(dir) {
+	if dir, ok := portableDataDir(InstallDir()); ok {
 		return dir
 	}
 	if wd, err := os.Getwd(); err == nil && isDevRun() && IsDirWritable(wd) {
@@ -127,6 +134,119 @@ func resolveDataDir() string {
 	}
 	_ = os.MkdirAll(fallback, 0o755)
 	return fallback
+}
+
+// portableDataDir 判断一个安装目录能否直接充当数据目录（便携版行为）。
+// 只有「用户可写、且不属于系统固定安装位置」的目录才可以：
+//
+//   - 临时目录/构建产物排除在外：随时可能被磁盘清理掉，数据不能放那里。
+//   - Program Files 一律排除：它的可写性取决于进程令牌而非安装方式。旧版
+//     把它当数据目录，用户提权运行一次就把 settings.json / broadband.json
+//     写进系统目录，之后每次普通权限启动都读 %APPDATA% 里的空目录——
+//     自动重连环回到默认关闭、凭据消失，用户侧毫无线索。固定走 %APPDATA%
+//     后，同一安装在任何令牌下都读写同一处。
+func portableDataDir(dir string) (string, bool) {
+	if dir == "" || isUnderTemp(dir) || isUnderProgramFiles(dir) {
+		return "", false
+	}
+	if strings.ToLower(filepath.Base(dir)) == "bin" {
+		// go build / wails dev 的产物目录
+		return "", false
+	}
+	if !IsDirWritable(dir) {
+		return "", false
+	}
+	return dir, true
+}
+
+// isUnderProgramFiles 判断目录是否位于 Windows 的固定安装位置
+// （Program Files / Program Files (x86)，含 WOW64 重定向根）。
+// 根路径取自环境变量；三个都取不到时才回退字面量，避免判定整体失效。
+func isUnderProgramFiles(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	d := strings.ToLower(strings.TrimSuffix(dir, string(filepath.Separator)))
+	var roots []string
+	for _, name := range []string{"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"} {
+		if r := strings.TrimSpace(os.Getenv(name)); r != "" {
+			roots = append(roots, r)
+		}
+	}
+	if len(roots) == 0 {
+		roots = append(roots, `C:\Program Files`, `C:\Program Files (x86)`)
+	}
+	for _, r := range roots {
+		r = strings.ToLower(strings.TrimSuffix(r, string(filepath.Separator)))
+		if d == r || strings.HasPrefix(d, r+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// InstallDirSelfUpdatable 报告安装目录能否在不提权的情况下就地更新。
+// Program Files 安装（MSI）恒为 false：这类安装必须走 MSI 升级。
+//
+// 判定刻意与进程令牌无关：提权会话里 Program Files 同样「可写」，若据此
+// 改用 ZIP 覆盖，同一个安装会随令牌在 ZIP 与 MSI 两条更新通道间漂移，
+// 提权那一次更新的产物还会落在系统目录里。
+func InstallDirSelfUpdatable() bool {
+	return selfUpdatableDir(InstallDir())
+}
+
+// selfUpdatableDir 是 InstallDirSelfUpdatable 的可测核心。
+func selfUpdatableDir(dir string) bool {
+	if dir == "" || isUnderProgramFiles(dir) {
+		return false
+	}
+	return IsDirWritable(dir)
+}
+
+// legacyDataFiles 允许从安装目录迁入数据目录的白名单。
+// 只迁用户数据：日志、ipc.pipe、exe 一律不迁。
+var legacyDataFiles = []string{"settings.json", "broadband.json", "portal.json", "wifi.json"}
+
+// MigrateLegacyInstallData 把历史上写进 Program Files 安装目录的数据文件
+// 一次性迁入数据目录，返回成功迁入的文件名（无需迁移时返回 nil）。
+//
+// 背景见 portableDataDir：旧版规则下提权运行会把数据写进 Program Files，
+// 新版规则生效后那些数据对新数据目录不可见。这里按文件粒度捞回：
+// 目标缺失、源存在才拷，目标已有不覆盖——正常权限会话的数据优先于提权
+// 会话的数据，避免把用户在新规则下刚保存的设置冲掉。
+func MigrateLegacyInstallData() []string {
+	installDir, dataDir := InstallDir(), DataDir()
+	if installDir == "" || dataDir == "" || installDir == dataDir {
+		return nil
+	}
+	if !isUnderProgramFiles(installDir) {
+		return nil
+	}
+	return migrateDataFiles(installDir, dataDir)
+}
+
+// migrateDataFiles 把白名单文件中「目标缺失、源存在」的从 src 拷到 dst，
+// 返回成功拷贝的文件名。单项失败不影响其余文件。
+func migrateDataFiles(src, dst string) []string {
+	var migrated []string
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return nil
+	}
+	for _, name := range legacyDataFiles {
+		from := filepath.Join(src, name)
+		if info, err := os.Stat(from); err != nil || info.IsDir() {
+			continue
+		}
+		to := filepath.Join(dst, name)
+		if info, err := os.Stat(to); err == nil && !info.IsDir() {
+			continue
+		}
+		if err := copyFile(from, to); err != nil {
+			continue
+		}
+		migrated = append(migrated, name)
+	}
+	return migrated
 }
 
 // isDevRun 判断是否为源码态运行（可执行文件位于临时构建目录）。
