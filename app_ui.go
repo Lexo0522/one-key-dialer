@@ -204,6 +204,30 @@ func (u *UIApp) SaveSettings(next model.Settings) {
 	_, _ = u.call("SaveSettings", next)
 }
 
+func (u *UIApp) GetProxyCredential() ProxyCredentialDTO {
+	var out ProxyCredentialDTO
+	if err := u.callInto("GetProxyCredential", &out); err != nil {
+		return ProxyCredentialDTO{}
+	}
+	return out
+}
+
+func (u *UIApp) SaveProxyCredential(username, password string) bool {
+	var ok bool
+	if err := u.callInto("SaveProxyCredential", &ok, username, password); err != nil {
+		return false
+	}
+	return ok
+}
+
+func (u *UIApp) ClearProxyCredential() bool {
+	var ok bool
+	if err := u.callInto("ClearProxyCredential", &ok); err != nil {
+		return false
+	}
+	return ok
+}
+
 func (u *UIApp) SetAutoStart(enabled bool) bool {
 	var ok bool
 	if err := u.callInto("SetAutoStart", &ok, enabled); err != nil {

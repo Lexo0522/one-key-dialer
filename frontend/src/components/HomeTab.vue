@@ -109,11 +109,13 @@
       <!-- IP 信息：公网出口归属 + 本机内网地址，点 IP 值复制 -->
       <div class="card duo-card">
         <div class="card-head">
-          <div class="card-title"><i class="fas fa-globe-asia"></i>{{ t('home.ip.title') }}</div>
-          <span class="ip-badge" :class="{ proxied: ipInfo.viaProxy }">
-            <i :class="ipInfo.viaProxy ? 'fas fa-shield-alt' : 'fas fa-network-wired'"></i>
-            {{ ipInfo.viaProxy ? t('home.ip.viaProxy') : t('home.ip.direct') }}
-          </span>
+          <div class="ip-heading-group">
+            <div class="card-title"><i class="fas fa-globe-asia"></i>{{ t('home.ip.title') }}</div>
+            <span class="ip-badge" :class="{ proxied: ipInfo.viaProxy }">
+              <i :class="ipInfo.viaProxy ? 'fas fa-shield-alt' : 'fas fa-network-wired'"></i>
+              {{ ipInfo.viaProxy ? t('home.ip.viaProxy') : t('home.ip.direct') }}
+            </span>
+          </div>
           <button class="duo-refresh" :disabled="ipBusy" :title="t('home.ip.refresh')" @click="refreshIpInfo">
             <i class="fas fa-sync-alt" :class="{ spinning: ipBusy }"></i>
           </button>
@@ -1427,6 +1429,13 @@ const statCards = computed(() => {
 }
 
 /* IP 信息卡出口标识：后端随查询结果回显 viaProxy */
+.ip-heading-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .ip-badge {
   display: inline-flex;
   align-items: center;

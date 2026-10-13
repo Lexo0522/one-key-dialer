@@ -1,6 +1,13 @@
 package proxy
 
 import (
+	"bufio"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -65,21 +72,194 @@ func TestTransportForCaching(t *testing.T) {
 	if t1 == t3 {
 		t.Fatal("不同配置应返回不同 Transport")
 	}
+	cfgC := cfgA
+	cfgC.AuthEnabled = true
+	cfgC.Username = "user"
+	cfgC.Password = "first"
+	cfgD := cfgC
+	cfgD.Password = "second"
+	if TransportFor(cfgC) == TransportFor(cfgD) {
+		t.Fatal("different proxy credentials must use different Transports")
+	}
+}
+
+func TestHTTPProxyAuthentication(t *testing.T) {
+	const username, password = "proxy-user", "p@ss:word"
+	var auth string
+	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Proxy-Authorization")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer proxySrv.Close()
+	pu, _ := url.Parse(proxySrv.URL)
+	cfg := model.ProxyConfig{
+		Enabled: true, AuthEnabled: true, Type: "http",
+		Host: pu.Hostname(), Port: pu.Port(), Username: username, Password: password,
+	}
+	resp, err := ClientFor(cfg).Get("http://origin.example/test")
+	if err != nil {
+		t.Fatalf("authenticated proxy request: %v", err)
+	}
+	resp.Body.Close()
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
+	if auth != want {
+		t.Fatalf("Proxy-Authorization = %q, want %q", auth, want)
+	}
+}
+
+func TestHTTPSProxyAuthentication(t *testing.T) {
+	const username, password = "proxy-user", "secret"
+	var auth string
+	proxySrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Proxy-Authorization")
+		w.WriteHeader(http.StatusProxyAuthRequired)
+	}))
+	defer proxySrv.Close()
+	pu, _ := url.Parse(proxySrv.URL)
+	rootCAs := x509.NewCertPool()
+	rootCAs.AddCert(proxySrv.Certificate())
+	cfg := model.ProxyConfig{
+		Enabled: true, AuthEnabled: true, Type: "https",
+		Host: pu.Hostname(), Port: pu.Port(), Username: username, Password: password,
+	}
+	transport := &http.Transport{Proxy: Func(cfg), TLSClientConfig: &tls.Config{RootCAs: rootCAs}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	_, _ = client.Get("https://origin.example/test") // 407 is expected; inspect its auth header.
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
+	if auth != want {
+		t.Fatalf("Proxy-Authorization = %q, want %q", auth, want)
+	}
+}
+
+func TestSOCKS5ProxyAuthentication(t *testing.T) {
+	const username, password = "socks-user", "socks-secret"
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	serverErr := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer conn.Close()
+		if _, err = io.CopyN(io.Discard, conn, 1); err != nil {
+			serverErr <- err
+			return
+		}
+		var nmethods [1]byte
+		if _, err = io.ReadFull(conn, nmethods[:]); err != nil {
+			serverErr <- err
+			return
+		}
+		methods := make([]byte, int(nmethods[0]))
+		if _, err = io.ReadFull(conn, methods); err != nil {
+			serverErr <- err
+			return
+		}
+		if _, err = conn.Write([]byte{5, 2}); err != nil {
+			serverErr <- err
+			return
+		}
+		var authHead [2]byte
+		if _, err = io.ReadFull(conn, authHead[:]); err != nil {
+			serverErr <- err
+			return
+		}
+		user := make([]byte, int(authHead[1]))
+		if _, err = io.ReadFull(conn, user); err != nil {
+			serverErr <- err
+			return
+		}
+		var passLen [1]byte
+		if _, err = io.ReadFull(conn, passLen[:]); err != nil {
+			serverErr <- err
+			return
+		}
+		pass := make([]byte, int(passLen[0]))
+		if _, err = io.ReadFull(conn, pass); err != nil {
+			serverErr <- err
+			return
+		}
+		if string(user) != username || string(pass) != password {
+			serverErr <- fmt.Errorf("SOCKS5 credentials = %q/%q", user, pass)
+			return
+		}
+		if _, err = conn.Write([]byte{1, 0}); err != nil {
+			serverErr <- err
+			return
+		}
+		var request [4]byte
+		if _, err = io.ReadFull(conn, request[:]); err != nil {
+			serverErr <- err
+			return
+		}
+		switch request[3] {
+		case 1:
+			_, err = io.CopyN(io.Discard, conn, 6)
+		case 3:
+			var size [1]byte
+			_, err = io.ReadFull(conn, size[:])
+			if err == nil {
+				_, err = io.CopyN(io.Discard, conn, int64(size[0])+2)
+			}
+		case 4:
+			_, err = io.CopyN(io.Discard, conn, 18)
+		default:
+			err = fmt.Errorf("unexpected SOCKS5 address type %d", request[3])
+		}
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		if _, err = conn.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
+			serverErr <- err
+			return
+		}
+		if _, err = http.ReadRequest(bufio.NewReader(conn)); err != nil {
+			serverErr <- err
+			return
+		}
+		_, err = io.WriteString(conn, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+		serverErr <- err
+	}()
+
+	cfg := model.ProxyConfig{
+		Enabled: true, AuthEnabled: true, Type: "socks5",
+		Host: "127.0.0.1", Port: fmt.Sprint(listener.Addr().(*net.TCPAddr).Port),
+		Username: username, Password: password,
+	}
+	resp, reqErr := ClientFor(cfg).Get("http://origin.example/test")
+	if reqErr != nil {
+		t.Fatalf("SOCKS5 authenticated request: %v", reqErr)
+	}
+	resp.Body.Close()
+	if err := <-serverErr; err != nil {
+		t.Fatalf("SOCKS5 proxy: %v", err)
+	}
 }
 
 // TestRequestActuallyGoesThroughProxy 端到端验证：本地起一个假代理，
 // 探测请求必须到达该代理；命中绕过列表的请求不得到达。
 func TestRequestActuallyGoesThroughProxy(t *testing.T) {
 	var viaProxy, direct atomic.Int64
+	proxyAuth := make(chan string, 1)
+	var directHasProxyAuth atomic.Bool
 	// 假 HTTP 代理：对绝对 URI 形式的普通 HTTP 请求直接应答 204。
 	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		viaProxy.Add(1)
+		proxyAuth <- r.Header.Get("Proxy-Authorization")
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer proxySrv.Close()
 
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		direct.Add(1)
+		directHasProxyAuth.Store(r.Header.Get("Proxy-Authorization") != "")
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer origin.Close()
@@ -87,7 +267,7 @@ func TestRequestActuallyGoesThroughProxy(t *testing.T) {
 	pu, _ := url.Parse(proxySrv.URL)
 	ou, _ := url.Parse(origin.URL)
 	cfg := model.ProxyConfig{
-		Enabled: true, Type: "http",
+		Enabled: true, AuthEnabled: true, Type: "http", Username: "proxy-user", Password: "proxy-secret",
 		Host: pu.Hostname(), Port: pu.Port(),
 		Bypass: []string{"127.0.0.1"},
 	}
@@ -105,6 +285,10 @@ func TestRequestActuallyGoesThroughProxy(t *testing.T) {
 	if direct.Load() != 0 {
 		t.Fatalf("非绕过请求被直连了: direct=%d", direct.Load())
 	}
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("proxy-user:proxy-secret"))
+	if got := <-proxyAuth; got != wantAuth {
+		t.Fatalf("proxy auth = %q, want %q", got, wantAuth)
+	}
 
 	// 绕过主机 → 不得经过代理（由源站应答）
 	resp2, err := client.Get("http://127.0.0.1:" + ou.Port() + "/generate_204")
@@ -117,6 +301,9 @@ func TestRequestActuallyGoesThroughProxy(t *testing.T) {
 	}
 	if direct.Load() != 1 {
 		t.Fatalf("绕过请求未直连源站: direct=%d", direct.Load())
+	}
+	if directHasProxyAuth.Load() {
+		t.Fatal("bypassed request carried Proxy-Authorization")
 	}
 }
 

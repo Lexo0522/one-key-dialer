@@ -12,6 +12,7 @@ func TestSettingsProxyJSONRoundTrip(t *testing.T) {
 	s.ProxyHost = "127.0.0.1"
 	s.ProxyPort = "1080"
 	s.ProxyBypass = "localhost;192.168.*"
+	s.ProxyAuthEnabled = true
 
 	data, err := json.Marshal(s)
 	if err != nil {
@@ -23,7 +24,7 @@ func TestSettingsProxyJSONRoundTrip(t *testing.T) {
 	}
 	back = back.Normalize()
 	if !back.ProxyEnabled || back.ProxyType != ProxyTypeSOCKS5 ||
-		back.ProxyHost != "127.0.0.1" || back.ProxyPort != "1080" ||
+		back.ProxyHost != "127.0.0.1" || back.ProxyPort != "1080" || !back.ProxyAuthEnabled ||
 		back.ProxyBypass != "localhost;192.168.*" {
 		t.Fatalf("代理字段往返丢失: %+v", back)
 	}
@@ -136,6 +137,15 @@ func TestProxyConfigAndURL(t *testing.T) {
 	}
 	if got := s.Summary(); got != "socks5 10.0.0.2:1080" {
 		t.Fatalf("Summary() = %q", got)
+	}
+
+	auth := Settings{ProxyEnabled: true, ProxyAuthEnabled: true, ProxyHost: "proxy.example", ProxyPort: "8080"}.ProxyConfig()
+	auth.Username, auth.Password = "user@name", "p:a/ss"
+	if got := auth.ProxyURL().String(); got != "http://user%40name:p%3Aa%2Fss@proxy.example:8080" {
+		t.Fatalf("authenticated ProxyURL() = %q", got)
+	}
+	if got := auth.Summary(); got != "http proxy.example:8080" {
+		t.Fatalf("authenticated Summary() leaked or changed credentials: %q", got)
 	}
 
 	off := ProxyConfig{}.Summary()

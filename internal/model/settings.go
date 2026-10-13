@@ -32,11 +32,12 @@ type Settings struct {
 
 	// 代理（仅本应用自身 HTTP 出口：更新检查/下载、HTTP 模式外网探测）。
 	// 旧版 settings.json 无这些字段，零值即"未启用"，向后兼容。
-	ProxyEnabled bool   `json:"proxyEnabled"`
-	ProxyType    string `json:"proxyType"`
-	ProxyHost    string `json:"proxyHost"`
-	ProxyPort    string `json:"proxyPort"`
-	ProxyBypass  string `json:"proxyBypass"`
+	ProxyEnabled     bool   `json:"proxyEnabled"`
+	ProxyType        string `json:"proxyType"`
+	ProxyHost        string `json:"proxyHost"`
+	ProxyPort        string `json:"proxyPort"`
+	ProxyBypass      string `json:"proxyBypass"`
+	ProxyAuthEnabled bool   `json:"proxyAuthEnabled"`
 
 	// 低内存渲染:UI 进程禁用 GPU 合成(CPU 软渲染),少一个 GPU 子进程,
 	// 打开窗口期间再省 ~20-40MB。旧版无此字段,零值即"关闭",向后兼容。

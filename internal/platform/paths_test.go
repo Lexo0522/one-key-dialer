@@ -204,12 +204,13 @@ func TestMigrateDataFiles(t *testing.T) {
 	write(src, "settings.json", "from-install-dir")
 	write(src, "broadband.json", "enc")
 	write(src, "wifi.json", "psk")
+	write(src, "proxy.json", "enc")
 	write(src, "pppoe_log.txt", "log") // 白名单外
 	// 目标已有一份 settings.json（普通权限会话保存的），不能被冲掉
 	write(dst, "settings.json", "from-appdata")
 
 	got := migrateDataFiles(src, dst)
-	want := []string{"broadband.json", "wifi.json"}
+	want := []string{"broadband.json", "wifi.json", "proxy.json"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("migrateDataFiles = %v, want %v", got, want)
 	}
@@ -222,6 +223,9 @@ func TestMigrateDataFiles(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(dst, "broadband.json")); err != nil || string(data) != "enc" {
 		t.Errorf("broadband.json = %q (err %v), want it migrated", data, err)
 	}
+	if data, err := os.ReadFile(filepath.Join(dst, "proxy.json")); err != nil || string(data) != "enc" {
+		t.Errorf("proxy.json = %q (err %v), want it migrated", data, err)
+	}
 
 	// 幂等：再跑一次没有可迁的文件
 	if again := migrateDataFiles(src, dst); len(again) != 0 {
@@ -230,7 +234,7 @@ func TestMigrateDataFiles(t *testing.T) {
 
 	// 目标目录不存在时先创建，再按白名单整体迁入
 	fresh := filepath.Join(t.TempDir(), "PPPoEDialer")
-	if got := migrateDataFiles(src, fresh); len(got) != 3 {
-		t.Errorf("migrateDataFiles into a fresh dir = %v, want all three whitelisted files", got)
+	if got := migrateDataFiles(src, fresh); len(got) != 4 {
+		t.Errorf("migrateDataFiles into a fresh dir = %v, want all four whitelisted files", got)
 	}
 }

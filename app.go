@@ -77,6 +77,11 @@ type App struct {
 	bbCredMu       sync.Mutex
 	bbCred         *model.BroadbandCredential
 
+	// 代理认证凭据（proxy.json，DPAPI 保护）
+	proxyStore  *storage.ProxyStore
+	proxyCredMu sync.Mutex
+	proxyCred   *model.ProxyCredential
+
 	updater *update.Module
 
 	mu               sync.Mutex
@@ -160,6 +165,7 @@ func (a *App) startup(ctx context.Context) {
 	a.settings = service.NewSettingsManager(settingsStore, a.exec, warn)
 
 	a.broadbandStore = storage.NewBroadbandStore(filepath.Join(a.dataDir, "broadband.json"), storage.DpapiSecretProtector{})
+	a.proxyStore = storage.NewProxyStore(filepath.Join(a.dataDir, "proxy.json"), storage.DpapiSecretProtector{})
 
 	a.autoStart = service.NewStartupService(a.logSvc)
 	a.sampler = service.NewTrafficSampler(warn)
@@ -169,6 +175,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// 1) 设置 → 2) 凭据 → 3) 服务 → 4) 自检
 	loaded := a.settings.LoadFromDisk()
+	a.loadProxyCredential()
 	a.applyProxySettings(loaded)
 	a.loadBroadband()
 
@@ -226,7 +233,7 @@ func (a *App) startup(ctx context.Context) {
 
 	cfg := update.Load(filepath.Join(a.dataDir, update.OverrideFileName), warn)
 	a.updater = update.NewModule(platform.UpdatesDir(), cfg, func(msg string) { a.logSvc.Info(msg) },
-		func() model.ProxyConfig { return a.settings.Current().ProxyConfig() })
+		func() model.ProxyConfig { return a.proxyConfig() })
 
 	// 启动横幅
 	a.logSvc.Success(i18n.Tf("log.appStarted", model.Display()))
@@ -356,6 +363,10 @@ func (a *App) doShutdown(ctx context.Context) {
 
 	a.bbCredMu.Lock()
 	a.bbCred.ClearPassword()
+	a.bbCredMu.Unlock()
+	a.proxyCredMu.Lock()
+	a.proxyCred.ClearPassword()
+	a.proxyCredMu.Unlock()
 	a.portalCredMu.Lock()
 	a.portalCred.ClearPassword()
 	model.ClearBytes(a.wifiPsk)
@@ -480,6 +491,7 @@ func (a *App) applyProxySettings(s model.Settings) {
 // proxySectionChanged 判断两份设置的代理段是否发生变化。
 func proxySectionChanged(a, b model.Settings) bool {
 	return a.ProxyEnabled != b.ProxyEnabled ||
+		a.ProxyAuthEnabled != b.ProxyAuthEnabled ||
 		a.ProxyType != b.ProxyType ||
 		a.ProxyHost != b.ProxyHost ||
 		a.ProxyPort != b.ProxyPort ||
@@ -531,6 +543,63 @@ func (a *App) SaveBroadband(username, password string) bool {
 			a.logSvc.Info(i18n.T("broadband.saved"))
 		}
 	})
+	return true
+}
+
+// GetProxyCredential 返回代理认证凭据视图，不包含明文密码。
+func (a *App) GetProxyCredential() ProxyCredentialDTO {
+	a.proxyCredMu.Lock()
+	defer a.proxyCredMu.Unlock()
+	if a.proxyCred == nil {
+		return ProxyCredentialDTO{}
+	}
+	return ProxyCredentialDTO{Username: a.proxyCred.Username, HasPassword: a.proxyCred.HasPassword()}
+}
+
+// SaveProxyCredential 保存代理认证凭据；账号不变且密码留空时沿用原密码。
+func (a *App) SaveProxyCredential(username, password string) bool {
+	username = strings.TrimSpace(username)
+	a.proxyCredMu.Lock()
+	cred := model.NewProxyCredential(username, password)
+	if a.proxyCred != nil && username == a.proxyCred.Username && password == "" && a.proxyCred.HasPassword() {
+		cred.SetPassword(a.proxyCred.Password())
+	}
+	if err := a.proxyStore.Save(cred); err != nil {
+		cred.ClearPassword()
+		a.proxyCredMu.Unlock()
+		a.logSvc.Error(i18n.Tf("proxy.credSaveFailed", err.Error()))
+		return false
+	}
+	if a.proxyCred != nil {
+		a.proxyCred.ClearPassword()
+	}
+	a.proxyCred = cred
+	a.proxyCredMu.Unlock()
+	a.logSvc.Info(i18n.T("proxy.credSaved"))
+	return true
+}
+
+// ClearProxyCredential 删除代理认证凭据并关闭认证开关。
+func (a *App) ClearProxyCredential() bool {
+	a.proxyCredMu.Lock()
+	if err := a.proxyStore.Save(&model.ProxyCredential{}); err != nil {
+		a.proxyCredMu.Unlock()
+		a.logSvc.Error(i18n.Tf("proxy.credSaveFailed", err.Error()))
+		return false
+	}
+	old := a.proxyCred
+	a.proxyCred = &model.ProxyCredential{}
+	if old != nil {
+		old.ClearPassword()
+	}
+	a.proxyCredMu.Unlock()
+	s := a.settings.Current()
+	if s.ProxyAuthEnabled {
+		s.ProxyAuthEnabled = false
+		a.settings.Update(s)
+		a.emit(EvtSettings, s)
+	}
+	a.logSvc.Info(i18n.T("proxy.credCleared"))
 	return true
 }
 
@@ -734,8 +803,7 @@ func portalTestVerdict(out service.PortalAuthOutcome, re service.PortalDetect) (
 // urls 为前端配置的测试点（settings.speedSites），结果按入参顺序返回。
 // 出口跟随设置内的代理开关：启用即经该代理测速，未启用则直连。
 func (a *App) SiteLatencyCheck(urls []string) []SiteLatencyDTO {
-	s := a.settings.Current()
-	res := service.TestSiteLatency(urls, s.ProxyConfig())
+	res := service.TestSiteLatency(urls, a.proxyConfig())
 	out := make([]SiteLatencyDTO, 0, len(res))
 	for _, r := range res {
 		out = append(out, SiteLatencyDTO{Url: r.Url, LatencyMs: r.LatencyMs})
@@ -747,8 +815,7 @@ func (a *App) SiteLatencyCheck(urls []string) []SiteLatencyDTO {
 // 出口同上：代理未启用时直连（显示 PPPoE 拨号线路出口），启用时经代理
 // 查询（显示代理出口），ViaProxy 回显本次数据的实际出口。
 func (a *App) GetIPInfo() IPInfoDTO {
-	s := a.settings.Current()
-	info := service.FetchIPInfo(s.ProxyConfig())
+	info := service.FetchIPInfo(a.proxyConfig())
 	return IPInfoDTO{
 		Ip:         info.Ip,
 		Country:    info.Country,

@@ -1,4 +1,4 @@
-// Package storage 负责 settings.json / broadband.json / portal.json / wifi.json 的读写，
+// Package storage 负责 settings.json / broadband.json / portal.json / wifi.json / proxy.json 的读写，
 // 文档结构统一为（{"schemaVersion":N,"data":...}）。
 package storage
 
@@ -83,9 +83,8 @@ func WriteEnvelope(file string, schemaVersion int, payload any) error {
 	if err := util.WriteAtomic(file, out); err != nil {
 		return err
 	}
-	// ACL 收紧失败不推翻这次写：内容已经原子落盘了。但这几个文件存明文
-	// 凭据（宽带账密 / 门户账密 / WiFi PSK），权限没收紧必须如实上报，
-	// 不能像之前那样静默吞掉——用户完全看不出文件正挂在继承权限下。
+	// ACL 收紧失败不推翻这次写：内容已经原子落盘了。但凭据文件仍包含
+	// 明文账号或受 DPAPI 保护的密码 blob，权限没收紧必须如实上报。
 	if err := platform.RestrictToOwner(file); err != nil {
 		return &StorageException{Kind: KindIO,
 			Message: i18n.Tf("store.aclFailed", file, err.Error()),

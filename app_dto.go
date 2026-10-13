@@ -16,6 +16,12 @@ type BroadbandCredentialDTO struct {
 	HasPassword bool   `json:"hasPassword"`
 }
 
+// ProxyCredentialDTO 代理认证凭据视图（明文密码不出后端）。
+type ProxyCredentialDTO struct {
+	Username    string `json:"username"`
+	HasPassword bool   `json:"hasPassword"`
+}
+
 // AppState 前端首帧需要的全部状态。
 type AppState struct {
 	Version          string                 `json:"version"`

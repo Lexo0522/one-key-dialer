@@ -146,8 +146,12 @@ var en = map[string]string{
 	"selfcheck.notWritable":  "Startup self-check: {0} is not writable: {1}",
 
 	// Proxy (this app's HTTP egress only)
-	"proxy.enabled":  "Proxy enabled: {0} (this app's HTTP requests only: update checks, connectivity probes, speed test & IP lookups)",
-	"proxy.disabled": "Proxy disabled (this app's HTTP requests connect directly, or fall back to system environment proxy)",
+	"proxy.enabled":        "Proxy enabled: {0} (this app's HTTP requests only: update checks, connectivity probes, speed test & IP lookups)",
+	"proxy.disabled":       "Proxy disabled (this app's HTTP requests connect directly, or fall back to system environment proxy)",
+	"proxy.credLoadFailed": "Failed to load proxy credentials: {0}",
+	"proxy.credSaveFailed": "Failed to save proxy credentials: {0}",
+	"proxy.credSaved":      "Proxy credentials saved",
+	"proxy.credCleared":    "Proxy credentials cleared",
 
 	// WiFi
 	"wifi.hwUnavailable":     "No wireless adapter detected or WLAN service not running; WiFi features unavailable",

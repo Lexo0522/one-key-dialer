@@ -26,11 +26,14 @@ const (
 // 作用范围严格限定为本应用自身的 HTTP 出口（在线更新检查/下载、HTTP 模式
 // 外网探测、首页测速与 IP 查询），不修改系统代理设置，不影响其他程序。
 type ProxyConfig struct {
-	Enabled bool
-	Type    string // http | https | socks5
-	Host    string
-	Port    string
-	Bypass  []string
+	Enabled     bool
+	Type        string // http | https | socks5
+	Host        string
+	Port        string
+	Bypass      []string
+	AuthEnabled bool
+	Username    string
+	Password    string
 }
 
 // ProxyConfigOf 从设置快照提取代理配置；内部再做一次归一化，
@@ -41,11 +44,12 @@ func (s Settings) ProxyConfig() ProxyConfig {
 	host := normalizeProxyHost(s.ProxyHost)
 	port := normalizeProxyPort(s.ProxyPort, typ)
 	return ProxyConfig{
-		Enabled: s.ProxyEnabled && host != "",
-		Type:    typ,
-		Host:    host,
-		Port:    port,
-		Bypass:  splitProxyBypass(s.ProxyBypass),
+		Enabled:     s.ProxyEnabled && host != "",
+		Type:        typ,
+		Host:        host,
+		Port:        port,
+		Bypass:      splitProxyBypass(s.ProxyBypass),
+		AuthEnabled: s.ProxyAuthEnabled,
 	}
 }
 
@@ -54,7 +58,11 @@ func (c ProxyConfig) ProxyURL() *url.URL {
 	if !c.Enabled || c.Host == "" {
 		return nil
 	}
-	return &url.URL{Scheme: c.Type, Host: net.JoinHostPort(c.Host, c.Port)}
+	u := &url.URL{Scheme: c.Type, Host: net.JoinHostPort(c.Host, c.Port)}
+	if c.AuthEnabled && (c.Username != "" || c.Password != "") {
+		u.User = url.UserPassword(c.Username, c.Password)
+	}
+	return u
 }
 
 // Summary 返回 "socks5 127.0.0.1:1080" 形式的摘要（日志/诊断用）。
@@ -86,7 +94,11 @@ func normalizeProxyHost(host string) string {
 	if i := strings.Index(h, "://"); i >= 0 {
 		h = h[i+3:]
 	}
-	return strings.Trim(h, "/")
+	h = strings.Trim(h, "/")
+	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		h = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
+	}
+	return h
 }
 
 // normalizeProxyPort 校验端口：合法数字原样保留，空值/非法值按类型回退默认端口。

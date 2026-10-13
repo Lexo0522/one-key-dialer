@@ -1,13 +1,13 @@
 export namespace main {
-	
+
 	export class BroadbandCredentialDTO {
 	    username: string;
 	    hasPassword: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new BroadbandCredentialDTO(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.username = source["username"];
@@ -27,11 +27,11 @@ export namespace main {
 	    lang: string;
 	    dataDir: string;
 	    updatesDir: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AppState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
@@ -47,7 +47,7 @@ export namespace main {
 	        this.dataDir = source["dataDir"];
 	        this.updatesDir = source["updatesDir"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -66,18 +66,18 @@ export namespace main {
 		    return a;
 		}
 	}
-	
+
 	export class DeviceOption {
 	    port: string;
 	    device: string;
 	    existing: boolean;
 	    default: boolean;
 	    current: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new DeviceOption(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.port = source["port"];
@@ -91,11 +91,11 @@ export namespace main {
 	    descr: string;
 	    up: boolean;
 	    speedMbps: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EthLinkDTO(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.descr = source["descr"];
@@ -112,11 +112,12 @@ export namespace main {
 	    as: string;
 	    timezone: string;
 	    localIp: string;
-	
+	    viaProxy: boolean;
+
 	    static createFrom(source: any = {}) {
 	        return new IPInfoDTO(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ip = source["ip"];
@@ -127,17 +128,18 @@ export namespace main {
 	        this.as = source["as"];
 	        this.timezone = source["timezone"];
 	        this.localIp = source["localIp"];
+	        this.viaProxy = source["viaProxy"];
 	    }
 	}
 	export class LangPayload {
 	    lang: string;
 	    system: string;
 	    auto: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new LangPayload(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.lang = source["lang"];
@@ -148,11 +150,11 @@ export namespace main {
 	export class PortalCredentialDTO {
 	    username: string;
 	    hasPassword: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PortalCredentialDTO(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.username = source["username"];
@@ -162,11 +164,11 @@ export namespace main {
 	export class PortalTestResult {
 	    ok: boolean;
 	    detail: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PortalTestResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ok = source["ok"];
@@ -183,11 +185,11 @@ export namespace main {
 	    bytesDown: number;
 	    errTotal: number;
 	    durationSec: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PppStatsDTO(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.available = source["available"];
@@ -201,14 +203,28 @@ export namespace main {
 	        this.durationSec = source["durationSec"];
 	    }
 	}
+	export class ProxyCredentialDTO {
+	    username: string;
+	    hasPassword: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new ProxyCredentialDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.username = source["username"];
+	        this.hasPassword = source["hasPassword"];
+	    }
+	}
 	export class SiteLatencyDTO {
 	    url: string;
 	    latencyMs: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SiteLatencyDTO(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.url = source["url"];
@@ -222,11 +238,11 @@ export namespace main {
 	    connected: boolean;
 	    hasProfile: boolean;
 	    auth: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new WifiNetworkDTO(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ssid = source["ssid"];
@@ -246,11 +262,11 @@ export namespace main {
 	    busy: boolean;
 	    autoConnect: boolean;
 	    preferredSsid: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new WifiStatusDTO(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.available = source["available"];
@@ -267,16 +283,16 @@ export namespace main {
 }
 
 export namespace model {
-	
+
 	export class SpeedSite {
 	    name: string;
 	    url: string;
 	    icon: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SpeedSite(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -300,6 +316,7 @@ export namespace model {
 	    proxyHost: string;
 	    proxyPort: string;
 	    proxyBypass: string;
+	    proxyAuthEnabled: boolean;
 	    lowMemRender: boolean;
 	    wifiAutoConnect: boolean;
 	    wifiPreferredSsid: string;
@@ -311,11 +328,11 @@ export namespace model {
 	    portalSuccessHint: string;
 	    portalPreset: string;
 	    speedSites: SpeedSite[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.intervalSeconds = source["intervalSeconds"];
@@ -333,6 +350,7 @@ export namespace model {
 	        this.proxyHost = source["proxyHost"];
 	        this.proxyPort = source["proxyPort"];
 	        this.proxyBypass = source["proxyBypass"];
+	        this.proxyAuthEnabled = source["proxyAuthEnabled"];
 	        this.lowMemRender = source["lowMemRender"];
 	        this.wifiAutoConnect = source["wifiAutoConnect"];
 	        this.wifiPreferredSsid = source["wifiPreferredSsid"];
@@ -345,7 +363,7 @@ export namespace model {
 	        this.portalPreset = source["portalPreset"];
 	        this.speedSites = this.convertValues(source["speedSites"], SpeedSite);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -368,16 +386,16 @@ export namespace model {
 }
 
 export namespace service {
-	
+
 	export class LogLine {
 	    time: string;
 	    level: string;
 	    message: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new LogLine(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.time = source["time"];

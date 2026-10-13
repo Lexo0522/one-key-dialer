@@ -10,6 +10,9 @@
 package proxy
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"net"
 	"net/http"
 	"net/url"
@@ -71,8 +74,17 @@ var (
 )
 
 func cfgKey(cfg model.ProxyConfig) string {
+	h := sha256.New()
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(cfg.Username)))
+	_, _ = h.Write(size[:])
+	_, _ = h.Write([]byte(cfg.Username))
+	binary.BigEndian.PutUint64(size[:], uint64(len(cfg.Password)))
+	_, _ = h.Write(size[:])
+	_, _ = h.Write([]byte(cfg.Password))
 	return strings.Join([]string{
 		boolKey(cfg.Enabled), cfg.Type, cfg.Host, cfg.Port,
+		boolKey(cfg.AuthEnabled), hex.EncodeToString(h.Sum(nil)),
 		strings.Join(cfg.Bypass, ","),
 	}, "|")
 }

@@ -11,6 +11,8 @@ export function CheckUpdate(arg1:boolean):Promise<void>;
 
 export function ClearBroadband():Promise<boolean>;
 
+export function ClearProxyCredential():Promise<boolean>;
+
 export function DiagListDevices():Promise<Array<main.DeviceOption>>;
 
 export function DiagRun():Promise<boolean>;
@@ -33,6 +35,8 @@ export function GetIPInfo():Promise<main.IPInfoDTO>;
 
 export function GetPortalCredential():Promise<main.PortalCredentialDTO>;
 
+export function GetProxyCredential():Promise<main.ProxyCredentialDTO>;
+
 export function GetUILang():Promise<main.LangPayload>;
 
 export function HideWindow():Promise<void>;
@@ -48,6 +52,8 @@ export function PppStats():Promise<main.PppStatsDTO>;
 export function SaveBroadband(arg1:string,arg2:string):Promise<boolean>;
 
 export function SavePortalCredential(arg1:string,arg2:string):Promise<boolean>;
+
+export function SaveProxyCredential(arg1:string,arg2:string):Promise<boolean>;
 
 export function SaveSettings(arg1:model.Settings):Promise<void>;
 

@@ -99,25 +99,15 @@
         </div>
 
         <div class="row">
-          <label class="field-label">{{ t('settings.proxy.type') }}</label>
-          <select v-model="proxy.type" @change="pushProxy">
-            <option value="http">HTTP</option>
-            <option value="https">HTTPS</option>
-            <option value="socks5">SOCKS5</option>
-          </select>
-        </div>
-        <div class="row">
-          <label class="field-label">{{ t('settings.proxy.host') }}</label>
-          <input v-model="proxy.host" type="text" placeholder="127.0.0.1" @change="pushProxy"/>
-        </div>
-        <div class="row">
-          <label class="field-label">{{ t('settings.proxy.port') }}</label>
-          <input v-model="proxy.port" type="text" placeholder="7890" @change="pushProxy"/>
+          <label class="field-label">{{ t('settings.proxy.url') }}</label>
+          <input v-model="proxy.address" class="proxy-address" type="text" autocomplete="off" spellcheck="false"
+                 :placeholder="t('settings.proxy.urlPlaceholder')" @input="proxy.addressDirty = true" @change="saveProxyAddress"/>
         </div>
         <div class="row">
           <label class="field-label">{{ t('settings.proxy.bypass') }}</label>
           <input v-model="proxy.bypass" type="text" placeholder="localhost;192.168.*" @change="pushProxy"/>
         </div>
+        <div class="hint">{{ t('settings.proxy.urlHint') }}</div>
         <div class="hint">{{ t('settings.proxy.hint') }}</div>
       </section>
 
@@ -153,7 +143,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { state, patchSettings, patchPrefs, showToast, syncLangToBackend, versionLabel } from '../store'
 import { api } from '../bridge'
 import { setLang, t } from '../i18n'
@@ -201,12 +191,100 @@ const lowMemRender = ref(!!state.settings?.lowMemRender)
 
 // 代理：后端设置项，经 patchSettings 持久化到 settings.json 并实时生效
 // （仅作用于本应用自身的 HTTP 请求：更新检查、HTTP 外网探测、首页测速与 IP 查询）
+const MASKED_PROXY_PASSWORD = '••••••••'
 const proxy = reactive({
   enabled: !!state.settings?.proxyEnabled,
   type: state.settings?.proxyType || 'http',
   host: state.settings?.proxyHost || '',
   port: state.settings?.proxyPort || '',
-  bypass: state.settings?.proxyBypass || ''
+  address: '',
+  addressDirty: false,
+  bypass: state.settings?.proxyBypass || '',
+  authEnabled: !!state.settings?.proxyAuthEnabled
+})
+const proxyCredential = reactive({ username: '', savedUsername: '', hasPassword: false })
+
+function proxyDefaultPort(type) {
+  if (type === 'https') return '443'
+  if (type === 'socks5') return '1080'
+  return '80'
+}
+
+function formatProxyAddress(type, host, port) {
+  if (!host) return ''
+  const normalizedType = ['http', 'https', 'socks5'].includes(type) ? type : 'http'
+  const cleanHost = String(host).replace(/^\[|\]$/g, '')
+  const urlHost = cleanHost.includes(':') ? `[${cleanHost}]` : cleanHost
+  const urlPort = port || proxyDefaultPort(normalizedType)
+  const username = proxyCredential.savedUsername || proxyCredential.username
+  const userInfo = proxy.authEnabled && proxyCredential.hasPassword && username
+    ? `${encodeURIComponent(username)}:${encodeURIComponent(MASKED_PROXY_PASSWORD)}@`
+    : ''
+  return `${normalizedType}://${userInfo}${urlHost}:${urlPort}`
+}
+
+function decodeProxyUserInfo(value) {
+  try {
+    return decodeURIComponent(value)
+  } catch (e) {
+    throw new Error('invalid user info encoding')
+  }
+}
+
+function parseProxyAddress(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return { type: proxy.type || 'http', host: '', port: '', hasCredentials: false }
+  if (!/^[a-z][a-z\d+.-]*:\/\//i.test(raw)) throw new Error('missing scheme')
+
+  const parsed = new URL(raw)
+  const type = parsed.protocol.slice(0, -1).toLowerCase()
+  if (!['http', 'https', 'socks5'].includes(type) || !parsed.hostname) throw new Error('invalid proxy URL')
+  if ((parsed.pathname && parsed.pathname !== '/') || parsed.search || parsed.hash) throw new Error('proxy URL cannot include a path')
+
+  const username = decodeProxyUserInfo(parsed.username)
+  const password = decodeProxyUserInfo(parsed.password)
+  if (parsed.port && (+parsed.port < 1 || +parsed.port > 65535)) throw new Error('invalid port')
+  const hasCredentials = !!username || !!password
+  if (hasCredentials && (!username || !password)) throw new Error('incomplete proxy credentials')
+
+  const host = parsed.hostname.replace(/^\[|\]$/g, '')
+  return {
+    type,
+    host,
+    port: parsed.port || proxyDefaultPort(type),
+    username,
+    password,
+    hasCredentials
+  }
+}
+
+function syncProxyAddress() {
+  proxy.address = formatProxyAddress(proxy.type, proxy.host, proxy.port)
+}
+
+onMounted(async () => {
+  try {
+    const cred = await api.GetProxyCredential()
+    proxyCredential.username = cred?.username || ''
+    proxyCredential.savedUsername = cred?.username || ''
+    proxyCredential.hasPassword = !!cred?.hasPassword
+    if (proxyCredential.savedUsername && (!proxy.authEnabled || !proxyCredential.hasPassword)) {
+      if (await api.ClearProxyCredential()) {
+        proxyCredential.username = ''
+        proxyCredential.savedUsername = ''
+        proxyCredential.hasPassword = false
+        proxy.authEnabled = false
+      } else {
+        showToast(t('settings.proxy.credentialClearFail'), 'error')
+      }
+    } else if (proxy.authEnabled && (!proxyCredential.savedUsername || !proxyCredential.hasPassword)) {
+      proxy.authEnabled = false
+      patchSettings({ proxyAuthEnabled: false })
+    }
+    if (!proxy.addressDirty) syncProxyAddress()
+  } catch (e) {
+    showToast(t('settings.proxy.credentialLoadFail'), 'error')
+  }
 })
 
 // 全部以 state.settings 为唯一事实源(Bootstrap 与每次 app:settings
@@ -230,6 +308,8 @@ watch(
     proxy.host = s.proxyHost || ''
     proxy.port = s.proxyPort || ''
     proxy.bypass = s.proxyBypass || ''
+    proxy.authEnabled = !!s.proxyAuthEnabled
+    if (!proxy.addressDirty) syncProxyAddress()
   },
   { immediate: true, deep: true }
 )
@@ -314,32 +394,86 @@ function pushLowMem() {
   showToast(t(lowMemRender.value ? 'settings.lowMem.enabled' : 'settings.lowMem.disabled'), 'success')
 }
 
-// 代理写入后端设置：地址必填、端口须为 1-65535 数字，非法输入回退开关并提示。
-// 后端 Normalize 还会做二次修正（剥离误粘 scheme、空端口按类型补默认值）。
-function pushProxy() {
-  const host = (proxy.host || '').trim()
-  const port = (proxy.port || '').trim()
-  if (proxy.enabled && !host) {
+// 保存开关与绕过列表。代理地址由 saveProxyAddress 解析成旧版兼容字段。
+function pushProxy(showStatus = true) {
+  if (proxy.enabled && !proxy.host) {
     proxy.enabled = false
     showToast(t('settings.proxy.needHost'), 'error')
-    return
-  }
-  if (port && !/^\d+$/.test(port)) {
-    showToast(t('settings.proxy.portInvalid'), 'error')
-    return
-  }
-  if (port && (+port < 1 || +port > 65535)) {
-    showToast(t('settings.proxy.portInvalid'), 'error')
     return
   }
   patchSettings({
     proxyEnabled: proxy.enabled,
     proxyType: proxy.type,
-    proxyHost: host,
-    proxyPort: port,
-    proxyBypass: (proxy.bypass || '').trim()
+    proxyHost: proxy.host,
+    proxyPort: proxy.port,
+    proxyBypass: (proxy.bypass || '').trim(),
+    proxyAuthEnabled: proxy.authEnabled
   })
-  showToast(t(proxy.enabled ? 'settings.proxy.enabled' : 'settings.proxy.disabled'), 'success')
+  if (showStatus) showToast(t(proxy.enabled ? 'settings.proxy.enabled' : 'settings.proxy.disabled'), 'success')
+}
+
+async function saveProxyAddress() {
+  if (!proxy.addressDirty) return
+  let parsed
+  try {
+    parsed = parseProxyAddress(proxy.address)
+  } catch (e) {
+    showToast(t('settings.proxy.urlInvalid'), 'error')
+    return
+  }
+  if (proxy.enabled && !parsed.host) {
+    showToast(t('settings.proxy.needHost'), 'error')
+    return
+  }
+
+  const isSavedPassword = parsed.hasCredentials &&
+    proxyCredential.hasPassword &&
+    parsed.username === proxyCredential.savedUsername &&
+    parsed.password === MASKED_PROXY_PASSWORD
+  if (parsed.password === MASKED_PROXY_PASSWORD && !isSavedPassword) {
+    showToast(t('settings.proxy.passwordRequired'), 'warning')
+    return
+  }
+
+  if (parsed.hasCredentials && !isSavedPassword) {
+    try {
+      if (!await api.SaveProxyCredential(parsed.username, parsed.password)) {
+        showToast(t('settings.proxy.credentialSaveFail'), 'error')
+        return
+      }
+      proxyCredential.username = parsed.username
+      proxyCredential.savedUsername = parsed.username
+      proxyCredential.hasPassword = true
+    } catch (e) {
+      showToast(t('settings.proxy.credentialSaveFail'), 'error')
+      return
+    }
+  } else if (!parsed.hasCredentials && (proxyCredential.hasPassword || proxyCredential.savedUsername)) {
+    try {
+      if (!await api.ClearProxyCredential()) {
+        showToast(t('settings.proxy.credentialClearFail'), 'error')
+        return
+      }
+      proxyCredential.username = ''
+      proxyCredential.savedUsername = ''
+      proxyCredential.hasPassword = false
+      proxy.authEnabled = false
+    } catch (e) {
+      showToast(t('settings.proxy.credentialClearFail'), 'error')
+      return
+    }
+  } else if (!parsed.hasCredentials) {
+    proxy.authEnabled = false
+  }
+  if (parsed.hasCredentials) proxy.authEnabled = true
+
+  proxy.type = parsed.type
+  proxy.host = parsed.host
+  proxy.port = parsed.port || proxyDefaultPort(parsed.type)
+  pushProxy(false)
+  proxy.addressDirty = false
+  syncProxyAddress()
+  showToast(t('settings.proxy.saved'), 'success')
 }
 
 function checkNow() {
@@ -426,7 +560,8 @@ function checkNow() {
 }
 
 .row select,
-.row input[type="text"] {
+.row input[type="text"],
+.row input[type="password"] {
   flex: 1;
   min-width: 0;
   max-width: none;
@@ -434,6 +569,10 @@ function checkNow() {
 
 .row input[type="number"] {
   width: 76px;
+}
+
+.proxy-address {
+  font-family: ui-monospace, Consolas, monospace;
 }
 
 .hint.ok {

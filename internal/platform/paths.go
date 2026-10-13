@@ -205,7 +205,7 @@ func selfUpdatableDir(dir string) bool {
 
 // legacyDataFiles 允许从安装目录迁入数据目录的白名单。
 // 只迁用户数据：日志、ipc.pipe、exe 一律不迁。
-var legacyDataFiles = []string{"settings.json", "broadband.json", "portal.json", "wifi.json"}
+var legacyDataFiles = []string{"settings.json", "broadband.json", "portal.json", "wifi.json", "proxy.json"}
 
 // MigrateLegacyInstallData 把历史上写进 Program Files 安装目录的数据文件
 // 一次性迁入数据目录，返回成功迁入的文件名（无需迁移时返回 nil）。

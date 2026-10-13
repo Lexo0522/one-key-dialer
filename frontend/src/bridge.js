@@ -43,6 +43,7 @@ import { EventsOn } from '../wailsjs/runtime/runtime.js'
  * @property {string} proxyHost
  * @property {string} proxyPort
  * @property {string} proxyBypass
+ * @property {boolean} proxyAuthEnabled
  * @property {?Array<*>} speedSites
  */
 
@@ -109,6 +110,7 @@ const MOCK_SETTINGS = {
   proxyHost: '',
   proxyPort: '',
   proxyBypass: '',
+  proxyAuthEnabled: false,
   lowMemRender: false
 }
 
@@ -195,6 +197,22 @@ const mockApi = {
   SaveSettings(next) {
     mockSettings = { ...next }
     mockBus.emit(EV.settings, { ...mockSettings })
+  },
+  async GetProxyCredential() {
+    return { username: mockProxyCredential.username, hasPassword: !!mockProxyCredential.password }
+  },
+  SaveProxyCredential(username, password) {
+    const nextUsername = (username || '').trim()
+    if (password || nextUsername !== mockProxyCredential.username) mockProxyCredential.password = password || ''
+    mockProxyCredential.username = nextUsername
+    return true
+  },
+  ClearProxyCredential() {
+    mockProxyCredential.username = ''
+    mockProxyCredential.password = ''
+    mockSettings.proxyAuthEnabled = false
+    mockBus.emit(EV.settings, { ...mockSettings })
+    return true
   },
   SetAutoStart(enabled) {
     mockSettings.autoStart = enabled
@@ -519,6 +537,7 @@ function mockWifiPayload(phase, ssid, signalQuality) {
 }
 
 const mockPortal = { username: '20210001', password: '123456' }
+const mockProxyCredential = { username: '', password: '' }
 
 /** 统一出口：Wails 或 mock。 */
 export const api = isWails ? AppApi : mockApi

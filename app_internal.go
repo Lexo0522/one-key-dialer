@@ -84,7 +84,35 @@ func (a *App) statusPayload() StatusPayload {
 }
 
 func (a *App) probeConfig() model.ProbeConfig {
-	return model.ProbeConfigFromSettings(a.settings.Current())
+	cfg := model.ProbeConfigFromSettings(a.settings.Current())
+	cfg.Proxy = a.proxyConfig()
+	return cfg
+}
+
+// proxyConfig 组合当前代理设置与内存中的认证凭据。明文密码不进入 Settings、
+// Bootstrap 或 app:settings 事件。
+func (a *App) proxyConfig() model.ProxyConfig {
+	pc := a.settings.Current().ProxyConfig()
+	if !pc.Enabled || !pc.AuthEnabled {
+		return pc
+	}
+	a.proxyCredMu.Lock()
+	defer a.proxyCredMu.Unlock()
+	if a.proxyCred != nil {
+		pc.Username = a.proxyCred.Username
+		pc.Password = a.proxyCred.Password()
+	}
+	return pc
+}
+
+// loadProxyCredential 启动时加载代理认证凭据，解密失败时按未设置处理。
+func (a *App) loadProxyCredential() {
+	cred, err := a.proxyStore.Load()
+	if err != nil {
+		a.logSvc.Warning(i18n.Tf("proxy.credLoadFailed", err.Error()))
+		cred = &model.ProxyCredential{}
+	}
+	a.proxyCred = cred
 }
 
 // directOnlineWired 系统是否已通过"网口直连"联网：外网可达，且默认路由

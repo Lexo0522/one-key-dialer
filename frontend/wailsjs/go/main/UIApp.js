@@ -18,6 +18,10 @@ export function ClearBroadband() {
   return window['go']['main']['UIApp']['ClearBroadband']();
 }
 
+export function ClearProxyCredential() {
+  return window['go']['main']['UIApp']['ClearProxyCredential']();
+}
+
 export function DiagListDevices() {
   return window['go']['main']['UIApp']['DiagListDevices']();
 }
@@ -62,6 +66,10 @@ export function GetPortalCredential() {
   return window['go']['main']['UIApp']['GetPortalCredential']();
 }
 
+export function GetProxyCredential() {
+  return window['go']['main']['UIApp']['GetProxyCredential']();
+}
+
 export function GetUILang() {
   return window['go']['main']['UIApp']['GetUILang']();
 }
@@ -92,6 +100,10 @@ export function SaveBroadband(arg1, arg2) {
 
 export function SavePortalCredential(arg1, arg2) {
   return window['go']['main']['UIApp']['SavePortalCredential'](arg1, arg2);
+}
+
+export function SaveProxyCredential(arg1, arg2) {
+  return window['go']['main']['UIApp']['SaveProxyCredential'](arg1, arg2);
 }
 
 export function SaveSettings(arg1) {
